@@ -4,6 +4,12 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## Unreleased
+
+- `.cdr` files of versions 18 to 22 saved by TraceDraw open again: every
+  object's transform carried the tag of versions 13 to 17, which made the
+  program that opened the file hang and close (#98).
+
 ## 0.8.0 (2026-10-15)
 
 `.cdr` files saved by TraceDraw now carry everything files of their

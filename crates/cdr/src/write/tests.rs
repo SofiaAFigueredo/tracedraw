@@ -1488,3 +1488,44 @@ fn riff_streams_are_compressed_and_end_with_a_summary() {
         }
     }
 }
+
+#[test]
+fn transforms_carry_the_tag_of_their_version() {
+    // Files of versions 13 to 17 open each `trfd` record with [1300, 0],
+    // files of 18 and later with [1740, 56]; a version 21 file with the
+    // older tag closed the program that opened it.
+    let mut ids = Document::new("w", Size::new(200.0, 100.0)).ids().clone();
+    let doc = doc_with(vec![Shape::new(
+        ids.shape(),
+        ShapeKind::Rect {
+            rect: Rect::new(10.0, 10.0, 40.0, 30.0),
+            radius: 0.0,
+            corners: None,
+        },
+    )]);
+    for v in 7u16..=22 {
+        let bytes = document_to_cdr_version(&doc, v);
+        let (_, tree, riff) = chunk_ids(&bytes);
+        let mut tags = Vec::new();
+        tree.root.walk(&mut |ch, _| {
+            if ch.id_str() == "trfd" {
+                let d = tree.data(&riff, ch);
+                tags.push(d.get(24..32).map(|t| {
+                    let w = |i: usize| u32::from_le_bytes([t[i], t[i + 1], t[i + 2], t[i + 3]]);
+                    (w(0), w(4))
+                }));
+            }
+        });
+        assert!(!tags.is_empty(), "{v}");
+        let want = match v {
+            18.. => Some((1740, 56)),
+            13..=17 => Some((1300, 0)),
+            _ => None,
+        };
+        for t in tags {
+            if let Some(w) = want {
+                assert_eq!(t, Some(w), "{v}");
+            }
+        }
+    }
+}

@@ -6,6 +6,7 @@ full, row-by-row status.
 
 ## 0.8.0 (not yet released)
 
+- Save Bitmap As in a bitmap's context menu writes its pixels to a PNG.
 - `.cdr` files saved as version 16 or later are complete packages: a
   media type member first, the manifest naming the drawing, metadata,
   layer and object names, colour settings and a picture of each page.

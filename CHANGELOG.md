@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## 0.8.0 (not yet released)
 
+- `.cdr` radial and square gradients are no longer inside out: files
+  list their colours from the edge to the centre (written that way too).
 - `.cdr` files saved as version 16 or later are complete packages: a
   media type member first, the manifest naming the drawing, metadata,
   layer and object names, colour settings and a picture of each page.

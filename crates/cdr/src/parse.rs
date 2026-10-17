@@ -66,6 +66,9 @@ pub(crate) const ARG_STYLE_STRING: u32 = 201;
 pub(crate) const ARG_NAME: u32 = 1000;
 pub(crate) const ARG_OPACITY: u32 = 8000;
 const ARG_POLYGON: u32 = 11000;
+/// The contents of a clip container (version 12): the `spnd` number of a
+/// group in the document's `LIST clpt`, then three u32 (1, 0, 1 seen).
+const ARG_CLIP_CONTENTS: u32 = 8005;
 const ARG_PAGE_SIZE: u32 = 19130;
 
 /// Family and size used when neither the run nor its style names one.
@@ -263,6 +266,11 @@ struct Ctx<'a> {
     arrows: HashMap<u32, Arrowhead>,
     /// Crop outline of the bitmap object being read (local coordinates).
     pending_crop: Option<BezPath>,
+    /// Groups of `LIST clpt` by their `spnd` number: the contents of clip
+    /// containers.
+    clip_groups: HashMap<u32, &'a Chunk>,
+    /// The `clpt` group the object being read holds clipped inside it.
+    pending_clip: Option<u32>,
     /// Colours of spot colour libraries met: (library, number).
     library_inks: std::collections::BTreeSet<(u16, u16)>,
     /// Guidelines of the page being read (objects of type 0x16).
@@ -326,6 +334,8 @@ impl<'a> Ctx<'a> {
             styles: HashMap::new(),
             arrows: HashMap::new(),
             pending_crop: None,
+            clip_groups: HashMap::new(),
+            pending_clip: None,
             guides: Vec::new(),
             last_was_guide: false,
             outer_transform: Affine::IDENTITY,
@@ -405,6 +415,7 @@ pub fn parse_document_with(
         }
     });
     ctx.read_bitmaps(&bitmaps);
+    ctx.index_clip_groups();
     ctx.name_charset = ctx.common_charset();
     tree.root.walk(&mut |c, _| {
         if c.is(b"fild") || c.is(b"fill") {
@@ -2021,6 +2032,7 @@ impl<'a> Ctx<'a> {
             }
         });
         let loda = loda?;
+        self.pending_clip = None;
         self.pending_on_path = None;
         self.pending_text_transform = None;
         let transform = self.outer_transform
@@ -2101,6 +2113,7 @@ impl<'a> Ctx<'a> {
                     }
                 }
                 ARG_POLYGON => polygon = self.read_polygon_info(d, *arg),
+                ARG_CLIP_CONTENTS => self.pending_clip = self.reader_at(d, arg.off).u32(),
                 _ => {}
             }
         }
@@ -2192,6 +2205,64 @@ impl<'a> Ctx<'a> {
         Some(shape)
     }
 
+    /// Index the groups of `LIST clpt` by the number in their `spnd`.
+    fn index_clip_groups(&mut self) {
+        let tree = self.tree;
+        let mut found = Vec::new();
+        tree.root.walk(&mut |c, _| {
+            if c.is(b"clpt") {
+                found.extend(c.children.iter().filter(|g| g.is(b"grp ")));
+            }
+        });
+        for g in found {
+            let Some(sp) = g.children.iter().find(|c| c.is(b"spnd")) else {
+                continue;
+            };
+            if let Some(n) = self.reader(self.data(sp)).u32() {
+                self.clip_groups.insert(n, g);
+            }
+        }
+    }
+
+    /// A clip container: `shape` with the objects of the `clpt` group
+    /// numbered `clip` drawn inside it (the container's fill under them,
+    /// its outline over them). A number naming no group leaves the shape.
+    fn with_clip_contents(
+        &mut self,
+        shape: Shape,
+        clip: u32,
+        ids: &mut tracedraw_core::id::IdSource,
+        page_size: Size,
+        depth: usize,
+    ) -> Shape {
+        // Taken out while read, so a group naming itself ends there.
+        let Some(group) = self.clip_groups.remove(&clip) else {
+            self.report.warn(format!(
+                "clip container names contents {clip:#x} the file lacks"
+            ));
+            return shape;
+        };
+        let contents = self.read_objects(group, ids, page_size, depth + 1);
+        self.clip_groups.insert(clip, group);
+        if contents.is_empty() {
+            return shape;
+        }
+        let mut outer = Shape::new(
+            ids.shape(),
+            ShapeKind::Group {
+                children: Vec::new(),
+            },
+        );
+        outer.name = shape.name.clone();
+        outer.fill = Fill::None;
+        outer.stroke = None;
+        outer.kind = ShapeKind::ClipFrame {
+            frame: Box::new(shape),
+            contents,
+        };
+        outer
+    }
+
     /// The objects of a layer or group list, bottom to top. Files store
     /// them front to back (confirmed with a version 21 file: text, then a patch,
     /// then the full-page picture underneath). `grp ` lists become groups.
@@ -2233,6 +2304,9 @@ impl<'a> Ctx<'a> {
                     Some(mut shape) => {
                         if let Some(crop) = self.pending_crop.take() {
                             shape = crop_to_clip_frame(shape, crop, ids);
+                        }
+                        if let Some(clip) = self.pending_clip.take() {
+                            shape = self.with_clip_contents(shape, clip, ids, page_size, depth);
                         }
                         out.push(shape);
                     }
@@ -6603,6 +6677,81 @@ mod tests {
             page_box: Some(Rect::new(400.0, 400.0, 420.0, 410.0)),
         };
         assert!(anchored_path_for_text(&shapes, &curves, &far, cap).is_none());
+    }
+
+    #[test]
+    fn clip_containers_draw_their_clpt_group_inside() {
+        // A version 12 container (a 30 mm square) naming group 0x55 of the
+        // document's LIST clpt, which holds a 10 mm square.
+        let square = |side: i32| {
+            list(
+                b"obj ",
+                &chunk(
+                    b"loda",
+                    &loda(
+                        OBJ_RECT,
+                        &[(ARG_COORDS, i32s(&[side * 10_000, side * 10_000, 0]))],
+                    ),
+                ),
+            )
+        };
+        let group = list(
+            b"grp ",
+            &[chunk(b"spnd", &u32s(&[0x55])), square(10)].concat(),
+        );
+        let container = |id: u32| {
+            list(
+                b"obj ",
+                &chunk(
+                    b"loda",
+                    &loda(
+                        OBJ_RECT,
+                        &[
+                            (ARG_CLIP_CONTENTS, u32s(&[id, 1, 0, 1])),
+                            (ARG_COORDS, i32s(&[300_000, 300_000, 0])),
+                        ],
+                    ),
+                ),
+            )
+        };
+        let read = |id: u32| {
+            let body = [
+                chunk(b"mcfg", &mcfg(12, 2_540_000, 2_540_000)),
+                list(b"clpt", &group),
+                list(b"page", &list(b"layr", &container(id))),
+            ]
+            .concat();
+            parse(&riff(b"CDRC", &body), 12)
+        };
+        let (doc, rep) = read(0x55);
+        assert_eq!(rep.shapes, 1, "{:?}", rep.warnings);
+        match &first_shape(&doc).kind {
+            ShapeKind::ClipFrame { frame, contents } => {
+                assert!((frame.bounds().width() - 30.0).abs() < 1e-6);
+                assert_eq!(contents.len(), 1);
+                assert!((contents[0].bounds().width() - 10.0).abs() < 1e-6);
+            }
+            other => panic!("{other:?}"),
+        }
+        // The group is not drawn on its own anywhere else.
+        assert_eq!(
+            doc.pages
+                .iter()
+                .map(|p| p.layers.iter().map(|l| l.shapes.len()).sum::<usize>())
+                .sum::<usize>(),
+            1
+        );
+        // A number naming no group: the container alone, with a warning.
+        let (doc, rep) = read(0x99);
+        assert!(matches!(
+            first_shape(&doc).kind,
+            ShapeKind::Rect { .. } | ShapeKind::Path { .. }
+        ));
+        assert!(
+            rep.warnings.iter().any(|w| w.contains("clip container")),
+            "{:?}",
+            rep.warnings
+        );
     }
 
     #[test]

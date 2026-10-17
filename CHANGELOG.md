@@ -11,6 +11,8 @@ full, row-by-row status.
   (library colours) take their look from the file's preview instead of
   black. Save As marks the `.cdr` versions before 16 experimental: their
   files may not open in other programs yet.
+- Clip containers of version 12 `.cdr` files show their contents (the
+  objects drawn inside a shape were missing).
 
 ## 0.9.1 (2026-10-17)
 

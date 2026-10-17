@@ -255,6 +255,8 @@ struct Ctx<'a> {
     embedded: HashMap<String, crate::ole::Picture>,
     /// Two-colour pattern tiles (`bmpf`), 1 bit per pixel: true = front.
     pattern_tiles: HashMap<u32, PatternBits>,
+    /// Vector pattern drawings (`vpat`): an id, then a CMX file.
+    vector_patterns: HashMap<u32, &'a [u8]>,
     /// `font` chunks by font id: family name and character set.
     fonts: HashMap<u16, text::FontRec>,
     /// Character set of names (layers, objects) before version 12: the
@@ -329,6 +331,7 @@ impl<'a> Ctx<'a> {
             bitmaps: HashMap::new(),
             embedded: HashMap::new(),
             pattern_tiles: HashMap::new(),
+            vector_patterns: HashMap::new(),
             fonts: HashMap::new(),
             name_charset: 0,
             styles: HashMap::new(),
@@ -403,6 +406,11 @@ pub fn parse_document_with(
             bitmaps.push(c);
         } else if c.is(b"bmpf") {
             ctx.read_pattern_tile(c);
+        } else if c.is(b"vpat") {
+            let d = ctx.data(c);
+            if let (Some(id), Some(cmx)) = (ctx.reader(d).u32(), d.get(4..)) {
+                ctx.vector_patterns.insert(id, cmx);
+            }
         } else if c.is(b"arrw") {
             ctx.read_arrowhead(c);
         } else if c.is(b"arrx") {
@@ -727,8 +735,9 @@ impl<'a> Ctx<'a> {
 
     /// `fild` (`fill` before version 7): fill definition. We model solid
     /// fills, fountain fills with all their stops, two-colour patterns,
-    /// colour bitmap fills and textures (from their stored bitmap); vector
-    /// pattern and PostScript fills become "no fill" with a warning.
+    /// colour bitmap fills, textures (from their stored bitmap) and vector
+    /// patterns (from their CMX drawing); PostScript fills become "no
+    /// fill" with a warning.
     fn read_fill(&mut self, c: &Chunk) {
         let d = self.data(c);
         let mut r = self.reader(d);
@@ -778,12 +787,12 @@ impl<'a> Ctx<'a> {
                     .warn(format!("image fill {id} (type {ftype}) is unreadable"));
                 Fill::None
             }),
-            10 => {
+            10 => self.read_vector_pattern_fill(body).unwrap_or_else(|| {
                 self.report.warn(format!(
-                    "vector pattern fill {id} not modelled yet; no fill"
+                    "vector pattern fill {id} not readable yet; no fill"
                 ));
                 Fill::None
-            }
+            }),
             other => {
                 self.report
                     .warn(format!("fill type {other} not modelled yet (fill id {id})"));
@@ -791,6 +800,67 @@ impl<'a> Ctx<'a> {
             }
         };
         self.fills.insert(id, FillDef { fill });
+    }
+
+    /// Vector pattern fill body (type 10; seen in version 18): tagged
+    /// records, 1600 holding the part of the pattern's drawing that makes
+    /// one tile (four i32: left, top, right, bottom, from the centre of
+    /// its page) and 1300 holding the tile's width and height (u32 each),
+    /// 8 bytes, that box again and the id of the `vpat` that holds the
+    /// drawing as a CMX file. The tile is that part of the drawing
+    /// stretched to the tile's size.
+    fn read_vector_pattern_fill(&mut self, body: &'a [u8]) -> Option<Fill> {
+        let mut r = self.reader(body);
+        let mut part: Option<[i32; 4]> = None;
+        let mut tile: Option<(u32, u32, u32)> = None;
+        while r.remaining() >= 8 {
+            let tag = r.u32()?;
+            let len = r.u32()? as usize;
+            let start = r.pos;
+            match tag {
+                1600 if len >= 16 => part = Some([r.i32()?, r.i32()?, r.i32()?, r.i32()?]),
+                1300 if len >= 36 => {
+                    let w = r.u32()?;
+                    let h = r.u32()?;
+                    let id = self.reader_at(body, start + 32).u32()?;
+                    tile = Some((w, h, id));
+                }
+                _ => {}
+            }
+            r.pos = start.checked_add(len)?;
+        }
+        let ([x0, top, x1, bottom], (w, h, id)) = (part?, tile?);
+        let cmx = *self.vector_patterns.get(&id)?;
+        let (drawing, _) = crate::cmx::open_bytes(cmx, "pattern").ok()?;
+        let page = drawing.pages.first()?;
+        let centre = Point::new(page.size.width / 2.0, page.size.height / 2.0);
+        let left = centre.x + x0 as f64 * UNIT_MM;
+        let right = centre.x + x1 as f64 * UNIT_MM;
+        let low = centre.y + bottom as f64 * UNIT_MM;
+        let high = centre.y + top as f64 * UNIT_MM;
+        let tile = Size::new(w as f64 * UNIT_MM, h as f64 * UNIT_MM);
+        if !(right - left > 1e-6 && high - low > 1e-6 && tile.width > 1e-6 && tile.height > 1e-6) {
+            return None;
+        }
+        let to_tile =
+            Affine::scale_non_uniform(tile.width / (right - left), tile.height / (high - low))
+                * Affine::translate((-left, -low));
+        let shapes: Vec<Shape> = page
+            .layers
+            .iter()
+            .flat_map(|l| l.shapes.iter().cloned())
+            .map(|mut s| {
+                s.transform = to_tile * s.transform;
+                s
+            })
+            .collect();
+        if shapes.is_empty() {
+            return None;
+        }
+        Some(Fill::Pattern(tracedraw_core::style::Pattern::Vector {
+            shapes,
+            tile,
+        }))
     }
 
     /// Solid fill body. Before version 13: 2 unknown bytes then a colour. From version 13:
@@ -3972,6 +4042,60 @@ mod tests {
         let c = tree.root.find(b"fild").unwrap();
         ctx.read_fill(c);
         assert_eq!(ctx.fills[&3].fill, Fill::Solid(Color::rgb8(10, 20, 30)));
+    }
+
+    #[test]
+    fn vector_pattern_fills_tile_a_part_of_their_cmx_drawing() {
+        use crate::cmx::tests as cmx;
+        // A 100 mm square CMX page with a 20 x 10 mm rectangle at its
+        // centre; the tile is the 40 mm square around the centre, drawn
+        // 20 mm wide and 10 mm high.
+        let drawing = cmx::file(&[cmx::page(&[
+            cmx::begin_page(1_000_000, 1_000_000),
+            cmx::begin_layer("L", None),
+            cmx::rect(&cmx::attrs(1, 0), 0, 0, 200_000, 100_000, 0, 0),
+            cmx::instr(14, &[]),
+            cmx::instr(12, &[]),
+            cmx::instr(10, &[]),
+        ])]);
+        let mut fild = u32s(&[5, 1300, 2 + 8 + 16 + 8 + 36]);
+        fild.extend_from_slice(&u16s(&[10]));
+        fild.extend_from_slice(&u32s(&[1600, 16]));
+        fild.extend_from_slice(&i32s(&[-200_000, 200_000, 200_000, -200_000]));
+        fild.extend_from_slice(&u32s(&[1300, 36, 200_000, 100_000, 0, 0]));
+        fild.extend_from_slice(&i32s(&[-200_000, 200_000, 200_000, -200_000]));
+        fild.extend_from_slice(&u32s(&[12]));
+        let main = riff(b"CDRK", &chunk(b"fild", &fild));
+        let tree = crate::riff::parse(&main).unwrap();
+        let mut ctx = Ctx::new(&main, &tree, 18);
+        ctx.vector_patterns.insert(12, &drawing);
+        ctx.read_fill(tree.root.find(b"fild").unwrap());
+        let Fill::Pattern(tracedraw_core::style::Pattern::Vector { shapes, tile }) =
+            &ctx.fills[&5].fill
+        else {
+            panic!("{:?}", ctx.fills[&5].fill)
+        };
+        assert!((tile.width - 20.0).abs() < 1e-6 && (tile.height - 10.0).abs() < 1e-6);
+        // The rectangle, half the tile's width and a quarter of its height
+        // after the stretch, sits at the tile's centre.
+        let b = shapes[0].bounds();
+        assert!(
+            (b.width() - 10.0).abs() < 1e-6 && (b.height() - 2.5).abs() < 1e-6,
+            "{b:?}"
+        );
+        assert!(
+            (b.center().x - 10.0).abs() < 1e-6 && (b.center().y - 5.0).abs() < 1e-6,
+            "{b:?}"
+        );
+        // No drawing for the id: no fill, with a warning.
+        let mut ctx = Ctx::new(&main, &tree, 18);
+        ctx.read_fill(tree.root.find(b"fild").unwrap());
+        assert_eq!(ctx.fills[&5].fill, Fill::None);
+        assert!(ctx
+            .report
+            .warnings
+            .iter()
+            .any(|w| w.contains("vector pattern")));
     }
 
     #[test]

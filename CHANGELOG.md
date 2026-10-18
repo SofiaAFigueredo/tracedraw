@@ -11,7 +11,8 @@ full, row-by-row status.
   was dropped as an invalid object, or the other program closed), each
   text's frame numbered as its object, and curves end with the 8 bytes
   those versions keep after the nodes (rectangles, written as curves,
-  were lost).
+  were lost); layers and groups carry the zero argument 12000 from
+  version 14, as files of versions 14 to 27 do.
 - `.tdraw`: drawings whose grouped curves keep node types open again
   (they were refused with "expected usize").
 - Save As lists each `.cdr` version with the release that writes it

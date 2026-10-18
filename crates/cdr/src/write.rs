@@ -2759,11 +2759,13 @@ impl<'a> Writer<'a> {
         } else {
             args.push((ARG_LAYER_COLOR, colour(colour_bytes).to_vec()));
         }
-        if v.0 >= 17 {
+        // A zero 12000 from version 14, as layers of files of versions 14
+        // to 27 have it (it was written from 17 only).
+        if v.zip() {
             args.push((ARG_PROPS, vec![0; 4]));
-            if kind == LAYER_GUIDES {
-                args.push((ARG_GUIDES_MODE, 2u32.to_le_bytes().to_vec()));
-            }
+        }
+        if v.0 >= 17 && kind == LAYER_GUIDES {
+            args.push((ARG_GUIDES_MODE, 2u32.to_le_bytes().to_vec()));
         }
         if v.zip() {
             args.push((ARG_GUID, guid.to_vec()));
@@ -2911,7 +2913,14 @@ impl<'a> Writer<'a> {
         body.push(list(
             b"lgob",
             vec![
-                chunk(b"loda", loda(0, vec![(ARG_ID, id.to_le_bytes().to_vec())])),
+                chunk(b"loda", {
+                    // Groups carry a zero 12000 from version 14 as well.
+                    let mut args = vec![(ARG_ID, id.to_le_bytes().to_vec())];
+                    if self.v.zip() {
+                        args.push((ARG_PROPS, vec![0; 4]));
+                    }
+                    loda(0, args)
+                }),
                 list(
                     b"trfl",
                     vec![chunk(b"trfd", trfd(self.v, Affine::IDENTITY))],

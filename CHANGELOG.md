@@ -6,6 +6,9 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Save As has a version list for TraceDraw files too: the `.tdraw`
+  format versions, newest first, with the release that first wrote
+  each; Save keeps the version a drawing was opened or saved in.
 - `.cdr` version 15 is no longer marked experimental: files written in
   it open with every object and their text looks.
 - Save As offers the newest `.cdr` version (27) first, drops the long

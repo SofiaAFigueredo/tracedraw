@@ -6,6 +6,9 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Save As offers the newest `.cdr` version (27) first, drops the long
+  version hint, and has an "Embed colour profile" box with the
+  profile's name and size (version 16 and later).
 - `.cdr` saving before version 16: the font table lists each bold or
   italic face the text uses, so bold text no longer opens in a
   stand-in font.

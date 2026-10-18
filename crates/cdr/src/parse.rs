@@ -2131,27 +2131,66 @@ impl<'a> Ctx<'a> {
     /// Matrices apply in file order; others (perspective, envelope, seen
     /// between two matrices) are not applied yet.
     fn read_transform_list_v3(&mut self, d: &'a [u8], arg: Arg) -> Option<Affine> {
+        let t = self.read_transforms_v3(d, arg)?;
+        if t.envelope.is_some() {
+            self.warn_v3_envelope();
+        }
+        Some(t.after * t.before)
+    }
+
+    fn warn_v3_envelope(&mut self) {
+        if !self.v3_effect_warned {
+            self.v3_effect_warned = true;
+            self.report
+                .warn("an envelope of a version 3 text or group is not applied");
+        }
+    }
+
+    /// The transformation list of a version 3 object: the matrices before
+    /// an envelope (type 0x14), the envelope, and the matrices after it.
+    fn read_transforms_v3(&mut self, d: &'a [u8], arg: Arg) -> Option<V3Transforms> {
         let g = d.get(arg.off..arg.end)?;
         let u = |k: usize| g.get(k..k + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
         let n = (u(2)? as usize).min(32);
-        let mut result: Option<Affine> = None;
+        let mut t = V3Transforms {
+            before: Affine::IDENTITY,
+            envelope: None,
+            after: Affine::IDENTITY,
+        };
+        let mut any = false;
         for i in 0..n {
             let (Some(kind), Some(at)) = (u(4 + 10 * i), u(4 + 10 * i + 6)) else {
                 break;
             };
-            if kind == 0x8c {
-                let mut r = self.reader_at(g, at as usize);
-                if let Some(m) = fixed_matrix(&mut r) {
-                    result = Some(m * result.unwrap_or(Affine::IDENTITY));
+            match kind {
+                0x8c => {
+                    let mut r = self.reader_at(g, at as usize);
+                    if let Some(m) = fixed_matrix(&mut r) {
+                        any = true;
+                        if t.envelope.is_some() {
+                            t.after = m * t.after;
+                        } else {
+                            t.before = m * t.before;
+                        }
+                    }
                 }
-            } else if !self.v3_effect_warned {
-                self.v3_effect_warned = true;
-                self.report.warn(format!(
-                    "a transformation of type 0x{kind:02x} (perspective or envelope) of a version 3 object is not applied"
-                ));
+                0x14 if t.envelope.is_none() => match v3_envelope(g, at as usize) {
+                    Some(e) => t.envelope = Some(e),
+                    None => self
+                        .report
+                        .warn("an envelope of a version 3 object could not be read"),
+                },
+                other => {
+                    if !self.v3_effect_warned {
+                        self.v3_effect_warned = true;
+                        self.report.warn(format!(
+                            "a transformation of type 0x{other:02x} of a version 3 object is not applied"
+                        ));
+                    }
+                }
             }
         }
-        result
+        (any || t.envelope.is_some()).then_some(t)
     }
 
     /// Version 3 artistic text, in its coordinates argument: the character
@@ -2387,6 +2426,8 @@ impl<'a> Ctx<'a> {
         self.pending_clip = None;
         self.pending_on_path = None;
         self.pending_text_transform = None;
+        let mut v3_envelope_of: Option<(Affine, Rect, tracedraw_core::envelope::Frame, Affine)> =
+            None;
         let mut transform = self.outer_transform
             * trfd
                 .map(|t| self.read_transform(t))
@@ -2445,8 +2486,9 @@ impl<'a> Ctx<'a> {
                 ARG_FILL if self.v < 4 => fill = self.read_inline_fill(d, *arg),
                 ARG_OUTLINE if self.v < 4 => stroke = self.read_inline_outline(d, *arg),
                 ARG_LEGACY_TRANSFORM if self.v < 4 => {
-                    if let Some(m) = self.read_transform_list_v3(d, *arg) {
-                        transform = self.outer_transform * m;
+                    if let Some(t) = self.read_transforms_v3(d, *arg) {
+                        transform = self.outer_transform * t.after * t.before;
+                        v3_envelope_of = t.envelope.map(|(r, f)| (t.before, r, f, t.after));
                     }
                 }
                 ARG_FILL if self.v >= 4 => {
@@ -2508,7 +2550,7 @@ impl<'a> Ctx<'a> {
             OBJ_EMBEDDED => self.read_embedded(d, coords, name.as_deref()),
             _ => coords.and_then(|a| self.read_geometry(kind_code, d, a, polygon)),
         };
-        let kind = match kind {
+        let mut kind = match kind {
             Some(k) => k,
             None => {
                 match kind_code {
@@ -2520,6 +2562,31 @@ impl<'a> Ctx<'a> {
                 return None;
             }
         };
+        // A version 3 envelope bends the shape itself: its outline goes
+        // through the matrices before the envelope, is mapped from the
+        // envelope's box onto its frame, and keeps the matrices after.
+        if let Some((before, rect, frame, after)) = v3_envelope_of {
+            let closed = match &kind {
+                ShapeKind::Path { closed, .. } => Some(*closed),
+                ShapeKind::Rect { .. } | ShapeKind::Ellipse { .. } => Some(true),
+                _ => None,
+            };
+            match closed {
+                Some(closed) => {
+                    let local = Shape::new(id, kind.clone()).local_path();
+                    let path = tracedraw_core::envelope::apply_in(
+                        &(before * local),
+                        rect,
+                        &frame,
+                        false,
+                        tracedraw_core::envelope::Mapping::Putty,
+                    );
+                    kind = ShapeKind::Path { path, closed };
+                    transform = self.outer_transform * after;
+                }
+                None => self.warn_v3_envelope(),
+            }
+        }
 
         // Version 16+: a graded transparency in the object's style string
         // becomes a mask; otherwise its uniform transparency an opacity.
@@ -3895,6 +3962,66 @@ pub(crate) fn color_from_model(model: u16, b: [u8; 4]) -> Option<Color> {
     })
 }
 
+/// A version 3 object's transformations, split at its envelope.
+struct V3Transforms {
+    before: Affine,
+    envelope: Option<(Rect, tracedraw_core::envelope::Frame)>,
+    after: Affine,
+}
+
+/// A version 3 envelope (transformation type 0x14) at `at` in `g`: two
+/// u16, the box it maps from (i16 left, top, right, bottom in 1/1000 inch),
+/// the indexes of the four corner points and the point count (five u16),
+/// then the points (i16 pairs). The points run clockwise from the
+/// bottom-left corner up the left side, three a cubic segment (node and
+/// two handles), the last one closing on the first.
+fn v3_envelope(g: &[u8], at: usize) -> Option<(Rect, tracedraw_core::envelope::Frame)> {
+    let i = |k: usize| {
+        g.get(at + k..at + k + 2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f64)
+    };
+    let mm = |v: f64| v * UNIT16_MM;
+    let (x0, y1, x1, y0) = (i(4)?, i(6)?, i(8)?, i(10)?);
+    let rect = Rect::new(
+        mm(x0.min(x1)),
+        mm(y0.min(y1)),
+        mm(x0.max(x1)),
+        mm(y0.max(y1)),
+    );
+    let corners_at: Vec<usize> = (0..4)
+        .map(|k| i(12 + 2 * k).map(|v| v as usize))
+        .collect::<Option<_>>()?;
+    let total = i(20)? as usize;
+    if total < 13
+        || !(total - 1).is_multiple_of(3)
+        || total > 3 * tracedraw_core::envelope::MAX_NODES + 1
+    {
+        return None;
+    }
+    let pts: Vec<Point> = (0..total)
+        .map(|k| Some(Point::new(mm(i(22 + 4 * k)?), mm(i(24 + 4 * k)?))))
+        .collect::<Option<_>>()?;
+    let k = (total - 1) / 3;
+    // Turn the clockwise list round: node j is file node (k - j) % k, and
+    // the segment from it runs back along file segment k - 1 - j.
+    let nodes: Vec<Point> = (0..k).map(|j| pts[3 * ((k - j) % k)]).collect();
+    let handles: Vec<[Point; 2]> = (0..k)
+        .map(|j| {
+            let m = k - 1 - j;
+            [pts[3 * m + 2], pts[3 * m + 1]]
+        })
+        .collect();
+    let mut corners: Vec<usize> = corners_at
+        .iter()
+        .filter(|c| **c % 3 == 0)
+        .map(|c| (k - (c / 3) % k) % k)
+        .collect();
+    corners.sort_unstable();
+    corners.dedup();
+    let frame = tracedraw_core::envelope::Frame::from_parts(&nodes, &handles, &corners)?;
+    (rect.width() > 0.0 && rect.height() > 0.0).then_some((rect, frame))
+}
+
 /// The font names a version 3 `ftbl` holds: NUL-terminated runs of at
 /// least three lowercase letters, first appearance first.
 fn v3_font_names(d: &[u8]) -> Vec<String> {
@@ -4832,6 +4959,64 @@ mod tests {
             .expect("rect");
         assert_eq!(rect.fill, Fill::Solid(Color::cmyk_pct(0.0, 0.0, 0.0, 60.0)));
         assert!(rect.stroke.is_none());
+    }
+
+    #[test]
+    fn version_3_envelopes_bend_shapes_into_their_frame() {
+        // A 1000 x 1000 square mapped from its box onto a frame whose top
+        // side is raised to 1500: matrix, envelope, matrix.
+        let mut env = u16s(&[1, 0]);
+        env.extend_from_slice(&i16s(&[0, 1000, 1000, 0]));
+        env.extend_from_slice(&u16s(&[0, 6, 12, 18, 25]));
+        // Clockwise from the bottom-left: up the left side, along the top,
+        // down the right side, back along the bottom; straight sides of two
+        // segments each (node, handle, handle).
+        let corner = [(0, 0), (0, 1000), (1000, 1500), (1000, 0)];
+        let mut pts: Vec<i16> = Vec::new();
+        for s in 0..4 {
+            let (a, b) = (corner[s], corner[(s + 1) % 4]);
+            for k in 0..6 {
+                let t = k as f64 / 6.0;
+                pts.push((a.0 as f64 + (b.0 - a.0) as f64 * t) as i16);
+                pts.push((a.1 as f64 + (b.1 - a.1) as f64 * t) as i16);
+            }
+        }
+        pts.extend_from_slice(&[0, 0]);
+        env.extend_from_slice(&i16s(&pts));
+        let identity = |t: &mut Vec<u8>| {
+            for v in [1i32 << 16, 0, 0, 0, 1 << 16, 0] {
+                t.extend_from_slice(&v.to_le_bytes());
+            }
+        };
+        let mut steps = u16s(&[3, 3]);
+        steps.extend_from_slice(&u16s(&[0x8c, 0, 0, 34, 0]));
+        steps.extend_from_slice(&u16s(&[0x14, 0, 0, 58, 0]));
+        steps.extend_from_slice(&u16s(&[0x8c, 0, 0, (58 + env.len()) as u16, 0]));
+        steps.resize(34, 0);
+        identity(&mut steps);
+        steps.extend_from_slice(&env);
+        identity(&mut steps);
+        let rect = loda16(
+            0,
+            &[
+                (100, steps),
+                (ARG_COORDS as u16, i16s(&[1000, 1000, 0])),
+                (ARG_FILL as u16, vec![1, 1, 100, 0, 0, 0]),
+            ],
+        );
+        let (doc, rep) = parse(&v3_file(&list(b"obj ", &chunk(b"lobj", &rect)), &[]), 3);
+        assert_eq!(rep.shapes, 1, "{:?}", rep.warnings);
+        let s = first_shape(&doc);
+        assert!(
+            matches!(s.kind, ShapeKind::Path { closed: true, .. }),
+            "{:?}",
+            s.kind
+        );
+        let b = s.page_path().bounding_box();
+        let cx = 215.9 / 2.0;
+        assert!((b.width() - 25.4).abs() < 0.2, "{b:?}");
+        assert!((b.height() - 38.1).abs() < 0.2, "{b:?}");
+        assert!((b.x0 - cx).abs() < 0.2, "{b:?}");
     }
 
     #[test]

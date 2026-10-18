@@ -31,10 +31,12 @@ One window, 760 px wide, the same on every system:
   `docs/tdraw-format.md`); for `.cdr` 27 down to 7, each with its release name
   ("v13 (X3)", "v27 (2026)"); versions not yet checked in other programs
   say "experimental" (versions 7 to 14).
-- **Embed colour profile (size)** with "Colour profile: name", shown when
-  the drawing carries a CMYK profile: on, the profile is stored in the
-  file; off, it is left out. Only version 16 and later store one, so the
-  box is off and greyed for older versions. The choice stays for the
+- **Embed colour profile (size)** with "Colour profile: name" (`.cdr`
+  only): on, the drawing's CMYK profile is stored in the file; off, it
+  is left out. Only version 16 and later store one, so the box is off
+  and greyed for older versions and for a drawing without a profile
+  ("Colour profile: none"). **Embed fonts** sits beside it, greyed:
+  fonts are not stored in written files yet. The choice stays for the
   next Save As and for Save.
 - **Title**, **Subject** and **Rating** (five stars; clicking the lit
   last star takes it off): the document's properties, also in File >

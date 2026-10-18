@@ -635,50 +635,43 @@ fn fields(ui: &mut Ui, st: &mut SaveAsState) {
             }
         });
         ui.end_row();
-        if let Some((name, size)) = &st.profile {
+        if st.cdr {
             // Profiles are stored in the package of version 16 and later.
-            let can = st.cdr && st.version >= 16;
+            let can = st.version >= 16 && st.profile.is_some();
             ui.label("");
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(can, |ui| {
-                    let text = trf(
-                        "dialog.embed_color_profile",
-                        &[("size", &size_text(*size as u64))],
-                    );
+                    let text = match &st.profile {
+                        Some((_, size)) => trf(
+                            "dialog.embed_color_profile",
+                            &[("size", &size_text(*size as u64))],
+                        ),
+                        None => tr("dialog.embed_color_profile_none"),
+                    };
                     let mut on = st.embed_profile && can;
                     if ui.checkbox(&mut on, text).changed() {
                         st.embed_profile = on;
                     }
                 });
+                let name = st
+                    .profile
+                    .as_ref()
+                    .map(|(n, _)| n.clone())
+                    .unwrap_or_else(|| tr("dialog.color_profile_missing"));
                 ui.label(
-                    RichText::new(trf("dialog.color_profile", &[("name", name)]))
+                    RichText::new(trf("dialog.color_profile", &[("name", &name)]))
                         .color(Tokens::text_dim()),
                 );
+                ui.add_space(16.0);
+                // Fonts are not stored in written files yet.
+                ui.add_enabled_ui(false, |ui| {
+                    let mut off = false;
+                    ui.checkbox(&mut off, tr("dialog.embed_fonts"))
+                        .on_disabled_hover_text(tr("dialog.embed_fonts_later"));
+                });
             });
             ui.end_row();
         }
-        row_label(ui, &tr("dialog.title"));
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut st.title).desired_width(220.0));
-            ui.label(tr("dialog.subject"));
-            ui.add(egui::TextEdit::singleline(&mut st.subject).desired_width(200.0));
-            ui.label(tr("dialog.rating"));
-            for i in 1..=5u8 {
-                let colour = if st.rating >= i {
-                    egui::Color32::from_rgb(0xE8, 0xA3, 0x17)
-                } else {
-                    egui::Color32::from_gray(0xC0)
-                };
-                let star = egui::RichText::new("\u{2605}").color(colour).size(15.0);
-                if ui
-                    .add(egui::Label::new(star).sense(egui::Sense::click()))
-                    .clicked()
-                {
-                    st.rating = if st.rating == i { i - 1 } else { i };
-                }
-            }
-        });
-        ui.end_row();
     });
 }
 

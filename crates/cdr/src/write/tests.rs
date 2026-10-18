@@ -2257,3 +2257,69 @@ fn text_from_version_12_goes_out_one_byte_a_letter_with_wide_letters_marked() {
         assert_eq!(text, "Steć", "{v}");
     }
 }
+
+#[test]
+fn before_16_text_frames_take_their_objects_numbers_and_curves_end_padded() {
+    let mut ids = tracedraw_core::id::IdSource::default();
+    let a = text_shape(
+        &mut ids,
+        vec![TextSpan::new("A", "Arial", 12.0)],
+        TextAlign::Left,
+    );
+    let b = text_shape(
+        &mut ids,
+        vec![TextSpan::new("B", "Arial", 12.0)],
+        TextAlign::Left,
+    );
+    let mut c = Shape::new(
+        ids.shape(),
+        ShapeKind::Rect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            radius: 0.0,
+            corners: None,
+        },
+    );
+    c.fill = Fill::Solid(Color::BLACK);
+    let doc = doc_with(vec![a, b, c]);
+    for v in [12u16, 13, 14, 15, 16, 21] {
+        let (_, tree, riff) = chunk_ids(&document_to_cdr_version(&doc, v));
+        let mut pairs = Vec::new();
+        let mut curve_tail = None;
+        tree.root.walk(&mut |ch, _| {
+            if ch.list_type_str().as_deref() == Some("obj ") {
+                let spnd = ch.find(b"spnd").map(|x| tree.data(&riff, x).to_vec());
+                let mut frame = None;
+                ch.walk(&mut |x, _| {
+                    if x.is(b"txsm") {
+                        let d = tree.data(&riff, x);
+                        let at = 36 + usize::from(v >= 15) + 4;
+                        frame = d.get(at..at + 4).map(|b| b.to_vec());
+                    }
+                    if x.is(b"loda") {
+                        let d = tree.data(&riff, x);
+                        if d.get(16..20) == Some(&3u32.to_le_bytes()[..]) {
+                            if let Some((_, b)) = loda_args(d).into_iter().find(|(t, _)| *t == 30) {
+                                let n = u32::from_le_bytes(b[0..4].try_into().unwrap_or([0; 4]))
+                                    as usize;
+                                curve_tail = Some(b.len() - (4 + 9 * n));
+                            }
+                        }
+                    }
+                });
+                if let (Some(s), Some(f)) = (spnd, frame) {
+                    pairs.push((s, f));
+                }
+            }
+        });
+        if v < 16 {
+            assert_eq!(pairs.len(), 2, "{v}");
+            for (s, f) in &pairs {
+                assert_eq!(s, f, "{v}: frame number is the object's spnd");
+            }
+        }
+        let want = if v < 16 { 8 } else { 0 };
+        if v >= 15 {
+            assert_eq!(curve_tail, Some(want), "{v}");
+        }
+    }
+}

@@ -3342,6 +3342,14 @@ impl<'a> Writer<'a> {
                 // program that read them.
                 if v.0 >= 16 {
                     mark_nodes(&mut coords);
+                } else {
+                    // Before 16 the record ends with 8 more bytes after the
+                    // node bytes (zeros, or leftovers, in files of versions
+                    // 11, 12 and 15). Without them the program that wrote
+                    // the samples took the fill and outline ids after the
+                    // record for those bytes and dropped the curve (every
+                    // rectangle of a version 15 file, written as a curve).
+                    coords.extend_from_slice(&[0; 8]);
                 }
                 self.place(
                     s,
@@ -3418,7 +3426,9 @@ impl<'a> Writer<'a> {
         if n < 8 {
             t.u32(0); // not on a path
         }
-        t.u32(1).u32(1); // one frame and its id
+        // One frame, numbered as the text object (its `spnd`), as files of
+        // versions 12 to 15 number it (it was 1 for every text).
+        t.u32(1).u32(self.next_spnd);
         for m in [1.0f64, 0.0, 0.0, 0.0, 1.0, 0.0] {
             t.bytes(&m.to_le_bytes());
         }

@@ -8,7 +8,10 @@ full, row-by-row status.
 
 - `.cdr` saving in versions 7 to 15: text records are laid out as files
   of those versions hold them, one byte a letter from version 12 (text
-  was dropped as an invalid object, or the other program closed).
+  was dropped as an invalid object, or the other program closed), each
+  text's frame numbered as its object, and curves end with the 8 bytes
+  those versions keep after the nodes (rectangles, written as curves,
+  were lost).
 - `.tdraw`: drawings whose grouped curves keep node types open again
   (they were refused with "expected usize").
 - Save As lists each `.cdr` version with the release that writes it

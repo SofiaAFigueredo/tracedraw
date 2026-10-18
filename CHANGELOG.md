@@ -6,6 +6,9 @@ full, row-by-row status.
 
 ## Unreleased
 
+- `.cdr` saving before version 16: the font table lists each bold or
+  italic face the text uses, so bold text no longer opens in a
+  stand-in font.
 - `.cdr` saving in versions 7 to 15: text records are laid out as files
   of those versions hold them, one byte a letter from version 12 (text
   was dropped as an invalid object, or the other program closed), each

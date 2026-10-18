@@ -1866,9 +1866,14 @@ fn mcfg_21(w_mm: f64, h_mm: f64) -> Vec<u8> {
 /// `font`: id, character set, style flags, 10 bytes of classification,
 /// the family name: 8-bit in a 74-byte field before version 12, UTF-16 in
 /// a 296-byte record after (with the technology value 2 at 160).
-fn font_record(v: Ver, id: u16, family: &str) -> Vec<u8> {
+/// A font table record: id, character set, the face's style flags (0x40
+/// regular, 0x1000 bold, 0x80 italic, 0x2000 bold italic), 10 bytes,
+/// then the name. Files list a record for each face their styles use
+/// (two for Arial when text is set in Arial and Arial bold); a style
+/// naming a face without its record was drawn in a stand-in font.
+fn font_record(v: Ver, id: u16, family: &str, flags: u32) -> Vec<u8> {
     let mut b = Buf::default();
-    b.u16(id).u16(0).u32(0x40).zeros(10);
+    b.u16(id).u16(0).u32(flags).zeros(10);
     if v.unicode() {
         let name: Vec<u16> = family.encode_utf16().take(31).collect();
         for u in &name {
@@ -2714,6 +2719,13 @@ impl<'a> Writer<'a> {
             pages.push(node);
         }
         let v = self.v;
+        // The faces the text styles use, for the font table: the face bits
+        // of their style flags (lines left out).
+        let format_faces: Vec<(u16, u32)> = self
+            .text_formats
+            .iter()
+            .map(|f| (f.font, f.flags & 0x3_ffff))
+            .collect();
         let mut out = Vec::new();
         if v.redirects() {
             let mut fver = Buf::default();
@@ -2744,11 +2756,20 @@ impl<'a> Writer<'a> {
             self.font_id("Arial");
         }
         if !self.fonts.is_empty() {
-            let fonts = self
-                .fonts
-                .iter()
-                .map(|(id, f)| chunk(b"font", font_record(v, *id, f)))
-                .collect();
+            let mut fonts = Vec::new();
+            for (id, f) in &self.fonts {
+                fonts.push(chunk(b"font", font_record(v, *id, f, 0x40)));
+                let mut faces: Vec<u32> = format_faces
+                    .iter()
+                    .filter(|(fid, flags)| fid == id && *flags != 0x40)
+                    .map(|(_, flags)| *flags)
+                    .collect();
+                faces.sort_unstable();
+                faces.dedup();
+                for flags in faces {
+                    fonts.push(chunk(b"font", font_record(v, *id, f, flags)));
+                }
+            }
             docl.push(list(b"fntt", fonts));
         }
         // Every object refers to a fill and an outline, and the styles to
@@ -2760,6 +2781,7 @@ impl<'a> Writer<'a> {
             font: self.fonts.first().map(|(id, _)| *id).unwrap_or(1),
             formats: std::mem::take(&mut self.text_formats),
         };
+
         let fills = std::mem::take(&mut self.fills)
             .into_iter()
             .map(|f| list(b"filc", vec![chunk(b"fild", f)]))

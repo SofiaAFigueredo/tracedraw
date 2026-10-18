@@ -1102,7 +1102,7 @@ fn records_have_the_sizes_of_the_versions_files() {
         );
         assert_eq!(fild(Ver(v), 1, &Fill::None).len(), none, "{v}");
         assert_eq!(
-            font_record(Ver(v), 1, "Arial").len(),
+            font_record(Ver(v), 1, "Arial", 0x40).len(),
             if v >= 12 { 296 } else { 92 },
             "{v}"
         );
@@ -2360,6 +2360,39 @@ fn before_16_text_takes_its_look_from_a_style_of_its_own() {
         assert!(
             looks.contains(&("Times New Roman".into(), 9.0, false, TextAlign::Left)),
             "{v}: {looks:?}"
+        );
+    }
+}
+
+#[test]
+fn the_font_table_lists_every_face_the_text_styles_use() {
+    let mut ids = tracedraw_core::id::IdSource::default();
+    let mut bold = TextSpan::new("Heading", "Arial", 20.0);
+    bold.bold = true;
+    let plain = TextSpan::new("body", "Arial", 10.0);
+    let a = text_shape(&mut ids, vec![bold], TextAlign::Left);
+    let b = text_shape(&mut ids, vec![plain], TextAlign::Left);
+    let doc = doc_with(vec![a, b]);
+    for v in 7u16..=15 {
+        let bytes = document_to_cdr_version(&doc, v);
+        // Every font record: its id and the face flags after the charset.
+        let (_, tree, riff) = chunk_ids(&bytes);
+        let mut faces = Vec::new();
+        tree.root.walk(&mut |ch, _| {
+            if ch.id_str() == "font" {
+                let d = tree.data(&riff, ch);
+                let id = u16::from_le_bytes([d[0], d[1]]);
+                faces.push((id, u32::from_le_bytes(d[4..8].try_into().expect("u32"))));
+            }
+        });
+        let arial: Vec<u32> = faces
+            .iter()
+            .filter(|(id, _)| faces.iter().any(|(j, f)| j == id && *f == 0x1000))
+            .map(|(_, f)| *f)
+            .collect();
+        assert!(
+            arial.contains(&0x40) && arial.contains(&0x1000),
+            "{v}: {faces:x?}"
         );
     }
 }

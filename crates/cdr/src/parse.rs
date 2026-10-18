@@ -280,6 +280,7 @@ struct Ctx<'a> {
     /// The font names of a version 3 `ftbl`, in file order.
     v3_fonts: Vec<String>,
     v3_effect_warned: bool,
+    stand_in_warned: bool,
     /// Guidelines of the page being read (objects of type 0x16).
     guides: Vec<tracedraw_core::document::Guide>,
     /// The last object read was a guideline, not a skipped object.
@@ -350,6 +351,7 @@ impl<'a> Ctx<'a> {
             library_inks: Default::default(),
             v3_fonts: Vec::new(),
             v3_effect_warned: false,
+            stand_in_warned: false,
             pending_on_path: None,
             on_path: HashMap::new(),
             pending_text_transform: None,
@@ -833,6 +835,7 @@ impl<'a> Ctx<'a> {
                     .warn(format!("image fill {id} (type {ftype}) is unreadable"));
                 Fill::None
             }),
+            6 => self.stand_in_fill(6),
             10 => self.read_vector_pattern_fill(body).unwrap_or_else(|| {
                 self.report.warn(format!(
                     "vector pattern fill {id} not readable yet; no fill"
@@ -1261,11 +1264,18 @@ impl<'a> Ctx<'a> {
             p[0] as u32 + p[1] as u32 + p[2] as u32
         };
         let zero_is_front = lum(0) <= lum(1);
-        let stride = (width as usize).div_ceil(32) * 4;
         let pixels_start = pal + 8;
         let Some(pixels) = d.get(pixels_start..) else {
             return;
         };
+        // Rows pad to 4 bytes; version 3 tiles pad them to 2 (a 16 x 16
+        // tile in 32 bytes).
+        let stride =
+            if self.v < 4 && pixels.len() < (width as usize).div_ceil(32) * 4 * height as usize {
+                (width as usize).div_ceil(16) * 2
+            } else {
+                (width as usize).div_ceil(32) * 4
+            };
         if pixels.len() < stride * height as usize {
             self.report.warn(format!(
                 "pattern tile {pattern_id}: {} pixel bytes, {} expected; placeholder used",
@@ -2284,6 +2294,24 @@ impl<'a> Ctx<'a> {
                     ..Default::default()
                 })
             }
+            // Two-colour pattern: the tile (u32, a `bmpf` id), the tile's
+            // width and height (u16, 1/1000 inch), 7 bytes, the front and
+            // the back colour.
+            Some(7) => {
+                let (Some(tile_id), Some(w)) = (r.u32(), r.u16()) else {
+                    return Fill::None;
+                };
+                r.skip(2 + 7);
+                let (Some(front), Some(back)) = (self.read_color(&mut r), self.read_color(&mut r))
+                else {
+                    return Fill::None;
+                };
+                let size_mm = if w > 0 { w as f64 * UNIT16_MM } else { 10.0 };
+                self.two_colour_pattern(tile_id, front, back, size_mm)
+            }
+            // PostScript texture (6) and vector pattern (10) fills: shown
+            // with a stand-in pattern.
+            Some(t @ (6 | 10)) => self.stand_in_fill(t as u16),
             Some(other) => {
                 self.report.warn(format!(
                     "fill type {other} of a version 3 drawing not modelled yet"
@@ -2291,6 +2319,64 @@ impl<'a> Ctx<'a> {
                 Fill::None
             }
         }
+    }
+
+    /// A two-colour pattern from the `bmpf` tile `tile_id`, a checker when
+    /// the file has no such tile.
+    fn two_colour_pattern(
+        &mut self,
+        tile_id: u32,
+        front: Color,
+        back: Color,
+        size_mm: f64,
+    ) -> Fill {
+        if let Some(tile) = self.pattern_tiles.get(&tile_id) {
+            let f = front.to_rgb8();
+            let b = back.to_rgb8();
+            let mut rgba = Vec::with_capacity(tile.front.len() * 4);
+            for &on in &tile.front {
+                let c = if on { f } else { b };
+                rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+            return Fill::Pattern(Pattern::Bitmap {
+                png: encode_png(tile.width, tile.height, &rgba),
+                width_px: tile.width,
+                height_px: tile.height,
+                size_mm,
+            });
+        }
+        self.report
+            .warn(format!("pattern {tile_id} drawn with a placeholder tile"));
+        Fill::Pattern(Pattern::TwoColor {
+            tile: PatternTile::Checker,
+            front,
+            back,
+            size_mm,
+        })
+    }
+
+    /// The stand-in for fills whose look the file does not hold: PostScript
+    /// textures (6, procedures of the program that wrote the file, named
+    /// by number) and, in version 3, vector patterns (10). Grey diagonal
+    /// stripes show where they are.
+    fn stand_in_fill(&mut self, ftype: u16) -> Fill {
+        if !self.stand_in_warned {
+            self.stand_in_warned = true;
+            let what = if ftype == 6 {
+                "PostScript texture"
+            } else {
+                "vector pattern"
+            };
+            self.report.warn(format!(
+                "{what} fills are shown with a stand-in pattern of grey stripes"
+            ));
+        }
+        Fill::Pattern(Pattern::TwoColor {
+            tile: PatternTile::DiagonalStripes,
+            front: Color::cmyk_pct(0.0, 0.0, 0.0, 40.0),
+            back: Color::cmyk_pct(0.0, 0.0, 0.0, 0.0),
+            size_mm: 4.0,
+        })
     }
 
     /// Version 3 outline, inline in the object: flags (u8, bit 0 set when
@@ -5017,6 +5103,64 @@ mod tests {
         assert!((b.width() - 25.4).abs() < 0.2, "{b:?}");
         assert!((b.height() - 38.1).abs() < 0.2, "{b:?}");
         assert!((b.x0 - cx).abs() < 0.2, "{b:?}");
+    }
+
+    #[test]
+    fn version_3_pattern_and_stand_in_fills() {
+        // A 16 x 16 1-bit tile with word-aligned rows (32 bytes), id 7; a
+        // rectangle filled with it in red on white, one with a PostScript
+        // texture.
+        let mut tile = u32s(&[7, 40, 16, 16]);
+        tile.extend_from_slice(&u16s(&[1, 1]));
+        tile.extend_from_slice(&u32s(&[0, 32, 0, 0, 0, 0]));
+        tile.extend_from_slice(&[0, 0, 0, 0, 255, 255, 255, 0]);
+        tile.extend_from_slice(&[0xF0; 32]);
+        let rect = |fill: Vec<u8>| {
+            list(
+                b"obj ",
+                &chunk(
+                    b"lobj",
+                    &loda16(
+                        0,
+                        &[
+                            (100, v3_transform([1 << 16, 0, 0, 0, 1 << 16, 0])),
+                            (ARG_COORDS as u16, i16s(&[500, 500, 0])),
+                            (ARG_FILL as u16, fill),
+                        ],
+                    ),
+                ),
+            )
+        };
+        let mut pattern = vec![7];
+        pattern.extend_from_slice(&u32s(&[7]));
+        pattern.extend_from_slice(&u16s(&[250, 250]));
+        pattern.extend_from_slice(&[0; 7]);
+        pattern.extend_from_slice(&[1, 0, 100, 100, 0, 1, 0, 0, 0, 0]);
+        let mut ps = vec![6];
+        ps.extend_from_slice(&[0xbf, 0xec, 4, 0, 10, 0, 100, 0, 100, 0, 10, 0]);
+        let objects = [rect(pattern), rect(ps)].concat();
+        let extra = list(b"bpft", &chunk(b"bmpf", &tile));
+        let (doc, rep) = parse(&v3_file(&objects, &extra), 3);
+        assert_eq!(rep.shapes, 2, "{:?}", rep.warnings);
+        let fills: Vec<&Fill> = doc.pages[0]
+            .layers
+            .iter()
+            .flat_map(|l| &l.shapes)
+            .map(|s| &s.fill)
+            .collect();
+        assert!(fills.iter().any(|f| matches!(f, Fill::Pattern(Pattern::Bitmap { width_px: 16, size_mm, .. }) if (size_mm - 6.35).abs() < 1e-9)), "{fills:?}");
+        assert!(fills.iter().any(|f| matches!(
+            f,
+            Fill::Pattern(Pattern::TwoColor {
+                tile: PatternTile::DiagonalStripes,
+                ..
+            })
+        )));
+        assert!(
+            !rep.warnings.iter().any(|w| w.contains("placeholder")),
+            "{:?}",
+            rep.warnings
+        );
     }
 
     #[test]

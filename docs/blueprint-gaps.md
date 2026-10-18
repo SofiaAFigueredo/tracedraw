@@ -23,7 +23,7 @@ exceptions, shown disabled so the layout stays complete:
 
 ## Fills, colour and effects
 
-- PostScript fills (legacy; vector pattern fills are done).
+- PostScript fills (legacy): shown with a stand-in pattern; the procedures are named by number only. Vector pattern fills are done from version 7; version 3's (`LIST vect`) show the stand-in.
 
 ## File format
 

@@ -22,6 +22,9 @@ full, row-by-row status.
   an empty line after every line break.
 - `.cdr` version 3: envelopes bend the shapes they hold (perspective
   charts and lettering); text under an envelope keeps its matrices.
+- `.cdr` version 3: two-colour pattern fills (from the file's tiles);
+  PostScript texture and vector pattern fills, in every version that has
+  them, show a stand-in of grey stripes instead of nothing.
 
 - `.cdr` files of versions 3 and 4 open properly (they opened blank or
   out of shape): version 3 objects with their own matrices, fills,

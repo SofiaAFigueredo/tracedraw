@@ -896,7 +896,8 @@ mod tests {
         };
         assert_eq!(version_label(27), plain(27));
         assert_eq!(version_label(16), plain(16));
-        assert_ne!(version_label(15), plain(15));
+        assert_eq!(version_label(15), plain(15));
+        assert_ne!(version_label(14), plain(14));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

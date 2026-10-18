@@ -28,7 +28,7 @@ One window, 760 px wide, the same on every system:
   drawing that came from or was saved to a `.cdr` file.
 - **Version** (`.cdr` only): 27 down to 7, each with its release name
   ("v13 (X3)", "v27 (2026)"); versions not yet checked in other programs
-  say "experimental".
+  say "experimental" (versions 7 to 14).
 - **Embed colour profile (size)** with "Colour profile: name", shown when
   the drawing carries a CMYK profile: on, the profile is stored in the
   file; off, it is left out. Only version 16 and later store one, so the

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- `.cdr` version 15 is no longer marked experimental: files written in
+  it open with every object and their text looks.
 - Save As offers the newest `.cdr` version (27) first, drops the long
   version hint, and has an "Embed colour profile" box with the
   profile's name and size (version 16 and later).

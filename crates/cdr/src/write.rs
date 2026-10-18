@@ -35,9 +35,10 @@ use tracedraw_core::{
 };
 
 /// The oldest version whose files written here are known to open in the
-/// program that wrote the samples (text from 16, by a user's test of
-/// files of versions 7 to 22); older ones are offered as experimental.
-pub const CHECKED_SINCE: u16 = 16;
+/// program that wrote the samples (by a user's tests: text from 16 in
+/// files of versions 7 to 22, and every object and text look of a
+/// version 15 file); older ones are offered as experimental.
+pub const CHECKED_SINCE: u16 = 15;
 /// The newest version known to open there (versions 23 to 27, written
 /// with the records of version 22, opened with their images in that
 /// program's 2026 release, a user's test of 2026-10-18).

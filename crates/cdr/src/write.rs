@@ -3386,41 +3386,64 @@ impl<'a> Writer<'a> {
     fn txsm7(&mut self, spans: &[TextSpan], align: TextAlign, fill: &Fill) -> Vec<u8> {
         let v = self.v;
         let n = v.0;
+        // As files of versions 7 to 15 hold artistic text: -1, -1, 0, -1,
+        // 8, a number growing with the version (2 in 7, 3 in 8, 5 in 10
+        // and 11, 6 in 12, 8 in 13, 9 in 14, 11 in 15), 0, 3, 0; one frame
+        // with an identity matrix (six f64). A header of zeros and a zero
+        // matrix made the program that wrote the samples drop the text of
+        // a version 15 file as an invalid object.
+        let layout = match n {
+            0..=7 => 2,
+            8 => 3,
+            9 => 4,
+            10 | 11 => 5,
+            12 => 6,
+            13 => 8,
+            14 => 9,
+            _ => 11,
+        };
         let mut t = Buf::default();
-        t.u32(0).zeros(32); // artistic text (no frame flag)
+        t.u32(u32::MAX)
+            .u32(u32::MAX)
+            .u32(0)
+            .u32(u32::MAX)
+            .u32(8)
+            .u32(layout)
+            .u32(0)
+            .u32(3)
+            .u32(0);
         if n >= 15 {
             t.zeros(1);
         }
         if n < 8 {
             t.u32(0); // not on a path
         }
-        t.u32(1).u32(1).zeros(48); // one frame, its id and matrix
+        t.u32(1).u32(1); // one frame and its id
+        for m in [1.0f64, 0.0, 0.0, 0.0, 1.0, 0.0] {
+            t.bytes(&m.to_le_bytes());
+        }
         if n >= 8 {
             t.u32(0); // not on a path
             if n >= 15 {
-                t.zeros(8);
+                t.zeros(8 + 4);
             }
         }
-        t.zeros(if n >= 15 {
-            40
-        } else if n >= 14 {
-            36
-        } else if n > 8 {
-            34
-        } else if n == 8 {
-            32
-        } else {
-            36
-        });
         let paragraphs = Self::paragraphs(spans);
         t.u32(paragraphs.len() as u32);
         for runs in &paragraphs {
             t.u32(style_for(align)).zeros(1);
+            if n >= 13 {
+                t.zeros(1);
+            }
             t.u32(runs.len() as u32);
             let mut text = String::new();
-            for sp in runs {
+            let last_run = runs.len().saturating_sub(1);
+            for (ri, sp) in runs.iter().enumerate() {
                 let font = self.font_id(&sp.font_family);
-                let chars = sp.text.chars().count().min(65535) as u16;
+                // The last run counts the paragraph's end too, as files
+                // count it.
+                let chars =
+                    (sp.text.chars().count() + usize::from(ri == last_run)).min(65535) as u16;
                 let span_fill = sp.fill.as_ref().filter(|f| *f != fill);
                 let mut flags = 0x01u8 | 0x02 | 0x04;
                 if span_fill.is_some() {

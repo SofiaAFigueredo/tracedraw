@@ -6,6 +6,10 @@ full, row-by-row status.
 
 ## Unreleased
 
+- `.cdr` saving in versions 7 to 15: text records are laid out as files
+  of those versions hold them (text was dropped as an invalid object).
+- `.tdraw`: drawings whose grouped curves keep node types open again
+  (they were refused with "expected usize").
 - Save As lists each `.cdr` version with the release that writes it
   ("v13 (X3)", "v27 (2026)"); versions 23 to 27 are no longer marked
   experimental (files written here open in the 2026 release).

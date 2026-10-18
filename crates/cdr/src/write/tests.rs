@@ -2185,3 +2185,43 @@ fn version_15_objects_carry_the_arguments_its_files_have() {
         assert_eq!(has(4, 16015), v >= 15, "{v}");
     }
 }
+
+#[test]
+fn artistic_text_records_before_16_open_as_files_have_them() {
+    let mut ids = tracedraw_core::id::IdSource::default();
+    let t = text_shape(
+        &mut ids,
+        vec![TextSpan::new("Hi", "Arial", 12.0)],
+        TextAlign::Left,
+    );
+    let doc = doc_with(vec![t]);
+    for (v, layout) in [
+        (7u16, 2u32),
+        (8, 3),
+        (10, 5),
+        (11, 5),
+        (12, 6),
+        (13, 8),
+        (14, 9),
+        (15, 11),
+    ] {
+        let (_, tree, riff) = chunk_ids(&document_to_cdr_version(&doc, v));
+        let mut rec = None;
+        tree.root.walk(&mut |c, _| {
+            if c.is(b"txsm") && rec.is_none() {
+                rec = Some(tree.data(&riff, c).to_vec());
+            }
+        });
+        let d = rec.expect("a text record");
+        let u = |at: usize| u32::from_le_bytes(d[at..at + 4].try_into().expect("4 bytes"));
+        assert_eq!(
+            (0..9).map(|i| u(i * 4)).collect::<Vec<_>>(),
+            [u32::MAX, u32::MAX, 0, u32::MAX, 8, layout, 0, 3, 0],
+            "{v}"
+        );
+        // The frame's matrix is the identity, not zeros.
+        let at = 36 + usize::from(v >= 15) + if v < 8 { 4 } else { 0 } + 8;
+        let f = |i: usize| f64::from_le_bytes(d[at + i * 8..at + i * 8 + 8].try_into().expect("8"));
+        assert_eq!((f(0), f(4)), (1.0, 1.0), "{v}");
+    }
+}

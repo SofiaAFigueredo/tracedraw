@@ -895,9 +895,10 @@ fn the_style_table_numbers_its_entries_once_and_styles_name_them() {
         graphic_fill: 8,
         outline: 9,
         font: 3,
+        formats: Vec::new(),
     };
     for v in versions() {
-        let d = stlt(Ver(v), uses);
+        let d = stlt(Ver(v), uses.clone());
         let at = std::cell::Cell::new(0usize);
         let mut u = || {
             let x = d
@@ -2321,5 +2322,44 @@ fn before_16_text_frames_take_their_objects_numbers_and_curves_end_padded() {
         if v >= 15 {
             assert_eq!(curve_tail, Some(want), "{v}");
         }
+    }
+}
+
+#[test]
+fn before_16_text_takes_its_look_from_a_style_of_its_own() {
+    let mut ids = tracedraw_core::id::IdSource::default();
+    let mut big = TextSpan::new("TRAVEL", "Arial", 40.0);
+    big.bold = true;
+    let small = TextSpan::new("note", "Times New Roman", 9.0);
+    let a = text_shape(&mut ids, vec![big], TextAlign::Center);
+    let b = text_shape(&mut ids, vec![small], TextAlign::Left);
+    let doc = doc_with(vec![a, b]);
+    for v in 7u16..=15 {
+        let bytes = document_to_cdr_version(&doc, v);
+        let (back, rep) = crate::open_bytes(&bytes, "back").expect("reads back");
+        let looks: Vec<(String, f64, bool, TextAlign)> = back.pages[0].layers[0]
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.kind {
+                ShapeKind::Text { spans, align, .. } => spans.first().map(|sp| {
+                    (
+                        sp.font_family.clone(),
+                        (sp.size_pt * 10.0).round() / 10.0,
+                        sp.bold,
+                        *align,
+                    )
+                }),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            looks.contains(&("Arial".into(), 40.0, true, TextAlign::Center)),
+            "{v}: {looks:?} {:?}",
+            rep.warnings
+        );
+        assert!(
+            looks.contains(&("Times New Roman".into(), 9.0, false, TextAlign::Left)),
+            "{v}: {looks:?}"
+        );
     }
 }

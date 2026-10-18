@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- `.cdr` versions 13 to 15: artistic text no longer lands metres off the
+  page when its record holds a number where later versions keep a place.
 - `.cdr` versions 7 to 11: letters take the style their character
   record numbers, so a word with one letter in another font or a big
   first letter of a paragraph comes out right (it went to the end or

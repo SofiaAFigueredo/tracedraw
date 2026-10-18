@@ -3054,6 +3054,11 @@ impl<'a> Writer<'a> {
             a.u32(1).bytes(&style_string(v, &json));
             args.push((ARG_STYLE_STRING, a.done()));
         } else {
+            // Version 15 text carries 1 in argument 16015 as from 16 (every
+            // text object of the version 15 files seen).
+            if text.is_some() && v.0 == 15 {
+                args.push((ARG_TEXT_LINK, 1u32.to_le_bytes().to_vec()));
+            }
             // Text refers to the style of its alignment, as its paragraphs;
             // graphics to the graphic style.
             let style = text
@@ -3067,7 +3072,12 @@ impl<'a> Writer<'a> {
         if let Some(n) = &s.name {
             args.push((ARG_NAME, name_bytes(v, n)));
         }
-        if s.opacity < 0.999 {
+        // From version 13 the argument holds a tagged record (lenses and
+        // transparencies) whose transparency layout is not known yet; the
+        // older bare value made a version 15 file "contain an invalid
+        // object" in the program that wrote the samples. Style strings
+        // carry the transparency from 16.
+        if s.opacity < 0.999 && !v.tagged() {
             args.push((ARG_OPACITY, opacity_arg(v, s.opacity)));
         }
         let outline = s.stroke.as_ref().map(|st| st.width / 2.0).unwrap_or(0.0);

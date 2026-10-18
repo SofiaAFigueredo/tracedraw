@@ -9,6 +9,9 @@ full, row-by-row status.
 - Save As lists each `.cdr` version with the release that writes it
   ("v13 (X3)", "v27 (2026)"); versions 23 to 27 are no longer marked
   experimental (files written here open in the 2026 release).
+- `.cdr` saving in versions 13 to 15: no invalid object when a shape is
+  partly transparent (the transparency is not kept in those versions
+  yet); version 15 text carries the argument its files have.
 - `.cdr` saving: images show in other programs (bitmap objects now carry
   their pixel size and image box; files opened without their images).
 - `.cdr` versions 23 to 27: files open (version 23 files were refused),

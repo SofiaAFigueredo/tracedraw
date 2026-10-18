@@ -128,7 +128,9 @@ fn shapes_round_trip(doc: &Document, v: u16) {
     assert_eq!(s0.dash, vec![3.0, 1.0]);
     assert!(s0.scale_with_object, "{v}");
     assert_eq!(shapes[0].name.as_deref(), Some("box"), "{v}");
-    assert!((shapes[0].opacity - 0.5).abs() < 0.01, "{v}");
+    // Versions 13 to 15 do not keep the transparency yet.
+    let want = if (13..=15).contains(&v) { 1.0 } else { 0.5 };
+    assert!((shapes[0].opacity - want).abs() < 0.01, "{v}");
     let eb = shapes[1].bounds();
     assert!(
         (eb.x0 - 100.0).abs() < 0.01 && (eb.y0 - 10.0).abs() < 0.01,
@@ -1829,11 +1831,11 @@ fn graded_transparency_is_written_as_a_gradient_from_16() {
     });
     doc.pages[0].layers[0].shapes = vec![r];
     doc.set_ids(ids);
-    // Before version 16 the mean opacity; from 16 the gradient itself.
-    let bytes = document_to_cdr_version(&doc, 15);
+    // Before version 13 the mean opacity; from 16 the gradient itself.
+    let bytes = document_to_cdr_version(&doc, 12);
     let (back, _) = crate::open_bytes(&bytes, "back").expect("reads back");
     let s = &back.pages[0].layers[0].shapes[0];
-    assert!((s.opacity - 0.75).abs() < 0.01, "15: {}", s.opacity);
+    assert!((s.opacity - 0.75).abs() < 0.01, "12: {}", s.opacity);
     for v in [16u16, 21] {
         let bytes = document_to_cdr_version(&doc, v);
         let (back, _) = crate::open_bytes(&bytes, "back").expect("reads back");
@@ -2142,5 +2144,44 @@ fn bitmap_objects_carry_their_pixel_size() {
         );
         assert_eq!([i(32), i(36), i(40)], [24 << 16 | 2, 3, 2], "{v}");
         assert_eq!(i(60), -1, "{v}");
+    }
+}
+
+#[test]
+fn version_15_objects_carry_the_arguments_its_files_have() {
+    let mut ids = tracedraw_core::id::IdSource::default();
+    let mut r = Shape::new(
+        ids.shape(),
+        ShapeKind::Rect {
+            rect: Rect::new(10.0, 10.0, 30.0, 30.0),
+            radius: 0.0,
+            corners: None,
+        },
+    );
+    r.fill = Fill::Solid(Color::BLACK);
+    r.opacity = 0.5;
+    let t = text_shape(
+        &mut ids,
+        vec![TextSpan::new("Hi", "Arial", 12.0)],
+        TextAlign::Left,
+    );
+    let doc = doc_with(vec![r, t]);
+    for v in versions() {
+        let (_, tree, riff) = chunk_ids(&document_to_cdr_version(&doc, v));
+        let mut seen: Vec<(u32, Vec<u32>)> = Vec::new();
+        tree.root.walk(&mut |c, _| {
+            if c.is(b"loda") {
+                let d = tree.data(&riff, c);
+                let kind = d
+                    .get(16..20)
+                    .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap_or([0; 4])));
+                seen.push((kind, loda_args(d).iter().map(|(t, _)| *t).collect()));
+            }
+        });
+        let has = |kind: u32, arg: u32| seen.iter().any(|(k, a)| *k == kind && a.contains(&arg));
+        // No bare transparency value where these versions keep a record.
+        assert_eq!(has(3, 8000) || has(1, 8000), v < 13, "{v}");
+        // Text: 16015 from version 15.
+        assert_eq!(has(4, 16015), v >= 15, "{v}");
     }
 }

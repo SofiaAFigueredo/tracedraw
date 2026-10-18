@@ -1945,13 +1945,11 @@ impl<'a> Ctx<'a> {
             if ![a, b, c_, d_, e, f].iter().all(|x| x.is_finite()) {
                 return Affine::IDENTITY;
             }
+            // Several matrices apply one after the other (seen in a
+            // version 5 file whose labels are placed by a second, moving
+            // matrix after a first, scaling one).
             let m = Affine::new([a, b, c_, d_, e, f]);
-            if result.is_some() {
-                self.report
-                    .warn("trfd with several matrices; only the first is used");
-                break;
-            }
-            result = Some(m);
+            result = Some(m * result.unwrap_or(Affine::IDENTITY));
         }
         result.unwrap_or(Affine::IDENTITY)
     }
@@ -4970,6 +4968,45 @@ mod tests {
         // Coordinates run from the page's centre.
         assert!((b.x0 - (215.9 / 2.0 + 25.4)).abs() < 1e-6, "{b:?}");
         assert_eq!(s.fill, Fill::Solid(Color::cmyk_pct(0.0, 100.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn several_trfd_matrices_apply_one_after_the_other() {
+        // Version 5: a scale by 2, then a move by 1000 (thousandths of an
+        // inch) to the right.
+        let mut tr = u16s(&[116, 2, 10, 0xffff, 0, 16, 66, 116]);
+        for m in [
+            [2.0, 0.0, 0.0, 0.0, 2.0, 0.0],
+            [1.0, 0.0, 1000.0, 0.0, 1.0, 0.0],
+        ] {
+            tr.extend_from_slice(&u16s(&[8]));
+            for v in m {
+                tr.extend_from_slice(&f64::to_le_bytes(v));
+            }
+        }
+        let args = [(ARG_COORDS as u16, i16s(&[1000, 500, 0]))];
+        let obj = list(
+            b"obj ",
+            &[
+                chunk(b"loda", &loda16(OBJ_RECT as u16, &args)),
+                chunk(b"trfd", &tr),
+            ]
+            .concat(),
+        );
+        let body = [
+            chunk(b"mcfg", &i16s(&[8500, 11000])),
+            list(b"page", &list(b"layr", &obj)),
+        ]
+        .concat();
+        let (doc, rep) = parse(&riff(b"CDR5", &body), 5);
+        assert!(
+            !rep.warnings.iter().any(|w| w.contains("several")),
+            "{:?}",
+            rep.warnings
+        );
+        let b = first_shape(&doc).page_path().bounding_box();
+        assert!((b.width() - 50.8).abs() < 1e-6, "{b:?}");
+        assert!((b.x0 - (215.9 / 2.0 + 25.4)).abs() < 1e-6, "{b:?}");
     }
 
     #[test]

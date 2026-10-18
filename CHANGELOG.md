@@ -16,6 +16,10 @@ full, row-by-row status.
 - Print Merge is laid out around its records: Import File, Add Column
   (name and type), Configure Columns, View Single Record, record
   navigation, Save Data Source and Finish.
+- `.cdr`: an object whose transform holds several matrices takes all of
+  them, one after the other (only the first was used, so labels of a
+  version 5 chart piled up in one place); version 5 text no longer gets
+  an empty line after every line break.
 
 - `.cdr` files of versions 3 and 4 open properly (they opened blank or
   out of shape): version 3 objects with their own matrices, fills,

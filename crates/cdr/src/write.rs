@@ -3465,12 +3465,40 @@ impl<'a> Writer<'a> {
                 text.push_str(&sp.text);
             }
             let chars = text.chars().count();
-            t.u32(chars as u32)
-                .zeros(chars * if v.unicode() { 8 } else { 4 });
             if v.unicode() {
-                let bytes = utf16(&text);
+                // From version 12 a letter is one byte in Windows-1252
+                // unless bit 0 of the first byte of its 8-byte record marks
+                // it as a UTF-16 unit in two bytes; the third byte numbers
+                // its run, times 2. Text all in UTF-16 with no letter
+                // marked made the program that wrote the samples crash.
+                let mut records = Buf::default();
+                let mut bytes = Vec::new();
+                let mut run_of = Vec::with_capacity(chars);
+                for (ri, sp) in runs.iter().enumerate() {
+                    run_of.extend(std::iter::repeat_n(ri, sp.text.chars().count()));
+                }
+                for (i, c) in text.chars().enumerate() {
+                    let run = run_of.get(i).copied().unwrap_or(0).min(127) as u8;
+                    match cp1252(&c.to_string()) {
+                        Some(b) => {
+                            records.u8(0).u8(0).u8(run << 1).zeros(5);
+                            bytes.extend_from_slice(&b);
+                        }
+                        None => {
+                            let unit = if (c as u32) <= 0xffff {
+                                c as u16
+                            } else {
+                                b'?' as u16
+                            };
+                            records.u8(1).u8(0).u8(run << 1).zeros(5);
+                            bytes.extend_from_slice(&unit.to_le_bytes());
+                        }
+                    }
+                }
+                t.u32(chars as u32).bytes(&records.done());
                 t.u32(bytes.len() as u32).bytes(&bytes);
             } else {
+                t.u32(chars as u32).zeros(chars * 4);
                 let bytes = cp1252(&text).unwrap_or_else(|| {
                     text.chars()
                         .map(|c| if c.is_ascii() { c as u8 } else { b'?' })

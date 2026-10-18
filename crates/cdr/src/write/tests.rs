@@ -2225,3 +2225,35 @@ fn artistic_text_records_before_16_open_as_files_have_them() {
         assert_eq!((f(0), f(4)), (1.0, 1.0), "{v}");
     }
 }
+
+#[test]
+fn text_from_version_12_goes_out_one_byte_a_letter_with_wide_letters_marked() {
+    let mut ids = tracedraw_core::id::IdSource::default();
+    let t = text_shape(
+        &mut ids,
+        vec![TextSpan::new("Steć", "Arial", 12.0)],
+        TextAlign::Left,
+    );
+    let doc = doc_with(vec![t]);
+    for v in 12u16..=15 {
+        let bytes = document_to_cdr_version(&doc, v);
+        let (_, tree, riff) = chunk_ids(&bytes);
+        let mut rec = None;
+        tree.root.walk(&mut |c, _| {
+            if c.is(b"txsm") && rec.is_none() {
+                rec = Some(tree.data(&riff, c).to_vec());
+            }
+        });
+        let d = rec.expect("a text record");
+        // The letters end the record, before the path flag: three single
+        // bytes and the UTF-16 unit of the letter Windows-1252 lacks.
+        let tail = &d[d.len() - 1 - 5 - 4..d.len() - 1];
+        assert_eq!(tail, &[5, 0, 0, 0, b'S', b't', b'e', 0x07, 0x01], "{v}");
+        let (back, _) = crate::open_bytes(&bytes, "back").expect("reads back");
+        let ShapeKind::Text { spans, .. } = &back.pages[0].layers[0].shapes[0].kind else {
+            panic!("text");
+        };
+        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(text, "Steć", "{v}");
+    }
+}

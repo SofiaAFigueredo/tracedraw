@@ -6,6 +6,15 @@ full, row-by-row status.
 
 ## Unreleased
 
+- VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
+  and other compound files with a VBA project (modules, their kinds and
+  code in the project's code page, references, protection, modules saved
+  without source), exported `.bas`, `.cls` and `.frm`/`.frx` files, and
+  the forms with their controls (labels, text boxes, buttons, check and
+  option boxes, lists, frames, pages, images, spin buttons, scroll bars,
+  tab strips). Projects can be written back as module files or as a
+  compound file.
+
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a
   report of the file, the document, its colour settings, objects and

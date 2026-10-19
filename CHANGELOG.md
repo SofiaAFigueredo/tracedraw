@@ -6,6 +6,11 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Moving objects with the Pick tool shows the arrow with a dotted box,
+  and the box gets a plus after a right click (the move leaves the
+  original and a copy lands where the left button goes up). The pointer
+  no longer vanishes after that right click.
+
 ## 0.9.4 (2026-10-19)
 
 - Color Management Settings: Document and Default tabs, the drawing's

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- The `.tdraw` format is version 0 again: the 1 written by 0.5 to 0.9 had the same layout and is read as 0, and Save As shows "v0" with nothing to choose. The next real change of layout will be version 2.
+
 - Dialogs taller than their first frame no longer stay cut off at the bottom (hiding OK and Cancel); they grow to fit the window before they scroll.
 
 - Bitmaps > Remove Background...: makes the background of photos transparent on this computer, without an AI service. The background colours are learnt from the picture's edges (or picked with an eyedropper), with tolerance, edge softness, Contiguous, Remove specks and Clean edge colors, and a before and after preview; also on the bitmap property bar. The AI command is now Remove Background with AI (#192).

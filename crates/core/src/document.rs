@@ -65,6 +65,105 @@ pub mod text_outline {
     pub fn lines(req: &TextRequest) -> Option<Vec<Line>> {
         LINER.get().map(|f| f(req))
     }
+
+    /// The font file a glyph comes from, shared with the text engine.
+    #[derive(Clone)]
+    pub struct GlyphFont {
+        pub data: std::sync::Arc<Vec<u8>>,
+        /// Face index inside a collection (0 for a single font).
+        pub index: u32,
+        /// Variation axis values the glyph is drawn at, as (tag, value);
+        /// empty for a static font.
+        pub coords: Vec<([u8; 4], f32)>,
+    }
+
+    impl std::fmt::Debug for GlyphFont {
+        // The font data stays out of logs.
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("GlyphFont")
+                .field("bytes", &self.data.len())
+                .field("index", &self.index)
+                .field("coords", &self.coords)
+                .finish()
+        }
+    }
+
+    /// One glyph of laid-out text, as a font file draws it.
+    #[derive(Clone, Debug)]
+    pub struct PlacedGlyph {
+        pub font: GlyphFont,
+        pub glyph_id: u16,
+        /// From the glyph's own space in ems (pen at the origin, y up) to
+        /// layout space (mm): size, position, shifts, angles, slants and
+        /// the turn a path gives it.
+        pub transform: crate::geometry::Affine,
+        /// The characters the glyph stands for (a ligature holds several);
+        /// empty for the further glyphs of one character.
+        pub text: String,
+        /// The span it belongs to.
+        pub span: usize,
+        /// Its outline as drawn, layout space (mm).
+        pub path: BezPath,
+        /// False when the drawn outline is not the font's own glyph
+        /// (synthetic bold); such glyphs are drawn as curves.
+        pub exact: bool,
+    }
+
+    /// Laid-out text as glyphs, for writers that keep text as text: the
+    /// glyphs, and every other mark of the text (underlines, strike lines,
+    /// hyphens added at line breaks, letters no font has) as curves.
+    #[derive(Clone, Debug, Default)]
+    pub struct GlyphLayout {
+        pub glyphs: Vec<PlacedGlyph>,
+        pub rest: BezPath,
+    }
+
+    type Glypher = fn(&TextRequest) -> GlyphLayout;
+    static GLYPHER: OnceLock<Glypher> = OnceLock::new();
+
+    /// Register the text engine's glyph layout.
+    pub fn set_glyphs(f: Glypher) {
+        let _ = GLYPHER.set(f);
+    }
+
+    /// The glyphs of a text object, when a text engine is registered.
+    pub fn glyphs(req: &TextRequest) -> Option<GlyphLayout> {
+        GLYPHER.get().map(|f| f(req))
+    }
+}
+
+/// The glyphs of a text object in its local space (apply its transform),
+/// placed as [`Shape::local_path`] places its outline. `None` for other
+/// shapes and without a text engine.
+pub fn text_glyph_layout(kind: &ShapeKind) -> Option<text_outline::GlyphLayout> {
+    let ShapeKind::Text {
+        spans,
+        origin,
+        frame,
+        align,
+        para,
+        on_path,
+    } = kind
+    else {
+        return None;
+    };
+    let mut layout = text_outline::glyphs(&text_outline::TextRequest {
+        spans,
+        frame: *frame,
+        align: *align,
+        para,
+        on_path: on_path.as_ref(),
+    })?;
+    let shift = match (on_path, frame) {
+        (Some(_), _) | (None, None) => Affine::translate(origin.to_vec2()),
+        (None, Some(f)) => Affine::translate((origin.x, origin.y + f.height)),
+    };
+    for g in &mut layout.glyphs {
+        g.transform = shift * g.transform;
+        g.path.apply_affine(shift);
+    }
+    layout.rest.apply_affine(shift);
+    Some(layout)
 }
 
 /// The rectangles behind a text, in its local space (apply its
@@ -176,6 +275,8 @@ pub fn paragraph_lines(kind: &ShapeKind) -> Option<Vec<ShapeKind>> {
         let (mut piece, _) = split_spans_at(&tail, line.end_char.saturating_sub(line.start_char));
         for sp in piece.iter_mut() {
             sp.text = sp.text.replace('\n', "");
+            // Each line is placed already: one artistic line of its own.
+            sp.paragraph = None;
         }
         piece.retain(|sp| !sp.text.is_empty());
         if piece.iter().all(|sp| sp.text.trim().is_empty()) {
@@ -249,6 +350,17 @@ impl Corners {
             radii: [radius; 4],
             kind,
             fixed: false,
+        }
+    }
+
+    /// The corners a new rectangle starts with: square, round once given a
+    /// size, and keeping that size when the rectangle is resized (Relative
+    /// corner scaling off). Drawings read from files keep what they store:
+    /// a missing `fixed` there still means scaling corners.
+    pub fn tool_default() -> Corners {
+        Corners {
+            fixed: true,
+            ..Corners::default()
         }
     }
 
@@ -706,9 +818,24 @@ pub struct TextSpan {
     /// box, from descent to ascent); `None` = no background.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Fill>,
+    /// Per-span outline override (character outline); `None` = the
+    /// object's outline. An outline of width 0 or less takes the
+    /// object's outline off these characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Stroke>,
+    /// Laid out but not drawn: set only on the parts a text with its own
+    /// character colours is drawn in (see [`Shape::text_parts`]), never
+    /// saved.
+    #[serde(skip)]
+    pub layout_only: bool,
     /// OpenType features to enable, e.g. "liga", "smcp", "frac".
     #[serde(default)]
     pub features: Vec<String>,
+    /// The formatting of the paragraph these characters are in, when it
+    /// has its own (see [`crate::paragraphs`]); `None` = the text
+    /// object's alignment and paragraph style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paragraph: Option<Box<crate::paragraphs::ParagraphFormat>>,
 }
 
 /// Serde: leave a zero out of the file.
@@ -732,7 +859,10 @@ impl TextSpan {
             strikethrough: false,
             fill: None,
             background: None,
+            outline: None,
+            layout_only: false,
             features: Vec::new(),
+            paragraph: None,
         }
     }
 
@@ -818,13 +948,37 @@ pub fn spans_insert(spans: &mut [TextSpan], at: usize, text: &str) {
         }
         seen += n;
     }
-    let (i, cut) = match target {
+    let (mut i, mut cut) = match target {
         Some(t) => t,
         None => match spans.len() {
             0 => return,
             n => (n - 1, spans[n - 1].char_count()),
         },
     };
+    // At the start of a paragraph with formatting other than the one
+    // before it, the text joins the paragraph's first character, so the
+    // paragraph keeps its format.
+    if at > 0 && at < total {
+        let before_nl = spans
+            .get(i)
+            .zip(cut.checked_sub(1))
+            .and_then(|(s, c)| s.text.chars().nth(c))
+            == Some('\n');
+        if before_nl {
+            let mut seen = 0usize;
+            for (k, span) in spans.iter().enumerate() {
+                let n = span.char_count();
+                if at < seen + n {
+                    if spans.get(i).map(|s| &s.paragraph) != Some(&span.paragraph) {
+                        i = k;
+                        cut = at - seen;
+                    }
+                    break;
+                }
+                seen += n;
+            }
+        }
+    }
     if let Some(span) = spans.get_mut(i) {
         let byte = span
             .text
@@ -930,15 +1084,21 @@ pub struct ParagraphStyle {
     pub hyphenate: bool,
     /// Fit text to frame: scale the font so the text fills the frame height.
     pub fit_to_frame: bool,
-    /// Align baselines to a grid of this pitch in mm, measured down from the
-    /// top of the frame (Text > Align to Baseline Grid); 0 = off. Only
-    /// paragraph text snaps.
+    /// Align baselines to a grid of this pitch in mm (Text > Align to
+    /// Baseline Grid); 0 = off. Only paragraph text snaps. The grid is the
+    /// page's (from its top and the grid's start offset) for a frame that
+    /// is not turned, else it is measured down from the frame top.
     pub baseline_grid_mm: f64,
     /// Where paragraph text sits in its frame from top to bottom.
     pub vertical_align: VerticalAlign,
     /// The paragraph frame's background; `None` = transparent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_fill: Option<Fill>,
+    /// What the frame's text wraps around and where the page's baseline
+    /// grid falls, worked out from the drawing (see
+    /// [`crate::text_flow`]); not saved.
+    #[serde(skip)]
+    pub flow: crate::text_flow::FrameFlow,
 }
 
 /// The unit of a paragraph's line spacing (the Text docker's list next to
@@ -1012,6 +1172,7 @@ impl Default for ParagraphStyle {
             baseline_grid_mm: 0.0,
             vertical_align: VerticalAlign::Top,
             frame_fill: None,
+            flow: crate::text_flow::FrameFlow::default(),
         }
     }
 }
@@ -1467,9 +1628,16 @@ pub struct Shape {
     /// Live effects, evaluated at render time (see `live.rs`).
     #[serde(default)]
     pub effects: Vec<crate::live::Effect>,
-    /// Paragraph text flows around this object.
+    /// Paragraph text flows around this object (see
+    /// [`crate::text_flow`]).
     #[serde(default)]
     pub wrap_text: bool,
+    /// How paragraph text flows around it when `wrap_text` is on.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::text_flow::TextWrap::is_default"
+    )]
+    pub wrap_style: crate::text_flow::TextWrap,
     /// The object style it is linked to ([`ObjectStyle::id`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<u32>,
@@ -1766,6 +1934,7 @@ impl Shape {
             data: Vec::new(),
             effects: Vec::new(),
             wrap_text: false,
+            wrap_style: crate::text_flow::TextWrap::default(),
             style: None,
             node_types: std::collections::BTreeMap::new(),
             uid: None,
@@ -1804,6 +1973,66 @@ impl Shape {
         s.parked_effects.clear();
         s.opacity = 1.0;
         Some(s)
+    }
+
+    /// A text whose characters have their own fill or outline, as the
+    /// texts it is drawn in: one per look (fill and outline), in the order
+    /// the looks first appear, each laid out as the whole text with the
+    /// other characters left undrawn (`TextSpan::layout_only`). The
+    /// character backgrounds and the frame background are left out of the
+    /// parts (they are drawn once under the text) and only the first part
+    /// keeps the shadow. `None` for other shapes and for text whose
+    /// characters all take the object's fill and outline.
+    pub fn text_parts(&self) -> Option<Vec<Shape>> {
+        let ShapeKind::Text { spans, .. } = &self.kind else {
+            return None;
+        };
+        if spans.iter().any(|s| s.layout_only)
+            || spans
+                .iter()
+                .all(|s| s.fill.is_none() && s.outline.is_none())
+        {
+            return None;
+        }
+        let look = |s: &TextSpan| -> (Fill, Option<Stroke>) {
+            let fill = s.fill.clone().unwrap_or_else(|| self.fill.clone());
+            let stroke = match &s.outline {
+                Some(o) if o.width > 0.0 => Some(o.clone()),
+                Some(_) => None,
+                None => self.stroke.clone(),
+            };
+            (fill, stroke)
+        };
+        let mut looks: Vec<(Fill, Option<Stroke>)> = Vec::new();
+        for s in spans.iter().filter(|s| s.char_count() > 0) {
+            let l = look(s);
+            if !looks.contains(&l) {
+                looks.push(l);
+            }
+        }
+        let parts = looks
+            .into_iter()
+            .enumerate()
+            .map(|(i, (fill, stroke))| {
+                let mut part = self.clone();
+                if let ShapeKind::Text { spans, para, .. } = &mut part.kind {
+                    for s in spans.iter_mut() {
+                        s.layout_only = look(s) != (fill.clone(), stroke.clone());
+                        s.background = None;
+                        s.fill = None;
+                        s.outline = None;
+                    }
+                    para.frame_fill = None;
+                }
+                part.fill = fill;
+                part.stroke = stroke;
+                if i > 0 {
+                    part.shadow = None;
+                }
+                part
+            })
+            .collect();
+        Some(parts)
     }
 
     /// A fingerprint of what a bitmap-effect picture is made from: the
@@ -1965,9 +2194,10 @@ impl Shape {
 
     /// Put `parent` in front of the shape's own transform (ungrouping,
     /// flattening a group for a file) and keep its look. Fixed corners
-    /// measure against the rectangle's own transform, so when `parent`
-    /// scales them they first become scaling corners of the same size, or a
-    /// curve when the rectangle's axes scale differently.
+    /// measure against the rectangle's own transform: a `parent` that
+    /// scales evenly grows them by its factor and they stay fixed; one that
+    /// stretches turns them into scaling corners of the same size, or a
+    /// curve when the rectangle's axes already scale differently.
     pub fn absorb(&mut self, parent: Affine) {
         let next = parent * self.transform;
         if let ShapeKind::Rect {
@@ -1979,7 +2209,16 @@ impl Shape {
             let (sx, sy) = axis_scale(self.transform);
             let (nx, ny) = axis_scale(next);
             let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
-            if c.fixed && !(same(sx, nx) && same(sy, ny)) {
+            // A parent that scales evenly (turning or mirroring as it
+            // likes) keeps fixed corners fixed, grown by its factor.
+            let [a, b, pc, pd, _, _] = parent.as_coeffs();
+            let (pa, pb) = (a.hypot(b), pc.hypot(pd));
+            let even = pa > 1e-9 && same(pa, pb) && (a * pc + b * pd).abs() <= 1e-9 * pa * pb;
+            if c.fixed && !(same(sx, nx) && same(sy, ny)) && even {
+                let mut grown = *c;
+                grown.radii = c.radii.map(|r| r * pa);
+                self.kind = ShapeKind::rect_with_corners(*rect, grown);
+            } else if c.fixed && !(same(sx, nx) && same(sy, ny)) {
                 self.kind = if same(sx, sy) && sx > 1e-9 {
                     let rect = rect.abs();
                     let limit = (rect.width() * sx).min(rect.height() * sy) / 2.0;
@@ -2004,10 +2243,15 @@ impl Shape {
         self.transform = next;
     }
 
-    /// A rectangle that one round radius in its own space describes (what
-    /// formats with a single radius store): the rectangle and the radius.
-    /// `None` for other kinds and for corners that need a path.
-    pub fn plain_rect(&self) -> Option<(Rect, f64)> {
+    /// A rectangle that one round radius describes (what formats with a
+    /// single radius store): the rectangle, the radius in its space and the
+    /// transform that places it, usually the shape's own. A stretched
+    /// rectangle whose corners keep their size has the stretch moved into
+    /// the rectangle's size, so that its corners stay circles of their page
+    /// radius; not when the stretch also widens a scaling outline or the
+    /// axes are skewed. `None` for other kinds and for corners that need a
+    /// path.
+    pub fn plain_rect(&self) -> Option<(Rect, f64, Affine)> {
         let ShapeKind::Rect {
             rect,
             radius,
@@ -2016,24 +2260,41 @@ impl Shape {
         else {
             return None;
         };
+        let t = self.transform;
         let Some(c) = corners else {
-            return Some((*rect, *radius));
+            return Some((*rect, *radius, t));
         };
         if c.is_square() {
-            return Some((*rect, 0.0));
+            return Some((*rect, 0.0, t));
         }
         if c.kind != CornerKind::Round || !c.is_uniform() {
             return None;
         }
         if !c.fixed {
-            return Some((*rect, c.radii[0]));
+            return Some((*rect, c.radii[0], t));
         }
-        let (sx, sy) = axis_scale(self.transform);
-        if sx < 1e-9 || (sx - sy).abs() > 1e-9 * sx.max(sy) {
+        let (sx, sy) = axis_scale(t);
+        if sx < 1e-9 || sy < 1e-9 {
             return None;
         }
+        let r = c.radii[0];
+        let r = if r.is_finite() { r.max(0.0) } else { 0.0 };
         let limit = (rect.width().abs() * sx).min(rect.height().abs() * sy) / 2.0;
-        Some((*rect, c.radii[0].min(limit) / sx))
+        if (sx - sy).abs() <= 1e-9 * sx.max(sy) {
+            return Some((*rect, r.min(limit) / sx, t));
+        }
+        let [a, b, cc, d, _, _] = t.as_coeffs();
+        let skewed = (a * cc + b * d).abs() > 1e-9 * sx * sy;
+        let widens_outline = self.stroke.as_ref().is_some_and(|s| s.scale_with_object);
+        if skewed || widens_outline {
+            return None;
+        }
+        let page = Rect::new(rect.x0 * sx, rect.y0 * sy, rect.x1 * sx, rect.y1 * sy);
+        Some((
+            page,
+            r.min(limit),
+            t * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy),
+        ))
     }
 
     /// Outline of the shape in local coordinates. Text and groups return an
@@ -2185,6 +2446,144 @@ impl Shape {
                 .map(|s| vec![s.shape.clone()])
                 .unwrap_or_default(),
             _ => Vec::new(),
+        }
+    }
+
+    /// Whether Convert to Curves changes this object: curves and groups
+    /// already are curves, and a bitmap has no outline to become one.
+    pub fn converts_to_curves(&self) -> bool {
+        match &self.kind {
+            ShapeKind::Path { .. } | ShapeKind::Group { .. } | ShapeKind::Bitmap { .. } => false,
+            // A clip frame changes only when its frame or something it
+            // holds (inside groups too) is not a curve yet.
+            ShapeKind::ClipFrame { frame, contents } => {
+                frame.converts_to_curves_deep(0)
+                    || contents.iter().any(|c| c.converts_to_curves_deep(0))
+            }
+            _ => true,
+        }
+    }
+
+    /// [`Shape::converts_to_curves`], looking inside groups.
+    fn converts_to_curves_deep(&self, depth: usize) -> bool {
+        match &self.kind {
+            ShapeKind::Group { children } if depth < 16 => children
+                .iter()
+                .any(|c| c.converts_to_curves_deep(depth + 1)),
+            _ => self.converts_to_curves(),
+        }
+    }
+
+    /// The kind this object takes when converted to curves, or `None` when
+    /// [`Shape::converts_to_curves`] says it stays as it is. Tables and
+    /// symbol instances become a group of curves made from what they draw
+    /// (cell fills, borders and text; the symbol's objects), each piece
+    /// with its own fill and outline; `next_id` names the new pieces.
+    pub fn curves_kind(
+        &self,
+        symbols: &[Symbol],
+        next_id: &mut dyn FnMut() -> ShapeId,
+    ) -> Option<ShapeKind> {
+        self.curves_kind_depth(symbols, next_id, 0)
+    }
+
+    fn curves_kind_depth(
+        &self,
+        symbols: &[Symbol],
+        next_id: &mut dyn FnMut() -> ShapeId,
+        depth: usize,
+    ) -> Option<ShapeKind> {
+        // A symbol that holds itself would never end.
+        const MAX_DEPTH: usize = 16;
+        if !self.converts_to_curves() || depth > MAX_DEPTH {
+            return None;
+        }
+        match &self.kind {
+            ShapeKind::Table(_) | ShapeKind::SymbolInstance { .. } => {
+                let mut children = self.expand(symbols);
+                if children.is_empty() {
+                    return None;
+                }
+                for c in &mut children {
+                    c.curves_deep(symbols, next_id, depth + 1);
+                }
+                Some(ShapeKind::Group { children })
+            }
+            // A clip frame stays a clip frame: its frame and what it holds
+            // become curves (keeping their ids) and stay clipped.
+            ShapeKind::ClipFrame { frame, contents } => {
+                let mut frame = frame.clone();
+                let mut contents = contents.clone();
+                frame.curves_in_place(symbols, next_id, depth + 1);
+                for c in &mut contents {
+                    c.curves_in_place(symbols, next_id, depth + 1);
+                }
+                let kind = ShapeKind::ClipFrame { frame, contents };
+                (kind != self.kind).then_some(kind)
+            }
+            _ => Some(ShapeKind::Path {
+                path: self.local_path(),
+                closed: true,
+            }),
+        }
+    }
+
+    /// Turn this object, and everything inside a group or clip frame, into
+    /// curves, keeping the ids of the objects that were there (new pieces
+    /// of tables and symbols get new ones).
+    fn curves_in_place(
+        &mut self,
+        symbols: &[Symbol],
+        next_id: &mut dyn FnMut() -> ShapeId,
+        depth: usize,
+    ) {
+        if depth > 16 {
+            return;
+        }
+        match &mut self.kind {
+            ShapeKind::Group { children } => {
+                for c in children {
+                    c.curves_in_place(symbols, next_id, depth + 1);
+                }
+            }
+            _ => {
+                if let Some(kind) = self.curves_kind_depth(symbols, next_id, depth) {
+                    self.kind = kind;
+                    self.node_types.clear();
+                }
+            }
+        }
+    }
+
+    /// Give this object and everything inside it new ids, and turn every
+    /// convertible piece into curves.
+    fn curves_deep(
+        &mut self,
+        symbols: &[Symbol],
+        next_id: &mut dyn FnMut() -> ShapeId,
+        depth: usize,
+    ) {
+        self.id = next_id();
+        match &mut self.kind {
+            ShapeKind::Group { children } => {
+                for c in children {
+                    c.curves_deep(symbols, next_id, depth + 1);
+                }
+            }
+            // A frame keeps what it holds; both become curves.
+            ShapeKind::ClipFrame { frame, contents } => {
+                frame.curves_deep(symbols, next_id, depth + 1);
+                for c in contents {
+                    c.curves_deep(symbols, next_id, depth + 1);
+                }
+            }
+            _ => {
+                // The pieces of a converted table or symbol get their ids there.
+                if let Some(kind) = self.curves_kind_depth(symbols, next_id, depth) {
+                    self.kind = kind;
+                    self.node_types.clear();
+                }
+            }
         }
     }
 
@@ -3601,7 +4000,10 @@ impl Document {
         if let serde_json::Value::Object(m) = &mut v {
             m.remove(FORMAT_VERSION_KEY);
         }
-        Ok(serde_json::from_value(v)?)
+        let mut doc: Document = serde_json::from_value(v)?;
+        // What text wraps around is not saved: work it out again.
+        doc.refresh_text_flow();
+        Ok(doc)
     }
 }
 
@@ -3845,8 +4247,10 @@ mod tests {
 
     #[test]
     fn tdraw_files_can_be_written_in_an_older_format_version() {
-        let mut doc = Document::default();
-        doc.title = "Older".into();
+        let doc = Document {
+            title: "Older".into(),
+            ..Default::default()
+        };
         for version in 0..=TDRAW_FORMAT_VERSION {
             let json = doc.to_json_version(version).expect("json");
             assert_eq!(tdraw_text_version(&json), version);
@@ -4328,14 +4732,34 @@ mod tests {
         let a = area(&s);
         assert!((a - (60.0 * 20.0 - (4.0 - pi) * r * r)).abs() < 0.05, "{a}");
         assert_eq!(s.page_corners().unwrap().radii, [r; 4]);
-        assert_eq!(s.plain_rect(), None);
+        // Formats with one radius get the stretch moved into the size, so
+        // the corners stay circles of 4 mm.
+        let (rect, radius, place) = s.plain_rect().expect("one radius");
+        assert_eq!(rect, Rect::new(0.0, 0.0, 60.0, 20.0));
+        assert_eq!(radius, r);
+        let same_place = place * Point::new(60.0, 20.0) - s.transform * Point::new(20.0, 10.0);
+        assert!(same_place.hypot() < 1e-9, "{place:?}");
+        assert_eq!(axis_scale(place), (1.0, 1.0));
+        // Not when that would thin a scaling outline, nor on skewed axes.
+        let mut outlined = s.clone();
+        outlined.stroke = Some(crate::style::Stroke {
+            scale_with_object: true,
+            ..Default::default()
+        });
+        assert_eq!(outlined.plain_rect(), None);
+        let mut skewed = s.clone();
+        skewed.transform = Affine::new([3.0, 0.0, 1.0, 2.0, 0.0, 0.0]);
+        assert_eq!(skewed.plain_rect(), None);
         // Scaling corners stretch with the object.
         let mut s = rect_shape(20.0, 10.0, Corners::uniform(r, CornerKind::Round));
         s.transform = Affine::scale_non_uniform(3.0, 2.0);
         let a = area(&s);
         assert!((a - (1200.0 - 6.0 * (4.0 - pi) * r * r)).abs() < 0.1, "{a}");
         assert_eq!(s.page_corners().unwrap().radii, [2.0 * r; 4]);
-        assert_eq!(s.plain_rect(), Some((Rect::new(0.0, 0.0, 20.0, 10.0), r)));
+        assert_eq!(
+            s.plain_rect(),
+            Some((Rect::new(0.0, 0.0, 20.0, 10.0), r, s.transform))
+        );
     }
 
     #[test]
@@ -4349,7 +4773,10 @@ mod tests {
         assert_eq!(kind.rect_corners().unwrap().1.radii, [3.0; 4]);
         s.kind = kind;
         assert_eq!(s.page_corners().unwrap().radii, [6.0; 4]);
-        assert_eq!(s.plain_rect(), Some((Rect::new(0.0, 0.0, 20.0, 10.0), 3.0)));
+        assert_eq!(
+            s.plain_rect(),
+            Some((Rect::new(0.0, 0.0, 20.0, 10.0), 3.0, s.transform))
+        );
         // Fixed corners are stored as page sizes, limited by the page box.
         let mut c = Corners::uniform(50.0, CornerKind::Scallop);
         c.fixed = true;
@@ -4359,7 +4786,10 @@ mod tests {
         c.kind = CornerKind::Round;
         c.radii = [4.0; 4];
         s.kind = s.with_page_corners(c).unwrap();
-        assert_eq!(s.plain_rect(), Some((Rect::new(0.0, 0.0, 20.0, 10.0), 2.0)));
+        assert_eq!(
+            s.plain_rect(),
+            Some((Rect::new(0.0, 0.0, 20.0, 10.0), 2.0, s.transform))
+        );
         // Other kinds have no corners.
         let e = Shape::new(
             ShapeId(2),
@@ -4450,15 +4880,33 @@ mod tests {
             );
             s
         };
-        // Evenly scaled rectangle: the same corners, now scaling with it.
-        for parent in [Affine::scale(2.0), Affine::scale_non_uniform(2.0, 1.0)] {
-            let s = check(Affine::IDENTITY, parent);
-            assert!(
-                matches!(&s.kind, ShapeKind::Rect { corners: Some(k), .. } if !k.fixed && k.kind == CornerKind::Chamfer && k.radii == [3.0; 4])
-            );
+        // Stretched by the parent: the same corners, now scaling with it.
+        let s = check(Affine::IDENTITY, Affine::scale_non_uniform(2.0, 1.0));
+        assert!(
+            matches!(&s.kind, ShapeKind::Rect { corners: Some(k), .. } if !k.fixed && k.kind == CornerKind::Chamfer && k.radii == [3.0; 4])
+        );
+        // Scaled evenly by the parent: still fixed, grown by its factor,
+        // also when the rectangle itself is stretched (no curve).
+        for own in [Affine::IDENTITY, Affine::scale_non_uniform(2.0, 1.0)] {
+            for parent in [
+                Affine::scale(2.0),
+                Affine::rotate(0.7) * Affine::scale(2.0),
+                Affine::FLIP_X * Affine::scale(2.0),
+            ] {
+                let s = check(own, parent);
+                assert!(
+                    matches!(&s.kind, ShapeKind::Rect { corners: Some(k), .. } if k.fixed && k.kind == CornerKind::Chamfer && k.radii.iter().all(|r| (r - 6.0).abs() < 1e-9)),
+                    "{:?}",
+                    s.kind
+                );
+            }
         }
-        // A stretched rectangle: its outline as a curve.
-        let s = check(Affine::scale_non_uniform(2.0, 1.0), Affine::scale(2.0));
+        // A stretched rectangle stretched again the other way: its outline
+        // as a curve.
+        let s = check(
+            Affine::scale_non_uniform(2.0, 1.0),
+            Affine::scale_non_uniform(1.0, 3.0),
+        );
         assert!(matches!(s.kind, ShapeKind::Path { closed: true, .. }));
         // Moving and turning change nothing.
         let s = check(
@@ -4551,5 +4999,103 @@ mod tests {
             shape: text(20, "In Symbol"),
         });
         assert_eq!(doc.font_families_used(), vec!["In Symbol", "Inner", "Top"]);
+    }
+
+    #[test]
+    fn characters_with_their_own_colours_are_drawn_in_one_part_per_look() {
+        use crate::color::Color;
+        let red = Fill::Solid(Color::rgb8(255, 0, 0));
+        let mut a = TextSpan::new("ab", "Arial", 12.0);
+        a.background = Some(Fill::Solid(Color::rgb8(0, 255, 0)));
+        let mut b = TextSpan::new("cd", "Arial", 12.0);
+        b.fill = Some(red.clone());
+        let mut c = TextSpan::new("ef", "Arial", 12.0);
+        c.outline = Some(Stroke {
+            width: 0.0,
+            ..Stroke::default()
+        });
+        let d = TextSpan::new("gh", "Arial", 12.0);
+        let mut shape = Shape::new(
+            ShapeId(1),
+            ShapeKind::Text {
+                spans: vec![a, b, c, d],
+                origin: Point::ZERO,
+                frame: None,
+                align: Default::default(),
+                para: Default::default(),
+                on_path: None,
+            },
+        );
+        shape.fill = Fill::Solid(Color::BLACK);
+        shape.shadow = Some(Shadow::default());
+        let parts = shape.text_parts().expect("parts");
+        // Black with the outline (ab, gh), red (cd), black without it (ef).
+        assert_eq!(parts.len(), 3);
+        let drawn = |p: &Shape| -> String {
+            match &p.kind {
+                ShapeKind::Text { spans, .. } => spans
+                    .iter()
+                    .filter(|s| !s.layout_only)
+                    .map(|s| s.text.as_str())
+                    .collect(),
+                _ => String::new(),
+            }
+        };
+        assert_eq!(drawn(&parts[0]), "abgh");
+        assert_eq!(parts[0].fill, Fill::Solid(Color::BLACK));
+        assert!(parts[0].stroke.is_some() && parts[0].shadow.is_some());
+        assert_eq!(drawn(&parts[1]), "cd");
+        assert_eq!(parts[1].fill, red);
+        assert!(parts[1].shadow.is_none());
+        assert_eq!(drawn(&parts[2]), "ef");
+        assert!(parts[2].stroke.is_none());
+        // Every part lays out the whole text, with no overrides or
+        // backgrounds left, so it is not split again.
+        for p in &parts {
+            let ShapeKind::Text { spans, .. } = &p.kind else {
+                panic!("text");
+            };
+            assert_eq!(spans_text(spans), "abcdefgh");
+            assert!(spans
+                .iter()
+                .all(|s| s.fill.is_none() && s.background.is_none()));
+            assert!(p.text_parts().is_none());
+        }
+        // A plain text and other shapes have no parts.
+        let mut plain = shape.clone();
+        if let ShapeKind::Text { spans, .. } = &mut plain.kind {
+            spans.iter_mut().for_each(|s| {
+                s.fill = None;
+                s.outline = None;
+            });
+        }
+        assert!(plain.text_parts().is_none());
+        let rect = Shape::new(
+            ShapeId(2),
+            ShapeKind::Rect {
+                rect: Rect::new(0.0, 0.0, 1.0, 1.0),
+                radius: 0.0,
+                corners: None,
+            },
+        );
+        assert!(rect.text_parts().is_none());
+    }
+
+    #[test]
+    fn character_outlines_are_saved_and_layout_only_is_not() {
+        let mut s = TextSpan::new("a", "Arial", 12.0);
+        s.outline = Some(Stroke::default());
+        s.layout_only = true;
+        let json = serde_json::to_string(&s).expect("json");
+        assert!(!json.contains("layout_only"), "{json}");
+        let back: TextSpan = serde_json::from_str(&json).expect("back");
+        assert_eq!(back.outline, Some(Stroke::default()));
+        assert!(!back.layout_only);
+        // Older files without the field read as no override.
+        let old: TextSpan = serde_json::from_str(
+            r#"{"text":"a","font_family":"Arial","size_pt":12.0,"bold":false,"italic":false}"#,
+        )
+        .expect("old");
+        assert_eq!(old.outline, None);
     }
 }

@@ -582,6 +582,12 @@ pub enum Dialog {
         count: u32,
         after: bool,
     },
+    /// Layout > Duplicate Page and the page tab menu: where the copy goes
+    /// and whether the layers keep their objects.
+    DuplicatePage {
+        before: bool,
+        contents: bool,
+    },
     PageSize {
         width: f64,
         height: f64,
@@ -598,6 +604,11 @@ pub enum Dialog {
         name: String,
     },
     DocumentProperties(Box<crate::ui::doc_properties::DocPropsState>),
+    /// Save on a drawing opened from a `.cdr` version TraceDraw does not
+    /// save in: choose another version first.
+    OldCdrVersion {
+        version: u16,
+    },
     ConfirmClose,
     /// Reset every preference to the defaults? (F8 while TraceDraw
     /// starts, Options > Global.)
@@ -861,6 +872,17 @@ fn inflate_fields(ui: &mut Ui, st: &mut InflateState) {
     }
 }
 
+impl Dialog {
+    /// The Duplicate Page dialog with its defaults: after the selected
+    /// page, layers with their contents.
+    pub fn duplicate_page() -> Dialog {
+        Dialog::DuplicatePage {
+            before: false,
+            contents: true,
+        }
+    }
+}
+
 /// A dialog window in the dialogs' chrome (white title bar with a close
 /// button, grey body), sized to its content and centred.
 pub(crate) fn window(_ctx: &Context, title: String) -> crate::ui::chrome::Window {
@@ -888,10 +910,6 @@ pub(crate) fn ok_cancel(ui: &mut Ui, close: &mut bool) -> bool {
     }
     ok
 }
-
-/// Where a dialog's "?" button leads.
-pub(crate) const HELP_URL: &str =
-    "https://github.com/igtoth/tracedraw/blob/main/docs/behavior/README.md";
 
 /// "?" on the left, OK and Cancel on the right, as dialogs with help
 /// have them. Returns (OK pressed, "?" pressed).
@@ -956,6 +974,7 @@ pub fn show(app: &mut App, ctx: &Context) {
         app.dialog = Dialog::LineStyle(Default::default());
     }
     let mut dialog = std::mem::replace(&mut app.dialog, Dialog::None);
+    app.dialog_help = crate::help::dialog_topic(&dialog, app.options_page);
     if !matches!(dialog, Dialog::None) {
         crate::ui::chrome::modal_blocker(ctx);
     }
@@ -1061,6 +1080,28 @@ pub fn show(app: &mut App, ctx: &Context) {
                 }
             });
         }
+        Dialog::DuplicatePage { before, contents } => {
+            let mut help = false;
+            window(ctx, tr("dialog.duplicate_page")).show(ctx, |ui| {
+                ui.label(tr("dialog.insert_new_page"));
+                ui.indent("duplicate_page_where", |ui| {
+                    ui.radio_value(before, true, tr("dialog.before_selected_page"));
+                    ui.radio_value(before, false, tr("dialog.after_selected_page"));
+                });
+                ui.add_space(6.0);
+                ui.radio_value(contents, false, tr("dialog.copy_layers_only"));
+                ui.radio_value(contents, true, tr("dialog.copy_layers_and_contents"));
+                let (ok, h) = help_ok_cancel(ui, &mut close);
+                help = h;
+                if ok {
+                    let (b, c) = (*before, *contents);
+                    app.duplicate_page(b, c);
+                }
+            });
+            if help {
+                app.open_dialog_help();
+            }
+        }
         Dialog::PageSize {
             width,
             height,
@@ -1128,6 +1169,34 @@ pub fn show(app: &mut App, ctx: &Context) {
             });
         }
         Dialog::Options => crate::ui::options::options_dialog(app, ctx, &mut close),
+        Dialog::OldCdrVersion { version } => {
+            let mut choose = false;
+            window(ctx, tr("dialog.old_cdr_title")).show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                ui.label(trf(
+                    "dialog.old_cdr_text",
+                    &[
+                        ("version", &version.to_string()),
+                        ("oldest", &tracedraw_cdr::write::CHECKED_SINCE.to_string()),
+                        ("newest", &tracedraw_cdr::write::CHECKED_UNTIL.to_string()),
+                    ],
+                ));
+                let a = tr("dialog.old_cdr_choose");
+                let b = tr("dialog.cancel");
+                match crate::ui::chrome::button_row(ui, &[&a, &b], false) {
+                    Some(0) => choose = true,
+                    Some(_) => close = true,
+                    None => {}
+                }
+                if enter_pressed(ui) {
+                    choose = true;
+                }
+            });
+            if choose {
+                app.save_as_from_old_cdr();
+                return;
+            }
+        }
         Dialog::DocumentProperties(st) => {
             crate::ui::doc_properties::dialog(app, ctx, st, &mut close)
         }
@@ -1513,7 +1582,7 @@ pub fn show(app: &mut App, ctx: &Context) {
                 }
             });
             if help {
-                app.open_url(HELP_URL);
+                app.open_dialog_help();
             }
         }
         Dialog::PasteSpecial(st) => {
@@ -3551,10 +3620,7 @@ fn paragraph_dialog(app: &mut App, ctx: &Context, which: &Dialog, close: &mut bo
     let target = app
         .selected_shapes()
         .into_iter()
-        .find_map(|s| match &s.kind {
-            ShapeKind::Text { para, .. } => Some((Some(s.id), para.clone())),
-            _ => None,
-        });
+        .find_map(|s| app.paragraph_style_of(&s).map(|(_, p)| (Some(s.id), p)));
     let (target, mut p) = target.unwrap_or_else(|| (None, app.doc().defaults.paragraph.clone()));
     let mut changed = false;
     let u = app.units;
@@ -3962,7 +4028,7 @@ fn border_grommet_dialog(
         });
     });
     if help {
-        app.open_url(HELP_URL);
+        app.open_dialog_help();
     }
     if ok {
         let n = crate::border_grommet::apply(app, st);
@@ -4292,6 +4358,7 @@ mod tests {
                 count: 1,
                 after: true,
             },
+            Dialog::duplicate_page(),
             Dialog::PageSize {
                 width: 210.0,
                 height: 297.0,
@@ -4304,6 +4371,7 @@ mod tests {
                 name: "Layer".into(),
             },
             Dialog::DocumentProperties(Box::default()),
+            Dialog::OldCdrVersion { version: 9 },
             Dialog::ConfirmClose,
             Dialog::ConfirmResetSettings,
             Dialog::Updates,

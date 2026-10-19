@@ -31,6 +31,8 @@ double-click on a ruler, the page border or its shadow).
 | Nodes and Handles | Node size Small, Medium, Large (7, 9, 11 px); node shape per type (cusp square, smooth circle, symmetrical diamond); Show curve direction (an arrow after the first node, secondary colour); main colour (selected nodes and handles, blue) and secondary colour (red); Show unselected nodes with fill (on, Ctrl+Shift+G) |
 | clip frame | Auto-center new content: when it lies completely outside the frame (default), always, never; Show lines in empty clip frame frames (on, on screen) |
 | Snapping | Snap to objects, page, guidelines, grid, baseline grid, pixels; snapping radius (10 px); show snap location marks and the screen tip (on); the modes, each with its mark (all on), Select All, Deselect All |
+| Alignment Guides | On or off; guides for the selection as one or each object; edges, centres, the page, equal spacing, equal sizes; margins with offset and inset; colour and line style; Reset (see `live-guides.md`) |
+| Dynamic Guides | On or off; angles (check boxes every 15 degrees, others added by value); distance and angle tip; tick marks, their spacing, snap to ticks; colour and line style; Reset (see `live-guides.md`) |
 | Save | Back up original file before saving (on): `backup_of_<name>` next to the file or in a chosen folder; Auto-backup every 20 minutes (on): each open drawing with unsaved changes as `AutoBackup_of_<name>.tdraw` in `TraceDraw` under the temporary folder or a chosen folder; a session that ended without closing offers them at the next start (see `recovery.md`) |
 | Text | Keyboard text increment (1 pt: Ctrl+8 and Ctrl+2 grow and shrink the selected text); default font and size; hyphenation; non-printing characters |
 
@@ -54,7 +56,8 @@ zoom out or context menu; mouse wheel action), Curve tools (Freehand
 smoothing, 0 to 100, 50 by default; Join and close within, 1 to 50
 screen pixels, 5 by default; see `curve-tools.md`), Rectangle (Rectangle
 corners: style, the four sizes, Edit corners together; Scale corners:
-Relative corner scaling; see `shape-tools.md`),
+Relative corner scaling, off by default so that new rectangles keep
+their corner size when resized; see `shape-tools.md`),
 Ellipse (ellipse, pie or arc and its angles), Polygon (points, sharpness),
 Spiral (revolutions, symmetrical or logarithmic), Graph Paper and Table
 (rows, columns), Eraser (thickness, round or square nib).
@@ -99,9 +102,10 @@ Imported objects go (File > Import, Ctrl+I): where the file has them
 the import's undo step.
 
 Saving .cdr files: the Version new drawings are saved in (`cdr_version`,
-12 by default, 7 to 22; a value out of range from a file is brought
+27 by default, 14 to 27; a value out of range from a file is brought
 into it). Saving a `.cdr` file sets it to the version chosen there; a
-drawing opened from a `.cdr` file keeps its own (`files.md`).
+drawing opened from a `.cdr` file keeps its own when TraceDraw saves
+that version (`files.md`).
 
 ### Bitmap Tracing
 

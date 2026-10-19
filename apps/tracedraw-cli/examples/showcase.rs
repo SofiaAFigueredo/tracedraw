@@ -1150,14 +1150,14 @@ fn room(dir: &Path) {
         [toward(lb), toward(rb), toward(rt), toward(lt)],
     ];
     let mut b = Build::new("Room", Size::new(w, h));
-    let mut laid = |b: &mut Build,
-                    plane: usize,
-                    u0: f64,
-                    w0: f64,
-                    u1: f64,
-                    w1: f64,
-                    fill: Fill,
-                    name: &str| {
+    let laid = |b: &mut Build,
+                plane: usize,
+                u0: f64,
+                w0: f64,
+                u1: f64,
+                w1: f64,
+                fill: Fill,
+                name: &str| {
         let q = planes[plane];
         let Some(hm) = tracedraw_core::live::homography(&unit, &q) else {
             return;

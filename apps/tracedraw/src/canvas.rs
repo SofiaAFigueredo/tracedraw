@@ -240,7 +240,62 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
         }
         _ => {}
     }
-    if let Some(c) = &app.curve {
+    if let Some(c) = app.curve.as_ref().filter(|c| c.smooth && !c.bspline) {
+        // Pen and Bezier: the segments placed in the outline the curve
+        // will get, the Pen's dashed preview to the pointer, the nodes
+        // and the last node's handles (see `pen_look`).
+        let ctrl = painter.ctx().input(|i| i.modifiers.ctrl);
+        let pointer = app
+            .pointer_page
+            .map(|p| app.curve_point(app.snap_point(p), ctrl));
+        let preview = app.tool == crate::tools::Tool::Pen && app.settings.curves.pen_preview;
+        let outline = app.default_stroke().map(|s| to_color32(s.color));
+        let look = crate::pen_look::curve_look(c, pointer, preview, outline);
+        for (pts, _) in flatten(&look.placed, view) {
+            if pts.len() > 1 {
+                painter.add(epaint::PathShape::line(
+                    pts,
+                    EStroke::new(1.0, look.placed_color),
+                ));
+            }
+        }
+        if let Some(seg) = &look.preview {
+            for (pts, _) in flatten(seg, view) {
+                dashed_polyline(
+                    painter,
+                    &pts,
+                    EStroke::new(1.0, look.preview_color),
+                    4.0,
+                    3.0,
+                );
+            }
+        }
+        for (node, h) in &look.handles {
+            draw_control_handle(
+                painter,
+                view.to_screen(*node),
+                view.to_screen(*h),
+                look.preview_color,
+            );
+        }
+        for (p, mark) in &look.nodes {
+            let r = ERect::from_center_size(view.to_screen(*p), egui::vec2(5.0, 5.0));
+            match mark {
+                crate::pen_look::NodeLook::Current => {
+                    painter.rect_filled(r.expand(0.5), 0.0, look.preview_color);
+                }
+                crate::pen_look::NodeLook::Placed => {
+                    painter.rect_filled(r, 0.0, Color32::WHITE);
+                    painter.rect_stroke(
+                        r,
+                        0.0,
+                        EStroke::new(1.0, look.placed_color),
+                        epaint::StrokeKind::Middle,
+                    );
+                }
+            }
+        }
+    } else if let Some(c) = &app.curve {
         // The pointer as the next node would take it (Ctrl: in steps of
         // the constrain angle).
         let ctrl = painter.ctx().input(|i| i.modifiers.ctrl);
@@ -301,7 +356,7 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
                 let pts: Vec<Pos2> = q.iter().map(|p| view.to_screen(*p)).collect();
                 painter.add(egui::Shape::convex_polygon(
                     pts,
-                    Color32::from_rgba_unmultiplied(0x00, 0x78, 0xD7, 70),
+                    TEXT_SELECTION,
                     EStroke::NONE,
                 ));
             }
@@ -309,8 +364,47 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
                 [view.to_screen(top), view.to_screen(bottom)],
                 EStroke::new(1.5, Tokens::text()),
             );
+            ime_at_caret(app, painter, view.to_screen(top), view.to_screen(bottom));
         }
     }
+}
+
+/// While text is typed on the canvas: let the system's input method
+/// compose there (its candidate window follows the caret) and show the
+/// text being composed, underlined, at the caret.
+pub(crate) fn ime_at_caret(app: &App, painter: &Painter, top: Pos2, bottom: Pos2) {
+    let ctx = painter.ctx();
+    // A focused field of a docker or bar has the keyboard (and its own
+    // input method position).
+    if ctx.memory(|m| m.focused().is_some()) {
+        return;
+    }
+    let caret = ERect::from_two_pos(top, bottom).expand2(egui::vec2(1.0, 0.0));
+    ctx.output_mut(|o| {
+        o.ime = Some(egui::output::IMEOutput {
+            purpose: egui::IMEPurpose::Normal,
+            rect: painter.clip_rect(),
+            cursor_rect: caret,
+            should_interrupt_composition: false,
+        })
+    });
+    if app.ime_preedit.is_empty() {
+        return;
+    }
+    let size = ((bottom.y - top.y).abs() * 0.8).clamp(10.0, 72.0);
+    let galley = painter.layout_no_wrap(
+        app.ime_preedit.clone(),
+        egui::FontId::proportional(size),
+        Tokens::text(),
+    );
+    let at = Pos2::new(caret.max.x + 1.0, caret.max.y - galley.size().y);
+    let r = ERect::from_min_size(at, galley.size());
+    painter.rect_filled(r.expand(1.0), 0.0, Color32::from_white_alpha(230));
+    painter.galley(at, galley, Tokens::text());
+    painter.line_segment(
+        [Pos2::new(r.min.x, r.max.y), Pos2::new(r.max.x, r.max.y)],
+        EStroke::new(1.0, Tokens::text()),
+    );
 }
 
 /// The window's background, the page with its shadow and border, bleed
@@ -831,6 +925,7 @@ fn draw_table_cells(app: &App, painter: &Painter) {
             [view.to_screen(top), view.to_screen(bottom)],
             EStroke::new(1.5, Tokens::text()),
         );
+        ime_at_caret(app, painter, view.to_screen(top), view.to_screen(bottom));
     }
 }
 
@@ -1060,22 +1155,38 @@ fn draw_rotate_handle(painter: &Painter, p: Pos2, h: Handle) {
     }
 }
 
-/// Paragraph text frames: dashed grey lines (Text > Show Text Frames),
-/// blue for the selected texts and the one being edited.
+/// The shade over selected characters of a text being edited: a
+/// see-through grey, so coloured letters keep their colour under it.
+pub(crate) const TEXT_SELECTION: Color32 = Color32::from_rgba_premultiplied(64, 64, 64, 80);
+
+/// A text that does not fit: its frame is red.
+const OVERFLOW_RED: Color32 = Color32::from_rgb(220, 30, 30);
+
+/// The colour of a paragraph frame's dashed line: red when its text does
+/// not fit, black while it is being edited, blue while selected, else
+/// grey (Text > Show Text Frames).
+pub(crate) fn text_frame_color(f: &crate::text_frames::ShownFrame) -> Color32 {
+    if f.overflow {
+        OVERFLOW_RED
+    } else if f.editing {
+        Color32::BLACK
+    } else if f.chosen {
+        Tokens::SELECTION
+    } else {
+        Color32::from_gray(150)
+    }
+}
+
+/// Paragraph text frames: dashed lines in the colour `text_frame_color`
+/// gives.
 fn draw_text_frames(app: &App, painter: &Painter, preview: Option<Affine>) {
     // A text that does not fit: red, with a tab holding a down arrow
     // below the frame's middle.
-    let red = Color32::from_rgb(220, 30, 30);
+    let red = OVERFLOW_RED;
     for f in app.shown_text_frames(preview) {
         let mut pts: Vec<Pos2> = f.corners.iter().map(|p| app.view.to_screen(*p)).collect();
         pts.push(pts[0]);
-        let color = if f.overflow {
-            red
-        } else if f.chosen {
-            Tokens::SELECTION
-        } else {
-            Color32::from_gray(150)
-        };
+        let color = text_frame_color(&f);
         painter.extend(egui::Shape::dashed_line(
             &pts,
             EStroke::new(1.0, color),
@@ -1930,6 +2041,20 @@ fn draw_snap_glyph_width(
             painter.line_segment([c + v(-h + 1.0, -h), c + v(h - 1.0, -h)], thin);
             painter.line_segment([c + v(0.0, -h), c + v(0.0, h - 2.0)], thin);
         }
+        SnapMode::Grid => {
+            // Two lines each way, the point where they would cross.
+            let thin = EStroke::new(1.0, color);
+            for d in [-h / 2.0, h / 2.0] {
+                painter.line_segment([c + v(d, -h), c + v(d, h)], thin);
+                painter.line_segment([c + v(-h, d), c + v(h, d)], thin);
+            }
+        }
+        SnapMode::Guideline => {
+            // A line through the point, broken around it.
+            painter.line_segment([c + v(-h - 1.0, 0.0), c + v(-2.0, 0.0)], s);
+            painter.line_segment([c + v(2.0, 0.0), c + v(h + 1.0, 0.0)], s);
+            painter.circle_filled(c, 1.5, color);
+        }
     }
 }
 
@@ -1972,6 +2097,163 @@ pub fn draw_snap_mark(app: &App, painter: &Painter) {
         }
         let galley = painter.layout_no_wrap(text, font, Tokens::SELECTION);
         painter.galley(at, galley, Tokens::SELECTION);
+    }
+}
+
+/// A line in a guide's style.
+fn guide_line(
+    painter: &Painter,
+    a: Pos2,
+    b: Pos2,
+    stroke: EStroke,
+    style: crate::live_guides::GuideStyle,
+) {
+    use crate::live_guides::GuideStyle as S;
+    match style {
+        S::Solid => {
+            painter.line_segment([a, b], stroke);
+        }
+        S::Dashed => {
+            painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 6.0, 4.0));
+        }
+        S::Dotted => {
+            painter.extend(egui::Shape::dashed_line(&[a, b], stroke, 1.5, 3.0));
+        }
+    }
+}
+
+/// Text haloed in white, so it reads on any drawing; `at` is its bottom
+/// left corner, or its bottom right with `right`.
+fn haloed_text(painter: &Painter, at: Pos2, text: String, color: Color32, right: bool) {
+    let font = egui::FontId::proportional(11.0);
+    let halo = painter.layout_no_wrap(text.clone(), font.clone(), Color32::WHITE);
+    let size = halo.size();
+    let at = at - egui::vec2(if right { size.x } else { 0.0 }, size.y);
+    for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+        painter.galley(at + egui::vec2(dx, dy), halo.clone(), Color32::WHITE);
+    }
+    let galley = painter.layout_no_wrap(text, font, color);
+    painter.galley(at, galley, color);
+}
+
+/// This frame's alignment lines, equal gaps and dynamic guide, one pixel
+/// wide in screen space, clipped to the canvas.
+pub fn draw_live_guides(app: &App, painter: &Painter, canvas: ERect) {
+    let Ok(o) = app.live_guides.try_borrow() else {
+        return;
+    };
+    if o.is_empty() {
+        return;
+    }
+    let painter = painter.with_clip_rect(canvas);
+    let a = &app.settings.snap.align;
+    let [r, g, b] = a.color;
+    let stroke = EStroke::new(1.0, Color32::from_rgb(r, g, b));
+    for l in &o.lines {
+        let (p, q) = (app.view.to_screen(l.a), app.view.to_screen(l.b));
+        // A little past both ends.
+        let d = q - p;
+        let u = if d.length() > 0.5 {
+            d.normalized()
+        } else {
+            egui::Vec2::ZERO
+        };
+        guide_line(&painter, p - u * 6.0, q + u * 6.0, stroke, a.style);
+    }
+    for l in &o.gaps {
+        let (p, q) = (app.view.to_screen(l.a), app.view.to_screen(l.b));
+        let d = q - p;
+        if d.length() < 0.5 {
+            continue;
+        }
+        let n = egui::vec2(-d.y, d.x).normalized() * 4.0;
+        painter.line_segment([p, q], stroke);
+        painter.line_segment([p - n, p + n], stroke);
+        painter.line_segment([q - n, q + n], stroke);
+    }
+    for l in &o.sizes {
+        // Outside the box: below a width, left of a height.
+        let (p, q) = (app.view.to_screen(l.a), app.view.to_screen(l.b));
+        let d = q - p;
+        if d.length() < 0.5 {
+            continue;
+        }
+        let off = if d.x.abs() >= d.y.abs() {
+            egui::vec2(0.0, 7.0)
+        } else {
+            egui::vec2(-7.0, 0.0)
+        };
+        let (p, q) = (p + off, q + off);
+        let u = d.normalized();
+        let n = egui::vec2(-u.y, u.x) * 4.0;
+        painter.line_segment([p, q], stroke);
+        painter.line_segment([p - n, p + n], stroke);
+        painter.line_segment([q - n, q + n], stroke);
+        // Two strokes across the middle: the same size.
+        let m = p + d * 0.5;
+        for k in [-1.5, 1.5] {
+            let c = m + u * k;
+            painter.line_segment([c - n * 0.75, c + n * 0.75], stroke);
+        }
+    }
+    if let Some(h) = o.dynamic {
+        let dopt = &app.settings.snap.dynamic;
+        let [r, g, b] = dopt.color;
+        let color = Color32::from_rgb(r, g, b);
+        let stroke = EStroke::new(1.0, color);
+        let view = app.view.visible_page_rect(canvas);
+        let mut guides = vec![(h.anchor, h.angle)];
+        if let Some((c, ang)) = h.cross {
+            // The other guide through the crossing.
+            guides.push((c, ang));
+        }
+        for (anchor, angle) in guides {
+            if let Some(s) = crate::live_guides::guide_in_view(anchor, angle, view) {
+                guide_line(
+                    &painter,
+                    app.view.to_screen(s.a),
+                    app.view.to_screen(s.b),
+                    stroke,
+                    dopt.style,
+                );
+            }
+        }
+        // The anchor: a small cross.
+        let c = app.view.to_screen(h.anchor);
+        for (dx, dy) in [(-4.0, -4.0), (4.0, -4.0)] {
+            painter.line_segment([c + egui::vec2(dx, dy), c - egui::vec2(dx, dy)], stroke);
+        }
+        let to = app.view.to_screen(h.point);
+        if dopt.ticks {
+            let along = to - c;
+            if along.length() > 0.5 {
+                let n = egui::vec2(-along.y, along.x).normalized() * 3.0;
+                // Ticks closer than 3 px would be a smear: skip them.
+                let step_px = dopt.tick_mm.max(0.01) as f32 * app.view.zoom;
+                if step_px >= 3.0 {
+                    for t in crate::live_guides::ticks(h.anchor, h.point, dopt.tick_mm, 1000) {
+                        let s = app.view.to_screen(t);
+                        painter.line_segment([s - n, s + n], stroke);
+                    }
+                }
+            }
+        }
+        if dopt.tooltip {
+            let u = app.units;
+            let text = format!(
+                "{:.2} {}, {:.1}\u{00B0}",
+                u.world_from_mm(h.distance()),
+                u.short(),
+                h.bearing()
+            );
+            // Beside the guide, on its upper side, clear of the pointer.
+            let a = h.angle.to_radians() as f32;
+            let mut n = egui::vec2(a.sin(), a.cos());
+            if n.y > 0.0 || (n.y.abs() < 1e-3 && n.x < 0.0) {
+                n = -n;
+            }
+            haloed_text(&painter, to + n * 14.0, text, color, n.x < -0.01);
+        }
     }
 }
 

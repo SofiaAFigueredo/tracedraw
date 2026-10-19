@@ -321,6 +321,17 @@ pub struct Settings {
     /// lines (else only the selected ones).
     #[serde(default = "default_true")]
     pub show_text_frames: bool,
+    /// Text fitted to a path: a drag off the path moves the text away
+    /// from it in steps of `path_tick_mm` (tick snapping).
+    #[serde(default)]
+    pub path_tick_snap: bool,
+    /// The step of tick snapping, mm.
+    #[serde(default = "default_path_tick")]
+    pub path_tick_mm: f64,
+}
+
+fn default_path_tick() -> f64 {
+    1.0
 }
 
 /// The docker tab column as it was left: the dockers in it, in order, and
@@ -369,7 +380,7 @@ fn default_desktop() -> [u8; 3] {
 }
 
 /// How many one-time upgrades `Settings::upgrade` knows.
-const UPGRADES: u32 = 1;
+const UPGRADES: u32 = 2;
 
 fn default_outline_units() -> String {
     "pt".into()
@@ -540,6 +551,10 @@ pub struct NodePrefs {
     pub unselected_filled: bool,
     /// An arrow at the start node shows the curve's direction.
     pub show_direction: bool,
+    /// How near, in screen pixels, a press must land on a node or a
+    /// control handle to take it (Shape tool, and the curve tools'
+    /// nodes).
+    pub pick_distance: f32,
 }
 
 impl Default for NodePrefs {
@@ -553,7 +568,21 @@ impl Default for NodePrefs {
             secondary_rgb: [0xFF, 0x00, 0x00],
             unselected_filled: true,
             show_direction: false,
+            pick_distance: 6.0,
         }
+    }
+}
+
+impl NodePrefs {
+    /// The pick distance in screen pixels, kept sensible and never less
+    /// than the node marker reaches.
+    pub fn pick_px(&self) -> f64 {
+        let set = if self.pick_distance.is_finite() {
+            self.pick_distance.clamp(2.0, 20.0)
+        } else {
+            6.0
+        };
+        f64::from(set.max(self.size.px() / 2.0 + 1.0))
     }
 }
 
@@ -732,6 +761,9 @@ pub struct SnapPrefs {
     pub alignment_guides: bool,
     pub dynamic_guides: bool,
     pub off: bool,
+    /// Options > Alignment Guides and Options > Dynamic Guides.
+    pub align: crate::live_guides::AlignOptions,
+    pub dynamic: crate::live_guides::DynamicOptions,
 }
 
 impl Default for SnapPrefs {
@@ -751,6 +783,8 @@ impl Default for SnapPrefs {
             alignment_guides: s.alignment_guides,
             dynamic_guides: s.dynamic_guides,
             off: s.off,
+            align: Default::default(),
+            dynamic: Default::default(),
         }
     }
 }
@@ -827,7 +861,7 @@ impl Default for ToolPrefs {
             star_complex: false,
             complex_points: 9,
             complex_sharpness: 2,
-            rect_corners: tracedraw_core::Corners::default(),
+            rect_corners: tracedraw_core::Corners::tool_default(),
             corners_together: true,
             ellipse_arc: None,
             spiral_revolutions: 4,
@@ -1140,6 +1174,8 @@ impl Default for Settings {
             warnings: Default::default(),
             curves: Default::default(),
             show_text_frames: true,
+            path_tick_snap: false,
+            path_tick_mm: default_path_tick(),
         }
     }
 }
@@ -1210,6 +1246,12 @@ impl Settings {
     pub fn upgrade(mut self) -> Settings {
         if self.upgrades < 1 {
             self.treat_all_filled = true;
+        }
+        // Older versions had no way to save corners that keep their size
+        // as the tool's default (scaling corners were the only default and
+        // were not written down): new rectangles now keep their corners.
+        if self.upgrades < 2 {
+            self.tools.rect_corners.fixed = true;
         }
         self.upgrades = self.upgrades.max(UPGRADES);
         self.migrate_ai();
@@ -1460,6 +1502,30 @@ mod tests {
         assert!(!again.upgrade().treat_all_filled);
         // New preferences start up to date.
         assert_eq!(Settings::default().upgrades, UPGRADES);
+    }
+
+    #[test]
+    fn rectangle_corners_keep_their_size_by_default_and_after_upgrading() {
+        // A first start: new rectangles keep their corners when resized.
+        assert!(Settings::default().tools.rect_corners.fixed);
+        // Saved by an older version, which never wrote the value down.
+        let old: Settings = serde_json::from_str(
+            r#"{"upgrades": 1, "tools": {"rect_corners": {"radii": [2.0, 2.0, 2.0, 2.0], "kind": "round"}}}"#,
+        )
+        .expect("old preferences");
+        assert!(!old.tools.rect_corners.fixed);
+        let s = old.upgrade();
+        assert!(s.tools.rect_corners.fixed);
+        assert_eq!(s.tools.rect_corners.radii, [2.0; 4]);
+        // Relative scaling turned on afterwards stays on.
+        let mut s = s;
+        s.tools.rect_corners.fixed = false;
+        let saved = serde_json::to_string(&s).expect("saved");
+        let again: Settings = serde_json::from_str(&saved).expect("read back");
+        assert!(!again.upgrade().tools.rect_corners.fixed);
+        // A file with no tool settings at all starts from the defaults.
+        let bare: Settings = serde_json::from_str(r#"{"language":"en"}"#).expect("bare");
+        assert!(bare.upgrade().tools.rect_corners.fixed);
     }
 
     use super::*;

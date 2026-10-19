@@ -17,6 +17,7 @@ use tracedraw_core::{
         PathTextVertical, TextAlign, TextOnPath, TextSpan, VerticalAlign,
     },
     geometry::{Affine, BezPath, Point, Rect, Shape as _},
+    text_flow::{free_segments, WrapRegion},
 };
 
 pub mod catalog;
@@ -24,6 +25,8 @@ pub mod hyphen;
 
 /// Points to millimetres.
 pub const PT_MM: f64 = 25.4 / 72.0;
+
+use tracedraw_core::document::text_outline::{GlyphLayout, PlacedGlyph};
 
 pub struct FontSystem {
     /// Installed fonts, then the fonts documents brought (see
@@ -60,6 +63,7 @@ pub struct FontSystem {
 /// Register this engine as the core's text outliner (call once at startup).
 pub fn install() {
     tracedraw_core::document::text_outline::set(|req| fonts().outline_cached(req).as_ref().clone());
+    tracedraw_core::document::text_outline::set_glyphs(|req| fonts().glyph_layout(req));
     tracedraw_core::document::text_outline::set_lines(|req| {
         let layout = fonts().layout(req);
         // Lines past what fits the frame flow on (to a linked frame);
@@ -376,17 +380,18 @@ pub fn usable_in_documents(data: &[u8]) -> bool {
 /// Choose the instance of a variable font: weight 700 for bold text and
 /// 400 otherwise (within the font's range), and its italic or slant axis
 /// for italic text when the face is upright. Returns the weight and
-/// whether the letters slant, which decide the synthetic styles.
+/// whether the letters slant, which decide the synthetic styles, and the
+/// axis values set (empty for a static font).
 fn set_axes(
     face: &mut ttf_parser::Face,
     hb: &mut rustybuzz::Face,
     bold: bool,
     italic: bool,
-) -> (u16, bool) {
+) -> (u16, bool, Vec<([u8; 4], f32)>) {
     let mut weight = face.weight().to_number();
     let mut slanted = face.is_italic() || face.is_oblique();
     if !face.is_variable() {
-        return (weight, slanted);
+        return (weight, slanted, Vec::new());
     }
     let mut set: Vec<rustybuzz::Variation> = Vec::new();
     for axis in face.variation_axes() {
@@ -422,7 +427,8 @@ fn set_axes(
         face.set_variation(v.tag, v.value);
     }
     hb.set_variations(&set);
-    (weight, slanted)
+    let coords = set.iter().map(|v| (v.tag.to_bytes(), v.value)).collect();
+    (weight, slanted, coords)
 }
 
 /// Letters 0x20 to 0xFF of the symbol encoding of the Symbol family as
@@ -613,6 +619,22 @@ struct Glyph {
     span: usize,
     /// Width of a trailing hyphen if the line breaks after this glyph.
     hyphen_after: Option<Arc<HyphenGlyph>>,
+    /// The font glyph behind the outline, for writers that keep text as
+    /// text; `None` for markers without an outline.
+    src: Option<Arc<GlyphSource>>,
+}
+
+/// Where a shaped glyph's outline comes from.
+struct GlyphSource {
+    font: tracedraw_core::document::text_outline::GlyphFont,
+    gid: u16,
+    /// From the glyph's space in ems to the outline at the pen origin
+    /// (mm): size, baseline shift, slant and character angle.
+    local: Affine,
+    /// The characters of its cluster (empty for its further glyphs).
+    text: String,
+    /// The outline is the font's own glyph (not made bold by doubling).
+    exact: bool,
 }
 
 #[derive(Clone)]
@@ -641,11 +663,20 @@ struct Line {
     metrics: Metrics,
     /// Last line of its paragraph (not justified).
     last_in_para: bool,
-    first_in_para: bool,
     para: usize,
     /// Index in the concatenated span text of the line's first character
     /// (the paragraph start for an empty line).
     start_char: usize,
+    /// Where the line goes: its baseline, the pen x before alignment and
+    /// the width it is aligned in (layout space, mm).
+    y: f64,
+    x0: f64,
+    avail: f64,
+    /// The left edge of its column (tab stops count from it).
+    col_x: f64,
+    /// Where the paragraph's drop cap and bullet go, on its first line.
+    cap_x: Option<f64>,
+    bullet_x: Option<f64>,
 }
 
 pub struct TextLayout {
@@ -668,6 +699,9 @@ pub struct TextLayout {
     /// One entry per laid-out line, in order: the character range it holds
     /// and the pen position before each of its characters (for carets).
     pub lines: Vec<LineBox>,
+    /// The glyphs as fonts draw them and the other marks, filled in by
+    /// [`FontSystem::glyph_layout`] only.
+    glyph_layout: GlyphLayout,
 }
 
 /// Caret geometry of one laid-out line, mm, in layout space (Y up).
@@ -705,24 +739,39 @@ impl TextLayout {
     }
 
     /// Character index nearest to the layout-space point `p`: the line
-    /// whose vertical band holds `p.y` (the nearest one outside all bands)
-    /// and the nearest character edge on that line.
+    /// whose vertical band holds `p.y` (the nearest one outside all bands;
+    /// of the parts of a line split around a wrap object, the one nearest
+    /// `p.x`) and the nearest character edge on that line.
     pub fn hit_char(&self, p: Point) -> Option<usize> {
-        let line = self
+        let x_gap = |l: &LineBox| {
+            let a = l.edges.first().copied().unwrap_or(0.0);
+            let b = l.edges.last().copied().unwrap_or(a);
+            let (a, b) = (a.min(b), a.max(b));
+            if p.x < a {
+                a - p.x
+            } else if p.x > b {
+                p.x - b
+            } else {
+                0.0
+            }
+        };
+        let in_band = self
             .lines
             .iter()
-            .find(|l| p.y <= l.baseline + l.ascent && p.y >= l.baseline - l.descent)
-            .or_else(|| {
-                self.lines.iter().min_by(|a, b| {
-                    let da = (a.baseline - p.y).abs();
-                    let db = (b.baseline - p.y).abs();
-                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                })
-            })?;
+            .filter(|l| p.y <= l.baseline + l.ascent && p.y >= l.baseline - l.descent)
+            .min_by(|a, b| x_gap(a).total_cmp(&x_gap(b)));
+        let line = in_band.or_else(|| {
+            self.lines.iter().min_by(|a, b| {
+                let da = (a.baseline - p.y).abs();
+                let db = (b.baseline - p.y).abs();
+                da.total_cmp(&db)
+                    .then_with(|| x_gap(a).total_cmp(&x_gap(b)))
+            })
+        })?;
         let (i, _) = line.edges.iter().enumerate().min_by(|(_, a), (_, b)| {
             let da = (*a - p.x).abs();
             let db = (*b - p.x).abs();
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            da.total_cmp(&db)
         })?;
         Some(line.start_char + i)
     }
@@ -1109,6 +1158,22 @@ impl FontSystem {
             .any(|f| f == family)
     }
 
+    /// The embedding bits (OS/2 `fsType`) of the face that draws `family`
+    /// in this style (a stand-in when the family is not installed);
+    /// `None` without such a face or without the bits.
+    pub fn embedding_bits(&self, family: &str, bold: bool, italic: bool) -> Option<u16> {
+        let id = self.face_for(family, bold, italic)?;
+        let (data, index) = self.face_data(id)?;
+        let face = ttf_parser::RawFace::parse(&data, index).ok()?;
+        match face
+            .table(ttf_parser::Tag::from_bytes(b"OS/2"))?
+            .get(8..10)?
+        {
+            &[hi, lo] => Some(u16::from_be_bytes([hi, lo])),
+            _ => None,
+        }
+    }
+
     /// The font file of `family`'s face in that weight and slant, for
     /// embedding in a saved drawing: `None` when the family lacks that
     /// face (bold or italic drawn from another) or the face sits in a
@@ -1459,7 +1524,8 @@ impl FontSystem {
             req.spans
                 .iter()
                 .map(|s| format!(
-                    "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}",
+                    "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{:?}|{}",
+                    s.layout_only,
                     s.font_family,
                     s.size_pt,
                     s.bold,
@@ -1471,6 +1537,7 @@ impl FontSystem {
                     s.underline,
                     s.strikethrough,
                     s.features,
+                    s.paragraph,
                     s.text
                 ))
                 .collect::<Vec<_>>()
@@ -1753,7 +1820,12 @@ impl FontSystem {
         let Some(mut hb) = rustybuzz::Face::from_slice(&data, index) else {
             return out;
         };
-        let (weight, slanted) = set_axes(&mut face, &mut hb, span.bold, span.italic);
+        let (weight, slanted, coords) = set_axes(&mut face, &mut hb, span.bold, span.italic);
+        let font = tracedraw_core::document::text_outline::GlyphFont {
+            data: data.clone(),
+            index,
+            coords,
+        };
         let size_pt = span.size_pt * size_scale;
         let upem = face.units_per_em() as f64;
         let scale = size_pt * PT_MM / upem;
@@ -1797,6 +1869,14 @@ impl FontSystem {
         let infos = glyphs.glyph_infos();
         let positions = glyphs.glyph_positions();
         let chars: Vec<(usize, char)> = text.char_indices().collect();
+        // The characters each glyph stands for: from its cluster to the
+        // next cluster (in text order); the first glyph of a cluster
+        // carries them.
+        let mut starts: Vec<usize> = infos.iter().map(|i| i.cluster as usize).collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut claimed: Vec<usize> = Vec::new();
+        let size_mm = size_pt * PT_MM;
         let hyphen_glyph = {
             let gid = face.glyph_index('-');
             gid.map(|g| {
@@ -1834,6 +1914,32 @@ impl FontSystem {
             if let Some(a) = place {
                 gp = a * gp;
             }
+            let start = info.cluster as usize;
+            let cluster_text = if claimed.contains(&start) {
+                String::new()
+            } else {
+                claimed.push(start);
+                let end = starts
+                    .iter()
+                    .copied()
+                    .find(|c| *c > start)
+                    .unwrap_or(text.len());
+                text.get(start..end).unwrap_or("").to_string()
+            };
+            let mut local = Affine::translate((0.0, baseline)) * Affine::scale(size_mm);
+            if synth_italic {
+                local = Affine::new([1.0, 0.0, 0.2, 1.0, 0.0, 0.0]) * local;
+            }
+            if let Some(a) = place {
+                local = a * local;
+            }
+            let src = Arc::new(GlyphSource {
+                font: font.clone(),
+                gid: gid.0,
+                local,
+                text: cluster_text,
+                exact: !synth_bold,
+            });
             let cluster = chars.iter().position(|(i, _)| *i == info.cluster as usize);
             let ch = cluster
                 .and_then(|k| chars.get(k))
@@ -1852,6 +1958,7 @@ impl FontSystem {
                 char_idx: char_base + cluster.unwrap_or(0),
                 span: span_idx,
                 hyphen_after: hyphen_glyph.clone(),
+                src: Some(src),
             });
         }
         out
@@ -1861,13 +1968,24 @@ impl FontSystem {
 
     /// Full layout of a text object.
     pub fn layout(&self, req: &TextRequest) -> TextLayout {
+        self.layout_with(req, false)
+    }
+
+    /// The glyphs of a text object as its fonts draw them, placed as
+    /// [`FontSystem::layout`] places its outline, and its other marks
+    /// (underlines, strike lines, added hyphens) as curves.
+    pub fn glyph_layout(&self, req: &TextRequest) -> GlyphLayout {
+        self.layout_with(req, true).glyph_layout
+    }
+
+    fn layout_with(&self, req: &TextRequest, collect: bool) -> TextLayout {
         if req.para.fit_to_frame && req.frame.is_some() {
             // Scale the font size so the text fills the frame height.
             let (mut lo, mut hi) = (0.1, 20.0);
             let mut best = 1.0;
             for _ in 0..14 {
                 let mid = (lo + hi) / 2.0;
-                let l = self.layout_scaled(req, mid);
+                let l = self.layout_scaled(req, mid, false);
                 if l.overflow {
                     hi = mid;
                 } else {
@@ -1875,12 +1993,12 @@ impl FontSystem {
                     lo = mid;
                 }
             }
-            return self.layout_scaled(req, best);
+            return self.layout_scaled(req, best, collect);
         }
-        self.layout_scaled(req, 1.0)
+        self.layout_scaled(req, 1.0, collect)
     }
 
-    fn layout_scaled(&self, req: &TextRequest, size_scale: f64) -> TextLayout {
+    fn layout_scaled(&self, req: &TextRequest, size_scale: f64, collect: bool) -> TextLayout {
         let spans = req.spans;
         if spans.is_empty() {
             return TextLayout {
@@ -1891,9 +2009,15 @@ impl FontSystem {
                 fitted_chars: 0,
                 baselines: Vec::new(),
                 lines: Vec::new(),
+                glyph_layout: GlyphLayout::default(),
             };
         }
         let para = req.para;
+        // Each paragraph's alignment and style: its own, or the object's.
+        let styles = tracedraw_core::paragraphs::paragraph_styles(spans, req.align, para);
+        let fallback = (req.align, para.clone());
+        let style_of =
+            |pi: usize| -> &(TextAlign, ParagraphStyle) { styles.get(pi).unwrap_or(&fallback) };
         let metrics: Vec<Metrics> = spans
             .iter()
             .map(|s| {
@@ -1935,11 +2059,13 @@ impl FontSystem {
                                 char_idx,
                                 span: si,
                                 hyphen_after: None,
+                                src: None,
                             })
                         }
                         char_idx += 1;
                     }
-                    let run = self.shape_run(span, si, part, size_scale, char_idx, para);
+                    let pi = paragraphs.len().saturating_sub(1);
+                    let run = self.shape_run(span, si, part, size_scale, char_idx, &style_of(pi).1);
                     char_idx += part.chars().count();
                     if let Some(p) = paragraphs.last_mut() {
                         p.extend(run);
@@ -1949,97 +2075,272 @@ impl FontSystem {
         }
         let total_chars = char_idx;
 
-        // 2. Break paragraphs into lines (paragraph text) or keep them whole.
+        // 2. Flow the paragraphs into lines: break them to the room each
+        // line has (the column, less indents, drop caps and the objects the
+        // text wraps around) and give every line its place.
         let columns = para.columns.max(1) as usize;
         let col_width = req
             .frame
             .map(|f| ((f.width - para.gutter * (columns as f64 - 1.0)) / columns as f64).max(1.0));
-        let mut lines: Vec<Line> = Vec::new();
-        for (pi, glyphs) in paragraphs.iter().enumerate() {
-            let m = glyphs
-                .first()
-                .map(|g| metrics[g.span])
-                .unwrap_or_else(|| metrics[0]);
-            let indent_first = para.left_indent
-                + para.first_line_indent
-                + if para.bullets {
-                    para.bullet_indent
-                } else {
-                    0.0
-                };
-            let indent_rest = para.left_indent
-                + if para.bullets {
-                    para.bullet_indent
-                } else {
-                    0.0
-                };
-            let para_start = para_starts.get(pi).copied().unwrap_or(0);
-            match col_width {
-                None => lines.push(Line {
-                    glyphs: glyphs.clone(),
-                    hyphen: None,
-                    metrics: line_metrics(glyphs, &metrics, m),
-                    last_in_para: true,
-                    first_in_para: true,
-                    para: pi,
-                    start_char: para_start,
-                }),
-                Some(w) => {
-                    let avail_first = (w - indent_first - para.right_indent).max(1.0);
-                    let avail_rest = (w - indent_rest - para.right_indent).max(1.0);
-                    // A drop cap takes the first glyph out of the first
-                    // line and narrows the lines beside it.
-                    let cap = glyphs.first().filter(|_| para.drop_cap_lines > 1).map(|g| {
-                        let step = para.line_step(m.line_height, m.size);
-                        let n = para.drop_cap_lines as f64;
-                        let (scale, _) = drop_cap_placement(&g.path, n, step, 0.0, m.ascent);
-                        DropCap {
-                            width: g.advance * scale + 1.0,
-                            lines: para.drop_cap_lines as usize,
-                            glyph_advance: g.advance,
-                        }
-                    });
-                    let broken = break_lines(
-                        glyphs,
-                        avail_first,
-                        avail_rest,
-                        cap,
-                        para,
-                        &metrics,
-                        pi,
-                        para_start,
-                    );
-                    lines.extend(broken);
-                }
-            }
-        }
-
-        // 3. Place lines: columns, leading, spacing, indents, alignment.
-        let mut path = BezPath::new();
-        let mut glyph_count = 0usize;
-        let mut overflow = false;
-        let mut fitted_chars = total_chars;
         let frame_h = req.frame.map(|f| f.height);
-        // Baseline grid: baselines snap to the next multiple of the pitch
-        // below their natural position (y is negative below the frame top).
-        let grid = if req.frame.is_some() && para.baseline_grid_mm > 1e-6 {
-            Some(para.baseline_grid_mm)
+        let artistic = req.frame.is_none();
+        let wrap: &[WrapRegion] = if artistic { &[] } else { &para.flow.wrap };
+        // Baseline grid: baselines snap to the grid line at or below their
+        // natural position: the page's grid, or one measured from the frame
+        // top (y is negative below the frame top).
+        let grid = if !artistic && para.baseline_grid_mm > 1e-6 {
+            Some(para.flow.grid.unwrap_or((0.0, para.baseline_grid_mm)))
         } else {
             None
         };
         let snap = |y: f64| -> f64 {
             match grid {
-                Some(g) => -(((-y / g) - 1e-9).ceil().max(0.0) * g),
-                None => y,
+                Some((o, g)) if g > 1e-6 && g.is_finite() && o.is_finite() => {
+                    o + ((y - o) / g + 1e-9).floor() * g
+                }
+                _ => y,
             }
         };
+        // The baseline after one at `y` in column `col` for a line with
+        // metrics `m` that moves down by `advance`: (column, baseline). A
+        // line that would leave the frame goes to the top of the next
+        // column (except the frame's first line).
+        let row_at = |y: f64, col: usize, advance: f64, m: &Metrics| -> (usize, f64) {
+            let next = snap(y - advance);
+            match frame_h {
+                Some(h) if next - m.descent < -h - 1e-6 && (y != 0.0 || col > 0) => {
+                    (col + 1, snap(-m.ascent))
+                }
+                _ => (col, next),
+            }
+        };
+        let col_x_of =
+            |col: usize| col.min(columns - 1) as f64 * (col_width.unwrap_or(0.0) + para.gutter);
+        let mut lines: Vec<Line> = Vec::new();
+        let mut overflow = false;
+        // The first line that does not fit the frame.
+        let mut overflow_line: Option<usize> = None;
+        let mut fitted_chars = total_chars;
         let mut col = 0usize;
         let mut y = 0.0f64; // top of the frame or baseline of artistic text
+        let mut prev_para: Option<usize> = None;
+        for (pi, glyphs) in paragraphs.iter().enumerate() {
+            let (_, ps) = style_of(pi);
+            let m_para = glyphs
+                .first()
+                .map(|g| metrics[g.span])
+                .unwrap_or_else(|| metrics[0]);
+            let bullet = if ps.bullets { ps.bullet_indent } else { 0.0 };
+            let indent_first = ps.left_indent + ps.first_line_indent + bullet;
+            let indent_rest = ps.left_indent + bullet;
+            let para_start = para_starts.get(pi).copied().unwrap_or(0);
+            let Some(w) = col_width else {
+                // Artistic text: one line a paragraph.
+                let m = line_metrics(glyphs, &metrics, m_para);
+                let advance = if pi == 0 {
+                    0.0
+                } else {
+                    ps.line_step(m.line_height, m.size)
+                };
+                y -= advance;
+                prev_para = Some(pi);
+                lines.push(Line {
+                    glyphs: glyphs.clone(),
+                    hyphen: None,
+                    metrics: m,
+                    last_in_para: true,
+                    para: pi,
+                    start_char: para_start,
+                    y,
+                    x0: indent_first,
+                    avail: f64::INFINITY,
+                    col_x: 0.0,
+                    cap_x: None,
+                    bullet_x: None,
+                });
+                continue;
+            };
+            // A drop cap takes the first glyph out of the first line and
+            // narrows the lines beside it.
+            let cap = glyphs.first().filter(|_| ps.drop_cap_lines > 1).map(|g| {
+                let step = ps.line_step(m_para.line_height, m_para.size);
+                let n = ps.drop_cap_lines as f64;
+                let (scale, _) = drop_cap_placement(&g.path, n, step, 0.0, m_para.ascent);
+                DropCap {
+                    width: g.advance * scale + 1.0,
+                    lines: ps.drop_cap_lines as usize,
+                    glyph_advance: g.advance,
+                }
+            });
+            let mut br = Breaker::new(glyphs, ps.hyphenate, &metrics, pi, para_start);
+            let mut row = 0usize;
+            // How far a line moves down from the one before it.
+            let advance_of = |m: &Metrics, first: bool, prev: Option<usize>| -> f64 {
+                let Some(pp) = prev else {
+                    return m.ascent;
+                };
+                let mut a = ps.line_step(m.line_height, m.size);
+                if first {
+                    a += ps.space_before;
+                    if pp != pi {
+                        a += style_of(pp).1.space_after;
+                    }
+                }
+                a
+            };
+            loop {
+                let first = br.first;
+                let indent = if first { indent_first } else { indent_rest };
+                let cap_w = match cap {
+                    Some(c) if row < c.lines => c.width,
+                    _ => 0.0,
+                };
+                // The first line gives the letter it drops back.
+                let back = match cap {
+                    Some(c) if first => c.glyph_advance,
+                    _ => 0.0,
+                };
+                let base = (w - indent - ps.right_indent).max(1.0);
+                let room = |seg: f64| (seg + back).max(1.0);
+                let mut row_lines: Vec<Line> = Vec::new();
+                let (row_col, row_y);
+                let placed = !(wrap.is_empty() || overflow);
+                if !placed {
+                    let avail = if cap_w > 0.0 {
+                        (base - cap_w + back).max(1.0)
+                    } else {
+                        base
+                    };
+                    let line = br.next(avail);
+                    let m = line.metrics;
+                    let (c, ny) = row_at(y, col, advance_of(&m, first, prev_para), &m);
+                    row_col = c;
+                    row_y = ny;
+                    row_lines.push(Line {
+                        avail: w - indent - ps.right_indent - cap_w,
+                        ..line
+                    });
+                } else {
+                    // Find the first place down the frame with room beside
+                    // the objects the text wraps around.
+                    let m_est = br.peek().map(|g| metrics[g.span]).unwrap_or(m_para);
+                    let advance = advance_of(&m_est, first, prev_para);
+                    let (c0, y0) = row_at(y, col, advance, &m_est);
+                    let (mut c, mut ty) = (c0, y0);
+                    let nudge = (ps.line_step(m_est.line_height, m_est.size) / 4.0).max(0.25);
+                    let min_w = m_est.size.max(1.0);
+                    let mut guard = 0usize;
+                    // The parts of the line, the drop cap taken from the
+                    // first one (the letter goes just before the text).
+                    let segs = loop {
+                        let col_x = col_x_of(c);
+                        let lo = col_x + indent;
+                        let hi = col_x + w - ps.right_indent;
+                        if c >= columns || guard > 20_000 {
+                            break vec![(lo + cap_w, hi.max(lo + cap_w + 1.0))];
+                        }
+                        let mut segs = free_segments(
+                            lo,
+                            hi,
+                            ty - m_est.descent,
+                            ty + m_est.ascent,
+                            wrap,
+                            min_w,
+                        );
+                        if cap_w > 0.0 {
+                            segs.retain(|(s, e)| e - s >= cap_w + min_w);
+                            if let Some(first) = segs.first_mut() {
+                                first.0 += cap_w;
+                            }
+                        }
+                        if !segs.is_empty() {
+                            break segs;
+                        }
+                        guard += 1;
+                        let next = snap(ty - nudge);
+                        ty = if next < ty - 1e-9 { next } else { ty - nudge };
+                        if let Some(h) = frame_h {
+                            if ty - m_est.descent < -h - 1e-6 {
+                                c += 1;
+                                ty = snap(-m_est.ascent);
+                            }
+                        }
+                    };
+                    for (k, (s, e)) in segs.iter().enumerate() {
+                        if k > 0 && br.done() {
+                            break;
+                        }
+                        let avail = if k == 0 {
+                            room(e - s)
+                        } else {
+                            (e - s).max(1.0)
+                        };
+                        let line = br.next(avail);
+                        row_lines.push(Line {
+                            x0: *s,
+                            avail: e - s,
+                            ..line
+                        });
+                        if br.done() {
+                            break;
+                        }
+                    }
+                    // The baseline from the line's own metrics where it
+                    // stayed in place; moved down by a taller line where it
+                    // had to find room.
+                    let m = row_lines.first().map_or(m_est, |l| l.metrics);
+                    let (c1, y1) = row_at(y, col, advance_of(&m, first, prev_para), &m);
+                    if (c, ty) == (c0, y0) && c1 == c {
+                        row_y = y1;
+                    } else {
+                        row_y = snap(ty - (m.ascent - m_est.ascent).max(0.0));
+                    }
+                    row_col = c;
+                }
+                if row_col >= columns && !overflow {
+                    overflow = true;
+                    overflow_line = Some(lines.len());
+                    fitted_chars = row_lines
+                        .first()
+                        .map_or(total_chars, |l| l.start_char.min(total_chars));
+                }
+                col = row_col;
+                y = row_y;
+                prev_para = Some(pi);
+                let col_x = col_x_of(col);
+                for (k, mut line) in row_lines.into_iter().enumerate() {
+                    line.y = y;
+                    line.col_x = col_x;
+                    if !placed {
+                        line.x0 = col_x + indent + cap_w;
+                    }
+                    if k == 0 && first {
+                        if cap.is_some() && !line.glyphs.is_empty() {
+                            line.cap_x = Some(line.x0 - cap_w);
+                        }
+                        if ps.bullets {
+                            line.bullet_x = Some(line.x0 - cap_w - indent + ps.left_indent);
+                        }
+                    }
+                    lines.push(line);
+                }
+                row += 1;
+                if br.done() {
+                    break;
+                }
+            }
+        }
+
+        // 3. Draw the lines: drop caps, bullets, alignment, glyphs,
+        // underlines. Characters of a span that is only laid out take their
+        // room but are not drawn (a text drawn in parts, one per character
+        // colour).
+        let span_drawn = |span: usize| spans.get(span).is_none_or(|s| !s.layout_only);
+        let mut path = BezPath::new();
+        let mut glyphs_out = GlyphLayout::default();
+        let mut glyph_count = 0usize;
         let mut min_y = 0.0f64;
         let mut max_x = 0.0f64;
-        let mut prev_para: Option<usize> = None;
-        let mut drop_cap_indent: (f64, usize) = (0.0, 0); // (width, lines remaining)
-        let artistic = req.frame.is_none();
         let mut line_baselines: Vec<(f64, f64)> = Vec::new();
         let mut line_boxes: Vec<LineBox> = Vec::new();
         // Where each line's characters end: the next line's start, or the
@@ -2064,104 +2365,60 @@ impl FontSystem {
 
         for (li, line) in lines.iter().enumerate() {
             let m = line.metrics;
-            let step = para.line_step(m.line_height, m.size);
-            // Paragraph spacing.
-            let mut advance_y = if artistic {
-                if line.para == 0 && line.first_in_para {
-                    0.0
-                } else {
-                    step
-                }
-            } else if prev_para.is_none() {
-                m.ascent
-            } else {
-                step
-            };
-            if !artistic && line.first_in_para && prev_para.is_some() {
-                advance_y += para.space_before;
-                if let Some(pp) = prev_para {
-                    if pp != line.para {
-                        advance_y += para.space_after;
-                    }
-                }
-            }
-            // Column overflow.
-            let mut next_y = snap(y - advance_y);
-            if let Some(h) = frame_h {
-                if next_y - m.descent < -h - 1e-6 && (y != 0.0 || col > 0) {
-                    col += 1;
-                    y = 0.0;
-                    advance_y = m.ascent;
-                    next_y = snap(y - advance_y);
-                    if col >= columns && !overflow {
-                        overflow = true;
-                        fitted_chars = line.start_char.min(total_chars);
-                    }
-                }
-            }
-            y = next_y;
-            prev_para = Some(line.para);
-
-            let col_x = col.min(columns - 1) as f64 * (col_width.unwrap_or(0.0) + para.gutter);
-            let indent = if line.first_in_para {
-                para.left_indent + para.first_line_indent
-            } else {
-                para.left_indent
-            } + if para.bullets {
-                para.bullet_indent
-            } else {
-                0.0
-            };
+            let (align, ps) = style_of(line.para);
+            let align = *align;
+            let step = ps.line_step(m.line_height, m.size);
+            let y = line.y;
+            // Drawn only while the text fits the frame: the rest overflows.
+            let line_drawn = overflow_line.is_none_or(|o| li < o);
 
             // The line's outlines; lines past the frame (overflow) are not
             // drawn.
             let mut line_path = BezPath::new();
+            let mut line_glyphs = GlyphLayout::default();
             // Drop cap: the first glyph of a paragraph, scaled so its top
             // meets the top of the first line's letters and it sits on the
             // baseline of the Nth line.
             let mut glyphs: &[Glyph] = &line.glyphs;
-            let mut x0 = col_x + indent;
-            if para.drop_cap_lines > 1 && line.first_in_para && !glyphs.is_empty() && !artistic {
-                let n = para.drop_cap_lines as f64;
-                let g = &glyphs[0];
+            let x0 = line.x0;
+            if let (Some(cap_x), Some(g), false) = (line.cap_x, glyphs.first(), artistic) {
+                let n = ps.drop_cap_lines as f64;
                 let (scale, baseline) = drop_cap_placement(&g.path, n, step, y, m.ascent);
-                let gp = Affine::translate((x0, baseline))
-                    * Affine::scale(scale)
-                    * g.path.as_ref().clone();
-                line_path.extend(gp.elements().iter().copied());
-                drop_cap_indent = (g.advance * scale + 1.0, para.drop_cap_lines as usize);
+                let a = Affine::translate((cap_x, baseline)) * Affine::scale(scale);
+                if span_drawn(g.span) {
+                    place_glyph(collect, a, g, &mut line_glyphs);
+                    let gp = a * g.path.as_ref().clone();
+                    line_path.extend(gp.elements().iter().copied());
+                }
                 glyphs = &glyphs[1..];
                 glyph_count += 1;
             }
-            if drop_cap_indent.1 > 0 {
-                x0 += drop_cap_indent.0;
-                drop_cap_indent.1 -= 1;
-            }
             // Bullet.
-            if para.bullets && line.first_in_para && !artistic {
-                if let Some(span) = spans.get(glyphs.first().map(|g| g.span).unwrap_or(0)) {
-                    let b = self.shape_run(span, 0, &para.bullet_char, size_scale, 0, para);
+            if let (Some(bx), false) = (line.bullet_x, artistic) {
+                let first_span = glyphs.first().map(|g| g.span).unwrap_or(0);
+                if let Some(span) = spans.get(first_span).filter(|_| span_drawn(first_span)) {
+                    let b = self.shape_run(span, 0, &ps.bullet_char, size_scale, 0, ps);
                     for g in &b {
-                        let gp = Affine::translate((col_x + para.left_indent, y))
-                            * g.path.as_ref().clone();
+                        let a = Affine::translate((bx, y));
+                        place_glyph(collect, a, g, &mut line_glyphs);
+                        let gp = a * g.path.as_ref().clone();
                         line_path.extend(gp.elements().iter().copied());
                     }
                 }
             }
 
-            let avail = col_width
-                .map(|w| w - indent - para.right_indent - (x0 - col_x - indent))
-                .unwrap_or(f64::INFINITY);
-            let (content_w, n_spaces) = line_width(glyphs, para, x0 - col_x);
+            let avail = line.avail;
+            let col_start = line.col_x;
+            let (content_w, n_spaces) = line_width(glyphs, ps, x0 - col_start);
             let hyphen_w = line.hyphen.as_ref().map(|h| h.advance).unwrap_or(0.0);
             let total_w = content_w + hyphen_w;
-            let (dx, space_extra) = match req.align {
+            let (dx, space_extra) = match align {
                 TextAlign::Left | TextAlign::None => (0.0, 0.0),
                 TextAlign::Center => (((avail.min(1e9)) - total_w).max(0.0) / 2.0, 0.0),
                 TextAlign::Right => ((avail.min(1e9) - total_w).max(0.0), 0.0),
                 TextAlign::Justify | TextAlign::ForceJustify => {
                     // Forced justification spreads the last line too.
-                    let last = line.last_in_para && req.align == TextAlign::Justify;
+                    let last = line.last_in_para && align == TextAlign::Justify;
                     if last || n_spaces == 0 || !avail.is_finite() {
                         (0.0, 0.0)
                     } else {
@@ -2169,17 +2426,15 @@ impl FontSystem {
                     }
                 }
             };
-            let avail_for_center = if avail.is_finite() { avail } else { total_w };
             let dx = if artistic {
-                match req.align {
-                    TextAlign::Center => -total_w / 2.0 + 0.0,
+                match align {
+                    TextAlign::Center => -total_w / 2.0,
                     TextAlign::Right => -total_w,
                     _ => 0.0,
                 }
             } else {
                 dx
             };
-            let _ = avail_for_center;
 
             // Emit glyphs.
             let mut pen = x0 + dx;
@@ -2213,19 +2468,22 @@ impl FontSystem {
                     .unwrap_or(end_char)
                     .max(g.char_idx + 1);
                 if g.ch == '\t' {
-                    let rel = pen - col_x;
-                    let next = next_tab(rel, &para.tabs);
+                    let rel = pen - col_start;
+                    let next = next_tab(rel, &ps.tabs);
                     let before = pen;
-                    pen = col_x + next;
+                    pen = col_start + next;
                     record(g.char_idx, next_idx, before, pen);
                     continue;
                 }
-                let gp =
-                    Affine::translate((pen + g.x_offset, y + g.y_offset)) * g.path.as_ref().clone();
-                line_path.extend(gp.elements().iter().copied());
+                if span_drawn(g.span) {
+                    let a = Affine::translate((pen + g.x_offset, y + g.y_offset));
+                    place_glyph(collect, a, g, &mut line_glyphs);
+                    let gp = a * g.path.as_ref().clone();
+                    line_path.extend(gp.elements().iter().copied());
+                }
                 let adv = g.advance + if g.ch == ' ' { space_extra } else { 0.0 };
                 let span = &spans[g.span];
-                if span.underline || span.strikethrough {
+                if (span.underline || span.strikethrough) && !span.layout_only {
                     match underline_runs.last_mut() {
                         Some((s, _, end)) if *s == g.span && (*end - pen).abs() < 1e-6 => {
                             *end = pen + adv
@@ -2246,8 +2504,13 @@ impl FontSystem {
                 edges,
             });
             if let Some(h) = &line.hyphen {
-                let gp = Affine::translate((pen, y)) * h.path.clone();
-                line_path.extend(gp.elements().iter().copied());
+                if line.glyphs.last().is_none_or(|g| span_drawn(g.span)) {
+                    let gp = Affine::translate((pen, y)) * h.path.clone();
+                    line_path.extend(gp.elements().iter().copied());
+                    if collect {
+                        line_glyphs.rest.extend(gp.elements().iter().copied());
+                    }
+                }
                 pen += h.advance;
             }
             for (si, a, b) in underline_runs {
@@ -2261,6 +2524,11 @@ impl FontSystem {
                         y + sm.underline_pos,
                     );
                     line_path.extend(r.to_path(0.01).elements().iter().copied());
+                    if collect {
+                        line_glyphs
+                            .rest
+                            .extend(r.to_path(0.01).elements().iter().copied());
+                    }
                 }
                 if span.strikethrough {
                     let r = Rect::new(
@@ -2270,10 +2538,19 @@ impl FontSystem {
                         y + sm.strike_pos + sm.underline_thick / 2.0,
                     );
                     line_path.extend(r.to_path(0.01).elements().iter().copied());
+                    if collect {
+                        line_glyphs
+                            .rest
+                            .extend(r.to_path(0.01).elements().iter().copied());
+                    }
                 }
             }
-            if !overflow {
+            if line_drawn {
                 path.extend(line_path.elements().iter().copied());
+                glyphs_out.glyphs.append(&mut line_glyphs.glyphs);
+                glyphs_out
+                    .rest
+                    .extend(line_glyphs.rest.elements().iter().copied());
             }
             line_baselines.push((line_start, y));
             max_x = max_x.max(pen);
@@ -2292,6 +2569,12 @@ impl FontSystem {
             let dy = -(h + min_y).max(0.0) * share;
             if dy.abs() > 1e-9 {
                 path.apply_affine(Affine::translate((0.0, dy)));
+                let shift = Affine::translate((0.0, dy));
+                for g in &mut glyphs_out.glyphs {
+                    g.transform = shift * g.transform;
+                    g.path.apply_affine(shift);
+                }
+                glyphs_out.rest.apply_affine(shift);
                 for b in &mut line_baselines {
                     b.1 += dy;
                 }
@@ -2316,7 +2599,8 @@ impl FontSystem {
 
         // 4. Text on a path: re-place the glyphs of artistic text along the curve.
         if let (Some(tp), true) = (req.on_path, artistic) {
-            let placed = place_on_path(&lines, tp, req.align, spans);
+            let mut on_path = GlyphLayout::default();
+            let placed = place_on_path(&lines, tp, style_of(0).0, spans, collect, &mut on_path);
             return TextLayout {
                 path: placed,
                 bounds,
@@ -2325,6 +2609,7 @@ impl FontSystem {
                 fitted_chars: total_chars,
                 baselines: line_baselines,
                 lines: line_boxes,
+                glyph_layout: on_path,
             };
         }
 
@@ -2336,6 +2621,7 @@ impl FontSystem {
             fitted_chars,
             baselines: line_baselines,
             lines: line_boxes,
+            glyph_layout: glyphs_out,
         }
     }
 }
@@ -2414,8 +2700,184 @@ fn next_tab(x: f64, tabs: &[f64]) -> f64 {
         .unwrap_or(x + 12.7)
 }
 
-/// Greedy line breaking at spaces, with optional hyphenation and a fallback
-/// to breaking inside words that do not fit alone.
+/// Greedy line breaking at spaces, with optional hyphenation and a
+/// fallback to breaking inside words that do not fit alone, one line at a
+/// time for the room each line has.
+struct Breaker<'a> {
+    /// Runs separated by spaces; the space belongs to the preceding word.
+    words: Vec<Vec<Glyph>>,
+    i: usize,
+    /// What is left of `words[i]` after a break inside it.
+    tail: Option<Vec<Glyph>>,
+    /// The next line is the paragraph's first.
+    first: bool,
+    /// An empty paragraph still owes its one empty line.
+    empty_pending: bool,
+    hyphenate: bool,
+    metrics: &'a [Metrics],
+    pi: usize,
+    para_start: usize,
+}
+
+impl<'a> Breaker<'a> {
+    fn new(
+        glyphs: &[Glyph],
+        hyphenate: bool,
+        metrics: &'a [Metrics],
+        pi: usize,
+        para_start: usize,
+    ) -> Self {
+        let mut words: Vec<Vec<Glyph>> = Vec::new();
+        let mut cur: Vec<Glyph> = Vec::new();
+        for g in glyphs {
+            let is_sep = g.ch == ' ' || g.ch == '\t';
+            cur.push(g.clone());
+            if is_sep {
+                words.push(std::mem::take(&mut cur));
+            }
+        }
+        if !cur.is_empty() {
+            words.push(cur);
+        }
+        Breaker {
+            empty_pending: words.is_empty(),
+            words,
+            i: 0,
+            tail: None,
+            first: true,
+            hyphenate,
+            metrics,
+            pi,
+            para_start,
+        }
+    }
+
+    fn done(&self) -> bool {
+        !self.empty_pending && self.i >= self.words.len()
+    }
+
+    /// The next glyph to place.
+    fn peek(&self) -> Option<&Glyph> {
+        match &self.tail {
+            Some(t) => t.first(),
+            None => self.words.get(self.i).and_then(|w| w.first()),
+        }
+    }
+
+    fn line(&mut self, mut glyphs: Vec<Glyph>, hyphen: Option<Arc<HyphenGlyph>>) -> Line {
+        self.first = false;
+        let start_char = glyphs
+            .first()
+            .map(|g| g.char_idx)
+            .unwrap_or(self.para_start);
+        // Trailing spaces do not count toward alignment: strip them.
+        while glyphs.last().map(|g| g.ch == ' ').unwrap_or(false) {
+            glyphs.pop();
+        }
+        let fallback = self.metrics.first().copied().unwrap_or_default();
+        Line {
+            metrics: line_metrics(&glyphs, self.metrics, fallback),
+            glyphs,
+            hyphen,
+            last_in_para: self.done(),
+            para: self.pi,
+            start_char,
+            y: 0.0,
+            x0: 0.0,
+            avail: 0.0,
+            col_x: 0.0,
+            cap_x: None,
+            bullet_x: None,
+        }
+    }
+
+    /// The next line, `avail` wide: at least one glyph while any is left.
+    fn next(&mut self, avail: f64) -> Line {
+        if self.empty_pending {
+            self.empty_pending = false;
+            return self.line(Vec::new(), None);
+        }
+        let width_of = |gs: &[Glyph]| -> f64 {
+            gs.iter()
+                .map(|g| if g.ch == '\t' { 12.7 } else { g.advance })
+                .sum()
+        };
+        let trimmed = |gs: &[Glyph]| -> f64 {
+            let mut w = width_of(gs);
+            if let Some(l) = gs.last() {
+                if l.ch == ' ' {
+                    w -= l.advance;
+                }
+            }
+            w
+        };
+        let mut line: Vec<Glyph> = Vec::new();
+        loop {
+            let word = match &self.tail {
+                Some(t) => t.clone(),
+                None => match self.words.get(self.i) {
+                    Some(w) => w.clone(),
+                    None => break,
+                },
+            };
+            if trimmed(&[line.as_slice(), word.as_slice()].concat()) <= avail {
+                line.extend(word);
+                self.tail = None;
+                self.i += 1;
+                continue;
+            }
+            // Try hyphenating the word.
+            if self.hyphenate || line.is_empty() {
+                let text: String = word.iter().map(|g| g.ch).collect();
+                let points = if self.hyphenate {
+                    hyphen::break_points(text.trim_end())
+                } else {
+                    // Forced break inside an over-long word: any position.
+                    (1..word.len()).collect()
+                };
+                let mut best: Option<usize> = None;
+                for p in points {
+                    if p == 0 || p >= word.len() {
+                        continue;
+                    }
+                    let head = &word[..p];
+                    let hy = head
+                        .last()
+                        .and_then(|g| g.hyphen_after.as_ref())
+                        .map(|h| h.advance)
+                        .unwrap_or(0.0);
+                    let w = trimmed(&[line.as_slice(), head].concat())
+                        + if self.hyphenate { hy } else { 0.0 };
+                    if w <= avail {
+                        best = Some(p);
+                    } else {
+                        break;
+                    }
+                }
+                if let Some(p) = best {
+                    let head = word[..p].to_vec();
+                    let hyphen = if self.hyphenate {
+                        head.last().and_then(|g| g.hyphen_after.clone())
+                    } else {
+                        None
+                    };
+                    line.extend(head);
+                    self.tail = Some(word[p..].to_vec());
+                    return self.line(line, hyphen);
+                }
+            }
+            if line.is_empty() {
+                // Nothing fits at all; put the word anyway to make progress.
+                line.extend(word);
+                self.tail = None;
+                self.i += 1;
+            }
+            break;
+        }
+        self.line(line, None)
+    }
+}
+
 /// The room a drop cap takes from the lines of its paragraph.
 #[derive(Debug, Clone, Copy)]
 struct DropCap {
@@ -2427,183 +2889,6 @@ struct DropCap {
     glyph_advance: f64,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn break_lines(
-    glyphs: &[Glyph],
-    avail_first: f64,
-    avail_rest: f64,
-    cap: Option<DropCap>,
-    para: &ParagraphStyle,
-    metrics: &[Metrics],
-    pi: usize,
-    para_start: usize,
-) -> Vec<Line> {
-    let mut lines = Vec::new();
-    if glyphs.is_empty() {
-        lines.push(Line {
-            glyphs: Vec::new(),
-            hyphen: None,
-            metrics: metrics[0],
-            last_in_para: true,
-            first_in_para: true,
-            para: pi,
-            start_char: para_start,
-        });
-        return lines;
-    }
-    let start_of = |gs: &[Glyph]| gs.first().map(|g| g.char_idx).unwrap_or(para_start);
-    // Words: runs separated by spaces; the space belongs to the preceding word.
-    let mut words: Vec<Vec<Glyph>> = Vec::new();
-    let mut cur: Vec<Glyph> = Vec::new();
-    for g in glyphs {
-        let is_sep = g.ch == ' ' || g.ch == '\t';
-        cur.push(g.clone());
-        if is_sep {
-            words.push(std::mem::take(&mut cur));
-        }
-    }
-    if !cur.is_empty() {
-        words.push(cur);
-    }
-    let width_of = |gs: &[Glyph]| -> f64 {
-        gs.iter()
-            .map(|g| if g.ch == '\t' { 12.7 } else { g.advance })
-            .sum()
-    };
-    let trimmed = |gs: &[Glyph]| -> f64 {
-        let mut w = width_of(gs);
-        if let Some(l) = gs.last() {
-            if l.ch == ' ' {
-                w -= l.advance;
-            }
-        }
-        w
-    };
-
-    let mut line: Vec<Glyph> = Vec::new();
-    let mut first = true;
-    let mut i = 0;
-    while i < words.len() {
-        let base = if first { avail_first } else { avail_rest };
-        let avail = match cap {
-            Some(c) if lines.len() < c.lines => {
-                let back = if lines.is_empty() {
-                    c.glyph_advance
-                } else {
-                    0.0
-                };
-                (base - c.width + back).max(1.0)
-            }
-            _ => base,
-        };
-        let word = words[i].clone();
-        let fits = trimmed(&[line.as_slice(), word.as_slice()].concat()) <= avail;
-        if fits {
-            line.extend(word.iter().cloned());
-            i += 1;
-            continue;
-        }
-        // Try hyphenating the word.
-        let mut placed = false;
-        if para.hyphenate || line.is_empty() {
-            let text: String = word.iter().map(|g| g.ch).collect();
-            let points = if para.hyphenate {
-                hyphen::break_points(text.trim_end())
-            } else {
-                // Forced break inside an over-long word: any position.
-                (1..word.len()).collect()
-            };
-            let mut best: Option<usize> = None;
-            for p in points {
-                if p == 0 || p >= word.len() {
-                    continue;
-                }
-                let head = &word[..p];
-                let hy = head
-                    .last()
-                    .and_then(|g| g.hyphen_after.as_ref())
-                    .map(|h| h.advance)
-                    .unwrap_or(0.0);
-                let w = trimmed(&[line.as_slice(), head].concat())
-                    + if para.hyphenate { hy } else { 0.0 };
-                if w <= avail {
-                    best = Some(p);
-                } else {
-                    break;
-                }
-            }
-            if let Some(p) = best {
-                let head = word[..p].to_vec();
-                let hyphen = if para.hyphenate {
-                    head.last().and_then(|g| g.hyphen_after.clone())
-                } else {
-                    None
-                };
-                line.extend(head);
-                lines.push(Line {
-                    start_char: start_of(&line),
-                    glyphs: std::mem::take(&mut line),
-                    hyphen,
-                    metrics: Metrics::default(),
-                    last_in_para: false,
-                    first_in_para: first,
-                    para: pi,
-                });
-                first = false;
-                let tail = word[p..].to_vec();
-                // Replace the word with its tail and retry.
-                let mut rest = vec![tail];
-                rest.extend(words[i + 1..].iter().cloned());
-                words.truncate(i);
-                words.extend(rest);
-                placed = true;
-            }
-        }
-        if placed {
-            continue;
-        }
-        if line.is_empty() {
-            // Nothing fits at all; put the word anyway to make progress.
-            line.extend(word.iter().cloned());
-            i += 1;
-        }
-        lines.push(Line {
-            start_char: start_of(&line),
-            glyphs: std::mem::take(&mut line),
-            hyphen: None,
-            metrics: Metrics::default(),
-            last_in_para: false,
-            first_in_para: first,
-            para: pi,
-        });
-        first = false;
-    }
-    if line.is_empty() && !lines.is_empty() {
-        // The last word went out as its own line: no empty line after it.
-        if let Some(l) = lines.last_mut() {
-            l.last_in_para = true;
-        }
-    } else {
-        lines.push(Line {
-            start_char: start_of(&line),
-            glyphs: line,
-            hyphen: None,
-            metrics: Metrics::default(),
-            last_in_para: true,
-            first_in_para: first,
-            para: pi,
-        });
-    }
-    // Trailing spaces do not count toward alignment: strip them.
-    for l in lines.iter_mut() {
-        while l.glyphs.last().map(|g| g.ch == ' ').unwrap_or(false) {
-            l.glyphs.pop();
-        }
-        l.metrics = line_metrics(&l.glyphs, metrics, metrics[0]);
-    }
-    lines
-}
-
 /// Place artistic text along a path: each glyph is centred on its arc
 /// length position along the baseline (see [`TextOnPath::baseline`]) and
 /// turned to its direction there. Positions wrap around closed paths.
@@ -2611,7 +2896,9 @@ fn place_on_path(
     lines: &[Line],
     tp: &TextOnPath,
     align: TextAlign,
-    _spans: &[TextSpan],
+    spans: &[TextSpan],
+    collect: bool,
+    glyphs: &mut GlyphLayout,
 ) -> BezPath {
     let mut out = BezPath::new();
     let Some(line) = lines.first() else {
@@ -2656,10 +2943,35 @@ fn place_on_path(
             * along
             * flip
             * Affine::translate((-g.advance / 2.0 + g.x_offset, g.y_offset + lift));
+        if spans.get(g.span).is_some_and(|s| s.layout_only) {
+            continue;
+        }
+        place_glyph(collect, place, g, glyphs);
         let gp = place * g.path.as_ref().clone();
         out.extend(gp.elements().iter().copied());
     }
     out
+}
+
+/// Add glyph `g`, placed by `a`, to the glyph layout when glyphs are
+/// collected: as a font glyph, or as curves when it has no font glyph.
+fn place_glyph(collect: bool, a: Affine, g: &Glyph, out: &mut GlyphLayout) {
+    if !collect {
+        return;
+    }
+    let path = a * g.path.as_ref().clone();
+    match &g.src {
+        Some(src) => out.glyphs.push(PlacedGlyph {
+            font: src.font.clone(),
+            glyph_id: src.gid,
+            transform: a * src.local,
+            text: src.text.clone(),
+            span: g.span,
+            path,
+            exact: src.exact,
+        }),
+        None => out.rest.extend(path.elements().iter().copied()),
+    }
 }
 
 /// How a letter centred at a point of the path with unit direction `dir`
@@ -2737,7 +3049,10 @@ mod tests {
             strikethrough: false,
             fill: None,
             background: None,
+            outline: None,
+            layout_only: false,
             features: Vec::new(),
+            paragraph: None,
         }
     }
 
@@ -3102,6 +3417,35 @@ mod tests {
     }
 
     #[test]
+    fn spans_only_laid_out_keep_their_room_but_are_not_drawn() {
+        if !has_fonts() {
+            return;
+        }
+        let f = fonts();
+        let whole = f.outline(&[span("ab"), span("cd")]);
+        let mut hidden = span("ab");
+        hidden.layout_only = true;
+        let mut ul = span("cd");
+        ul.underline = true;
+        ul.layout_only = true;
+        let part = f.outline(&[hidden, span("cd")]);
+        let none = f.outline(&[span("ab"), ul]);
+        // The visible letters stay where they are in the whole text.
+        let wb = whole.path.bounding_box();
+        let pb = part.path.bounding_box();
+        assert!(pb.x0 > wb.x0 + 0.5, "{pb:?} {wb:?}");
+        assert!((pb.x1 - wb.x1).abs() < 1e-6, "{pb:?} {wb:?}");
+        assert_eq!(part.lines, whole.lines);
+        // A hidden span draws neither its letters nor its underline.
+        let nb = none.path.bounding_box();
+        assert!(nb.x1 < wb.x1 - 0.5, "{nb:?} {wb:?}");
+        assert_eq!(
+            part.path.elements().len() + none.path.elements().len(),
+            whole.path.elements().len()
+        );
+    }
+
+    #[test]
     fn character_backgrounds_cover_their_characters() {
         if !has_fonts() {
             return;
@@ -3149,6 +3493,195 @@ mod tests {
         assert_eq!(hyphen::break_points("Zebracorn"), vec![3]);
         hyphen::set_custom(Vec::new());
         assert_ne!(hyphen::break_points("zebracorn"), vec![3]);
+    }
+
+    fn frame_layout(
+        f: &FontSystem,
+        spans: &[TextSpan],
+        para: &ParagraphStyle,
+        w: f64,
+    ) -> TextLayout {
+        f.layout(&TextRequest {
+            spans,
+            frame: Some(Size::new(w, 200.0)),
+            align: TextAlign::Left,
+            para,
+            on_path: None,
+        })
+    }
+
+    #[test]
+    fn paragraphs_with_their_own_alignment_and_spacing_lay_out_apart() {
+        if !has_fonts() {
+            return;
+        }
+        let f = fonts();
+        let mut kind = tracedraw_core::ShapeKind::Text {
+            spans: vec![span("left\nright")],
+            origin: Point::ZERO,
+            frame: Some(Size::new(100.0, 100.0)),
+            align: TextAlign::Left,
+            para: ParagraphStyle::default(),
+            on_path: None,
+        };
+        let plain = match &kind {
+            tracedraw_core::ShapeKind::Text { spans, para, .. } => {
+                frame_layout(f, spans, para, 100.0)
+            }
+            _ => unreachable!(),
+        };
+        // The second paragraph right aligned, with 4 mm before it.
+        tracedraw_core::paragraphs::edit_paragraph_formats(&mut kind, Some((7, 7)), |p| {
+            p.align = TextAlign::Right;
+            p.space_before = 4.0;
+        });
+        let tracedraw_core::ShapeKind::Text { spans, para, .. } = &kind else {
+            unreachable!()
+        };
+        let l = frame_layout(f, spans, para, 100.0);
+        assert_eq!(l.baselines.len(), 2);
+        // The first paragraph is where it was, at the left.
+        assert!((l.baselines[0].0 - plain.baselines[0].0).abs() < 1e-9);
+        assert!((l.baselines[0].1 - plain.baselines[0].1).abs() < 1e-9);
+        // The second one ends at the right edge and is 4 mm lower.
+        let right_end = l.lines[1].edges.last().copied().unwrap_or(0.0);
+        assert!((right_end - 100.0).abs() < 0.05, "{right_end}");
+        assert!(l.baselines[1].0 > 50.0);
+        assert!((plain.baselines[1].1 - l.baselines[1].1 - 4.0).abs() < 1e-6);
+    }
+
+    fn wrap_square(
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        side: tracedraw_core::WrapSide,
+    ) -> WrapRegion {
+        WrapRegion::from_path(
+            &Rect::new(x0, y0, x1, y1).to_path(0.01),
+            tracedraw_core::TextWrap {
+                mode: tracedraw_core::WrapMode::Square,
+                side,
+                offset: 1.0,
+            },
+        )
+        .unwrap()
+    }
+
+    fn words(n: usize) -> TextSpan {
+        span(&vec!["word"; n].join(" "))
+    }
+
+    #[test]
+    fn paragraph_text_flows_around_a_wrap_object() {
+        if !has_fonts() {
+            return;
+        }
+        let f = fonts();
+        let s = words(120);
+        let plain = ParagraphStyle::default();
+        let free = frame_layout(f, std::slice::from_ref(&s), &plain, 100.0);
+        // A square in the middle of the frame, 20 to 40 mm down: lines
+        // beside it come in two parts, none crosses it.
+        let mut para = ParagraphStyle::default();
+        para.flow = tracedraw_core::text_flow::FrameFlow::new(
+            vec![wrap_square(
+                40.0,
+                -40.0,
+                60.0,
+                -20.0,
+                tracedraw_core::WrapSide::Straddle,
+            )],
+            None,
+        );
+        let l = frame_layout(f, std::slice::from_ref(&s), &para, 100.0);
+        assert!(l.lines.len() > free.lines.len());
+        let mut split_rows = 0;
+        for line in &l.lines {
+            let (x0, x1) = (line.edges[0], line.edges.last().copied().unwrap_or(0.0));
+            let band = (line.baseline - line.descent, line.baseline + line.ascent);
+            if band.0 < -19.0 && band.1 > -41.0 {
+                // Beside the square: wholly left of 39 or right of 61.
+                assert!(
+                    x1 <= 39.0 + 0.05 || x0 >= 61.0 - 0.05,
+                    "{x0}..{x1} at {band:?}"
+                );
+                if x0 >= 61.0 - 0.05 {
+                    split_rows += 1;
+                }
+            }
+        }
+        assert!(split_rows >= 2, "{split_rows}");
+        // The text keeps its order: carets run on through both halves.
+        let starts: Vec<usize> = l.lines.iter().map(|l| l.start_char).collect();
+        assert!(starts.windows(2).all(|w| w[0] < w[1]));
+        // Hit testing finds the right half of a split row.
+        let right = l.lines.iter().find(|l| l.edges[0] >= 61.0 - 0.05).unwrap();
+        let hit = l
+            .hit_char(Point::new(right.edges[1], right.baseline))
+            .unwrap();
+        assert!(
+            hit >= right.start_char && hit <= right.end_char,
+            "{hit} {right:?}"
+        );
+    }
+
+    #[test]
+    fn wrap_sides_keep_the_text_left_right_or_above_and_below() {
+        if !has_fonts() {
+            return;
+        }
+        let f = fonts();
+        let s = words(120);
+        let band = |side| {
+            let mut para = ParagraphStyle::default();
+            para.flow = tracedraw_core::text_flow::FrameFlow::new(
+                vec![wrap_square(40.0, -40.0, 60.0, -20.0, side)],
+                None,
+            );
+            let l = frame_layout(f, std::slice::from_ref(&s), &para, 100.0);
+            l.lines
+                .iter()
+                .filter(|line| {
+                    line.baseline - line.descent < -19.0 && line.baseline + line.ascent > -41.0
+                })
+                .map(|line| (line.edges[0], line.edges.last().copied().unwrap_or(0.0)))
+                .collect::<Vec<_>>()
+        };
+        let left = band(tracedraw_core::WrapSide::Left);
+        assert!(
+            !left.is_empty() && left.iter().all(|(_, x1)| *x1 <= 39.05),
+            "{left:?}"
+        );
+        let right = band(tracedraw_core::WrapSide::Right);
+        assert!(
+            !right.is_empty() && right.iter().all(|(x0, _)| *x0 >= 60.95),
+            "{right:?}"
+        );
+        // Above and below: no line at the square's height at all.
+        assert!(band(tracedraw_core::WrapSide::AboveBelow).is_empty());
+    }
+
+    #[test]
+    fn the_page_baseline_grid_lines_up_frames_at_different_heights() {
+        if !has_fonts() {
+            return;
+        }
+        let f = fonts();
+        let s = span("one\ntwo\nthree");
+        // Grid lines at y = 1.3 + 5k in the frame's layout space (the page
+        // grid seen from this frame).
+        let mut para = ParagraphStyle {
+            baseline_grid_mm: 5.0,
+            ..ParagraphStyle::default()
+        };
+        para.flow = tracedraw_core::text_flow::FrameFlow::new(Vec::new(), Some((1.3, 5.0)));
+        let l = frame_layout(f, std::slice::from_ref(&s), &para, 100.0);
+        assert_eq!(l.baselines.len(), 3);
+        for (_, y) in &l.baselines {
+            let k = (y - 1.3) / 5.0;
+            assert!((k - k.round()).abs() < 1e-6, "{y}");
+        }
     }
 
     #[test]

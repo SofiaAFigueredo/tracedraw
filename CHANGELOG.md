@@ -15,6 +15,9 @@ full, row-by-row status.
   tab strips). Projects can be written back as module files or as a
   compound file.
 
+- VBA macros: a compiler from VBA modules, classes and form code to
+  scripts over the TraceDraw object model, with the VBA run-time library,
+  Collection and Scripting.Dictionary.
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a
   report of the file, the document, its colour settings, objects and

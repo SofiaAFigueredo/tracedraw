@@ -10,6 +10,11 @@ full, row-by-row status.
   and the box gets a plus after a right click (the move leaves the
   original and a copy lands where the left button goes up). The pointer
   no longer vanishes after that right click.
+- Document Properties: language, title, subject, author, copyright,
+  tags, notes and a rating list, applied on OK in one undo step, over a
+  report of the file, the document, its colour settings, objects and
+  points, text, bitmaps, styles, effects, fills, outlines, colour models
+  and symbols. PDF files carry the language.
 
 ## 0.9.4 (2026-10-19)
 

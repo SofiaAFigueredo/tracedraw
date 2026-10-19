@@ -1308,7 +1308,8 @@ mod tests {
         let st = PrintState::default();
         let sheets = print_sheets(&app, &st);
         assert_eq!(text_fill(&sheets), vec![Fill::Solid(k100)]);
-        let pdf = String::from_utf8_lossy(&tracedraw_io::pdf::document_to_pdf(&sheets)).into_owned();
+        let pdf =
+            String::from_utf8_lossy(&tracedraw_io::pdf::document_to_pdf(&sheets)).into_owned();
         assert!(pdf.contains("0 0 0 1 k"), "black ink in the PDF");
         let st = PrintState {
             invert: true,
@@ -1481,8 +1482,25 @@ mod scratch_191 {
             ("reg", Color::Registration),
             ("gray0", Color::Gray { v: 0.0 }),
             ("rgb0", Color::BLACK),
-            ("lab0", Color::Lab { l: 0.0, a: 0.0, b: 0.0 }),
-            ("spot", Color::Spot { ink: 1, tint: 1.0, c: 0.0, m: 0.0, y: 0.0, k: 1.0 }),
+            (
+                "lab0",
+                Color::Lab {
+                    l: 0.0,
+                    a: 0.0,
+                    b: 0.0,
+                },
+            ),
+            (
+                "spot",
+                Color::Spot {
+                    ink: 1,
+                    tint: 1.0,
+                    c: 0.0,
+                    m: 0.0,
+                    y: 0.0,
+                    k: 1.0,
+                },
+            ),
         ];
         for (name, color) in &colors {
             for mode in ["fill", "outline", "paragraph", "group"] {
@@ -1508,7 +1526,11 @@ mod scratch_191 {
                 let outline = mode == "outline";
                 app.run(tracedraw_core::Command::SetFill {
                     shapes: vec![id],
-                    fill: if outline { Fill::None } else { Fill::Solid(*color) },
+                    fill: if outline {
+                        Fill::None
+                    } else {
+                        Fill::Solid(*color)
+                    },
                 });
                 app.run(tracedraw_core::Command::SetStroke {
                     shapes: vec![id],
@@ -1534,11 +1556,14 @@ mod scratch_191 {
                     ("bmp", Box::new(|s| s.as_bitmap = true)),
                     ("mirror", Box::new(|s| s.mirror = true)),
                     ("invert", Box::new(|s| s.invert = true)),
-                    ("marks", Box::new(|s| {
-                        s.crop_marks = true;
-                        s.registration_marks = true;
-                        s.color_bars = true;
-                    })),
+                    (
+                        "marks",
+                        Box::new(|s| {
+                            s.crop_marks = true;
+                            s.registration_marks = true;
+                            s.color_bars = true;
+                        }),
+                    ),
                 ];
                 for (v, set) in &variants {
                     let mut st = PrintState::default();
@@ -1547,7 +1572,10 @@ mod scratch_191 {
                     let pdf = tracedraw_io::pdf::document_to_pdf(&doc);
                     std::fs::write(dir.join(format!("print_{tag}_{v}.pdf")), pdf).unwrap();
                 }
-                let st = PrintState { separations: true, ..PrintState::default() };
+                let st = PrintState {
+                    separations: true,
+                    ..PrintState::default()
+                };
                 let doc = separations_doc(&print_sheets(&app, &st));
                 std::fs::write(
                     dir.join(format!("print_{tag}_seps.pdf")),
@@ -1594,7 +1622,12 @@ mod scratch_191 {
                             _ => {}
                         }
                     }
-                    for s in doc.pages.iter().flat_map(|p| &p.layers).flat_map(|l| &l.shapes) {
+                    for s in doc
+                        .pages
+                        .iter()
+                        .flat_map(|p| &p.layers)
+                        .flat_map(|l| &l.shapes)
+                    {
                         walk(s, &mut texts);
                     }
                     report.push_str(&format!("{tag} v{ver}: {texts:?}\n"));

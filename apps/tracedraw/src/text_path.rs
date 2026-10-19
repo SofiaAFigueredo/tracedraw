@@ -443,7 +443,10 @@ mod tests {
         assert_eq!(ft.on_path.mirrors(), (true, true));
         assert_eq!(ft.align, TextAlign::Center);
         let s = start(&app);
-        assert!((s.x - 90.0).abs() < 0.05 && (s.y - 100.0).abs() < 0.05, "{s:?}");
+        assert!(
+            (s.x - 90.0).abs() < 0.05 && (s.y - 100.0).abs() < 0.05,
+            "{s:?}"
+        );
         let bottom_bounds = {
             let sh = app.doc().shape(t).expect("text").1.clone();
             app.visual_bounds(&sh)
@@ -452,7 +455,10 @@ mod tests {
         assert_eq!(app.fitted_text_round_placement(), Some(false));
         app.place_fitted_text_round(false);
         let s = start(&app);
-        assert!((s.x - 90.0).abs() < 0.05 && (s.y - 160.0).abs() < 0.05, "{s:?}");
+        assert!(
+            (s.x - 90.0).abs() < 0.05 && (s.y - 160.0).abs() < 0.05,
+            "{s:?}"
+        );
         // An open path has no top or bottom.
         let l = fitted_on_line(&mut app);
         app.selection = vec![l];

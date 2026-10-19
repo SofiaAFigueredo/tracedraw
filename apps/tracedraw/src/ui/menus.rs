@@ -1779,8 +1779,8 @@ fn edit_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.edit.duplicate", "Ctrl+D", has) {
         app.duplicate();
     }
-    if item(ui, "menu.edit.clone", "", has) {
-        app.duplicate();
+    if item(ui, "menu.edit.clone", "", app.can_clone()) {
+        app.clone_selection();
     }
     sep(ui);
     sub(ui, "menu.edit.select_all", |ui| {
@@ -1958,7 +1958,7 @@ fn view_menu(app: &mut App, ui: &mut Ui) {
     }
 }
 
-fn layout_menu(app: &mut App, ui: &mut Ui) {
+pub(crate) fn layout_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.layout.insert_page", "", true) {
         app.dialog = Dialog::InsertPage {
             count: 1,
@@ -1966,8 +1966,7 @@ fn layout_menu(app: &mut App, ui: &mut Ui) {
         };
     }
     if item(ui, "menu.layout.duplicate_page", "", true) {
-        let page = app.page;
-        app.run(Command::DuplicatePage { page });
+        app.dialog = Dialog::duplicate_page();
     }
     if item(ui, "menu.layout.rename_page", "", true) {
         let name = app
@@ -2414,7 +2413,12 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         app.add_perspective();
     }
     sep(ui);
-    if item(ui, "menu.object.convert_to_curves", "Ctrl+Q", has) {
+    if item(
+        ui,
+        "menu.object.convert_to_curves",
+        "Ctrl+Q",
+        app.can_convert_to_curves(),
+    ) {
         app.convert_to_curves();
     }
     if item(ui, "menu.object.convert_to_bitmap", "", has) {

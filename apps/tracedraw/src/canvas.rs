@@ -239,7 +239,62 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
         }
         _ => {}
     }
-    if let Some(c) = &app.curve {
+    if let Some(c) = app.curve.as_ref().filter(|c| c.smooth && !c.bspline) {
+        // Pen and Bezier: the segments placed in the outline the curve
+        // will get, the Pen's dashed preview to the pointer, the nodes
+        // and the last node's handles (see `pen_look`).
+        let ctrl = painter.ctx().input(|i| i.modifiers.ctrl);
+        let pointer = app
+            .pointer_page
+            .map(|p| app.curve_point(app.snap_point(p), ctrl));
+        let preview = app.tool == crate::tools::Tool::Pen && app.settings.curves.pen_preview;
+        let outline = app.default_stroke().map(|s| to_color32(s.color));
+        let look = crate::pen_look::curve_look(c, pointer, preview, outline);
+        for (pts, _) in flatten(&look.placed, view) {
+            if pts.len() > 1 {
+                painter.add(epaint::PathShape::line(
+                    pts,
+                    EStroke::new(1.0, look.placed_color),
+                ));
+            }
+        }
+        if let Some(seg) = &look.preview {
+            for (pts, _) in flatten(seg, view) {
+                dashed_polyline(
+                    painter,
+                    &pts,
+                    EStroke::new(1.0, look.preview_color),
+                    4.0,
+                    3.0,
+                );
+            }
+        }
+        for (node, h) in &look.handles {
+            draw_control_handle(
+                painter,
+                view.to_screen(*node),
+                view.to_screen(*h),
+                look.preview_color,
+            );
+        }
+        for (p, mark) in &look.nodes {
+            let r = ERect::from_center_size(view.to_screen(*p), egui::vec2(5.0, 5.0));
+            match mark {
+                crate::pen_look::NodeLook::Current => {
+                    painter.rect_filled(r.expand(0.5), 0.0, look.preview_color);
+                }
+                crate::pen_look::NodeLook::Placed => {
+                    painter.rect_filled(r, 0.0, Color32::WHITE);
+                    painter.rect_stroke(
+                        r,
+                        0.0,
+                        EStroke::new(1.0, look.placed_color),
+                        epaint::StrokeKind::Middle,
+                    );
+                }
+            }
+        }
+    } else if let Some(c) = &app.curve {
         // The pointer as the next node would take it (Ctrl: in steps of
         // the constrain angle).
         let ctrl = painter.ctx().input(|i| i.modifiers.ctrl);
@@ -300,7 +355,7 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
                 let pts: Vec<Pos2> = q.iter().map(|p| view.to_screen(*p)).collect();
                 painter.add(egui::Shape::convex_polygon(
                     pts,
-                    Color32::from_rgba_unmultiplied(0x00, 0x78, 0xD7, 70),
+                    TEXT_SELECTION,
                     EStroke::NONE,
                 ));
             }
@@ -1044,22 +1099,38 @@ fn draw_rotate_handle(painter: &Painter, p: Pos2, h: Handle) {
     }
 }
 
-/// Paragraph text frames: dashed grey lines (Text > Show Text Frames),
-/// blue for the selected texts and the one being edited.
+/// The shade over selected characters of a text being edited: a
+/// see-through grey, so coloured letters keep their colour under it.
+pub(crate) const TEXT_SELECTION: Color32 = Color32::from_rgba_premultiplied(64, 64, 64, 80);
+
+/// A text that does not fit: its frame is red.
+const OVERFLOW_RED: Color32 = Color32::from_rgb(220, 30, 30);
+
+/// The colour of a paragraph frame's dashed line: red when its text does
+/// not fit, black while it is being edited, blue while selected, else
+/// grey (Text > Show Text Frames).
+pub(crate) fn text_frame_color(f: &crate::text_frames::ShownFrame) -> Color32 {
+    if f.overflow {
+        OVERFLOW_RED
+    } else if f.editing {
+        Color32::BLACK
+    } else if f.chosen {
+        Tokens::SELECTION
+    } else {
+        Color32::from_gray(150)
+    }
+}
+
+/// Paragraph text frames: dashed lines in the colour `text_frame_color`
+/// gives.
 fn draw_text_frames(app: &App, painter: &Painter, preview: Option<Affine>) {
     // A text that does not fit: red, with a tab holding a down arrow
     // below the frame's middle.
-    let red = Color32::from_rgb(220, 30, 30);
+    let red = OVERFLOW_RED;
     for f in app.shown_text_frames(preview) {
         let mut pts: Vec<Pos2> = f.corners.iter().map(|p| app.view.to_screen(*p)).collect();
         pts.push(pts[0]);
-        let color = if f.overflow {
-            red
-        } else if f.chosen {
-            Tokens::SELECTION
-        } else {
-            Color32::from_gray(150)
-        };
+        let color = text_frame_color(&f);
         painter.extend(egui::Shape::dashed_line(
             &pts,
             EStroke::new(1.0, color),
@@ -1913,6 +1984,20 @@ fn draw_snap_glyph_width(
             let thin = EStroke::new(1.0, color);
             painter.line_segment([c + v(-h + 1.0, -h), c + v(h - 1.0, -h)], thin);
             painter.line_segment([c + v(0.0, -h), c + v(0.0, h - 2.0)], thin);
+        }
+        SnapMode::Grid => {
+            // Two lines each way, the point where they would cross.
+            let thin = EStroke::new(1.0, color);
+            for d in [-h / 2.0, h / 2.0] {
+                painter.line_segment([c + v(d, -h), c + v(d, h)], thin);
+                painter.line_segment([c + v(-h, d), c + v(h, d)], thin);
+            }
+        }
+        SnapMode::Guideline => {
+            // A line through the point, broken around it.
+            painter.line_segment([c + v(-h - 1.0, 0.0), c + v(-2.0, 0.0)], s);
+            painter.line_segment([c + v(2.0, 0.0), c + v(h + 1.0, 0.0)], s);
+            painter.circle_filled(c, 1.5, color);
         }
     }
 }

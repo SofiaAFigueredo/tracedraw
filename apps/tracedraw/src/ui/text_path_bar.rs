@@ -40,8 +40,14 @@ enum Placement {
 
 const PLACEMENTS: [(Placement, &str); 5] = [
     (Placement::Along(TextAlign::Left), "toolbar.path_place_left"),
-    (Placement::Along(TextAlign::Center), "toolbar.path_place_center"),
-    (Placement::Along(TextAlign::Right), "toolbar.path_place_right"),
+    (
+        Placement::Along(TextAlign::Center),
+        "toolbar.path_place_center",
+    ),
+    (
+        Placement::Along(TextAlign::Right),
+        "toolbar.path_place_right",
+    ),
     (Placement::Top, "toolbar.path_place_top"),
     (Placement::Bottom, "toolbar.path_place_bottom"),
 ];

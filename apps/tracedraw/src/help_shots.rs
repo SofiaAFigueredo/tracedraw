@@ -635,7 +635,8 @@ fn scratch_196_window() {
                 out.textures_delta.clear();
                 c = Some(cv);
             }
-            c.unwrap().save(&dir.join(format!("{lang}_{tag}.png")), (0, 0, W, H));
+            c.unwrap()
+                .save(&dir.join(format!("{lang}_{tag}.png")), (0, 0, W, H));
         }
     }
     crate::i18n::set_language("en");

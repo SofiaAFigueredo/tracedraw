@@ -2120,9 +2120,10 @@ fn the_pen_adds_a_node_on_a_segment_and_drags_a_node_of_the_selected_curve() {
         for_tool(&app, false, false, false, Some(on_segment)),
         ToolCursor::CurveBadge(Tool::Pen, CurveMark::AddNode)
     );
+    // With Auto add/delete (the default) a click on the node deletes it.
     assert_eq!(
         for_tool(&app, false, false, false, Some(on_node)),
-        ToolCursor::CurveBadge(Tool::Pen, CurveMark::EditNode)
+        ToolCursor::CurveBadge(Tool::Pen, CurveMark::DeleteNode)
     );
     click_at(&ctx, &mut app, on_segment, Modifiers::NONE);
     assert_eq!(node_count(&app, id), 4);
@@ -2225,4 +2226,540 @@ fn rounded_corners_keep_their_size_when_relative_scaling_is_off() {
         }
         let _ = app.undo();
     }
+}
+
+/// A rectangle and a line of text over it, the rectangle filled or not
+/// and below or above the text.
+fn text_and_frame(app: &mut App, filled: bool, frame_on_top: bool) -> (ShapeId, ShapeId) {
+    use tracedraw_core::{Color, Command, Fill, TextSpan};
+    let rect = |app: &mut App| {
+        let id = app
+            .new_shape(ShapeKind::Rect {
+                rect: Rect::new(10.0, 10.0, 150.0, 80.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        app.run(Command::SetFill {
+            shapes: vec![id],
+            fill: if filled {
+                Fill::Solid(Color::rgb8(240, 240, 200))
+            } else {
+                Fill::None
+            },
+        });
+        id
+    };
+    let text = |app: &mut App| {
+        app.new_shape(ShapeKind::Text {
+            spans: vec![TextSpan::new("Invitation", "Sans", 36.0)],
+            origin: Point::new(30.0, 50.0),
+            frame: None,
+            align: tracedraw_core::document::TextAlign::Left,
+            para: Default::default(),
+            on_path: None,
+        })
+        .expect("text")
+    };
+    if frame_on_top {
+        let t = text(app);
+        (rect(app), t)
+    } else {
+        let r = rect(app);
+        (r, text(app))
+    }
+}
+
+/// The middle of the text object, in page space.
+fn text_middle(app: &App, id: ShapeId) -> Point {
+    app.doc().shape_on_page(id).expect("text").bounds().center()
+}
+
+/// Write the drawing as `.cdr`, read it back and open it.
+fn through_cdr(app: &App) -> App {
+    let bytes = tracedraw_cdr::write::document_to_cdr(app.doc());
+    let (doc, _) = tracedraw_cdr::open_bytes(&bytes, "t").expect("read back");
+    let mut back = App::headless();
+    back.open_document(doc, None);
+    back.view.zoom = 1.0;
+    back
+}
+
+/// The ids of the objects on the first layer, bottom to top, by kind.
+fn kinds_bottom_up(app: &App) -> Vec<&'static str> {
+    app.doc().pages[0]
+        .layers
+        .iter()
+        .flat_map(|l| &l.shapes)
+        .map(|s| match s.kind {
+            ShapeKind::Text { .. } => "text",
+            ShapeKind::ClipFrame { .. } => "clip",
+            ShapeKind::Group { .. } => "group",
+            _ => "shape",
+        })
+        .collect()
+}
+
+fn first_of(app: &App, kind: &str) -> ShapeId {
+    let all: Vec<_> = app.doc().pages[0]
+        .layers
+        .iter()
+        .flat_map(|l| &l.shapes)
+        .collect();
+    all.iter()
+        .zip(kinds_bottom_up(app))
+        .find(|(_, k)| *k == kind)
+        .map(|(s, _)| s.id)
+        .expect("kind")
+}
+
+#[test]
+fn text_over_a_rectangle_read_from_cdr_is_hit_first() {
+    let mut app = App::headless();
+    app.view.zoom = 1.0;
+    let (rect, text) = text_and_frame(&mut app, true, false);
+    let p = text_middle(&app, text);
+    assert_eq!(app.hit_test(p), Some(text));
+    assert_eq!(app.hits_at(p, false), vec![text, rect]);
+    // The file keeps the stacking order: the text is still on top.
+    let back = through_cdr(&app);
+    assert_eq!(kinds_bottom_up(&back), ["shape", "text"]);
+    let t = first_of(&back, "text");
+    assert_eq!(back.hit_test(text_middle(&back, t)), Some(t));
+}
+
+#[test]
+fn an_unfilled_rectangle_over_text_takes_the_click_and_alt_reaches_the_text() {
+    let (ctx, mut app, first) = setup();
+    app.select(vec![first]);
+    app.delete_selection();
+    let (rect, text) = text_and_frame(&mut app, false, true);
+    let at = app.view.to_screen(text_middle(&app, text));
+    // Treated as filled (the default), the empty rectangle on top is hit
+    // inside; Alt digs to the text under it.
+    click_at(&ctx, &mut app, at, Modifiers::NONE);
+    assert_eq!(app.selection, vec![rect]);
+    click_at(&ctx, &mut app, at, Modifiers::ALT);
+    assert_eq!(app.selection, vec![text]);
+    // Not treated as filled, the text is hit straight away.
+    app.settings.treat_all_filled = false;
+    app.select(Vec::new());
+    click_at(&ctx, &mut app, at, Modifiers::NONE);
+    assert_eq!(app.selection, vec![text]);
+    // The same stacking after a round trip through `.cdr`.
+    let back = through_cdr(&app);
+    assert_eq!(kinds_bottom_up(&back), ["text", "shape"]);
+}
+
+#[test]
+fn ctrl_click_takes_the_contents_of_a_clip_frame() {
+    let (ctx, mut app, first) = setup();
+    app.select(vec![first]);
+    app.delete_selection();
+    let (rect, text) = text_and_frame(&mut app, true, false);
+    app.place_inside(vec![text], rect);
+    let clip = app.doc().top_level_of(text).expect("clip frame");
+    let inside = app.view.to_screen(text_middle(&app, text));
+    click_at(&ctx, &mut app, inside, Modifiers::NONE);
+    assert_eq!(app.selection, vec![clip]);
+    click_at(&ctx, &mut app, inside, Modifiers::CTRL);
+    assert_eq!(app.selection, vec![text]);
+    // Ctrl+Alt digs through the contents to the frame.
+    assert_eq!(app.hits_at(text_middle(&app, text), true), vec![text, clip]);
+    // Inside the frame but off the text: the frame.
+    app.select(Vec::new());
+    let off = app.view.to_screen(Point::new(12.0, 12.0));
+    click_at(&ctx, &mut app, off, Modifiers::CTRL);
+    assert_eq!(app.selection, vec![clip]);
+}
+
+#[test]
+fn clipped_away_contents_are_not_hit() {
+    use tracedraw_core::TextSpan;
+    let mut app = App::headless();
+    app.view.zoom = 1.0;
+    let frame = app
+        .new_shape(ShapeKind::Rect {
+            rect: Rect::new(10.0, 10.0, 40.0, 80.0),
+            radius: 0.0,
+            corners: None,
+        })
+        .expect("rect");
+    let text = app
+        .new_shape(ShapeKind::Text {
+            spans: vec![TextSpan::new("Invitation", "Sans", 36.0)],
+            origin: Point::new(30.0, 50.0),
+            frame: None,
+            align: tracedraw_core::document::TextAlign::Left,
+            para: Default::default(),
+            on_path: None,
+        })
+        .expect("text");
+    let b = app.doc().shape(text).expect("text").1.bounds();
+    assert!(b.x1 > 50.0, "{b:?}");
+    app.place_inside(vec![text], frame);
+    let clip = app.doc().top_level_of(text).expect("clip frame");
+    let y = b.center().y;
+    // On the text inside the frame: Ctrl reaches it.
+    assert_eq!(app.hit_test_step(Point::new(35.0, y)), Some(text));
+    // Its letters past the frame do not show and are not hit.
+    let past = Point::new((40.0 + b.x1) / 2.0, y);
+    assert_eq!(app.hit_test(past), None);
+    assert!(app.hits_at(past, true).is_empty());
+    assert_eq!(app.hit_test(Point::new(35.0, y)), Some(clip));
+}
+
+#[test]
+fn new_rounded_rectangles_keep_circular_corners_when_stretched() {
+    use crate::ui::propbar::{edit_corners, CornerEdit};
+    use tracedraw_core::geometry::Shape as _;
+    let (ctx, mut app, _) = setup();
+    // Relative corner scaling is off for new rectangles.
+    assert!(app.rect_corners.fixed);
+    app.select(Vec::new());
+    edit_corners(&mut app, CornerEdit::Size(0, 5.0));
+    app.set_tool(Tool::Rectangle);
+    app.create_box_shape(Point::new(100.0, 100.0), Point::new(150.0, 130.0));
+    let id = app.selected_shapes()[0].id;
+    app.set_tool(Tool::Pick);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    // Only twice as wide, with the side handle.
+    let stretch = |app: &mut App, which: Handle, fx: f64, fy: f64| {
+        let from = handle(app, which);
+        let b = bounds(app, id);
+        let target = Point::new(b.x0 + fx * b.width(), b.y0 + fy * b.height());
+        let mut to = app.view.to_screen(target);
+        match which {
+            Handle::E => to.y = from.y,
+            _ => to.x = from.x,
+        }
+        drag(&ctx, app, from, to, Modifiers::NONE, Vec::new());
+    };
+    stretch(&mut app, Handle::E, 2.0, 1.0);
+    let s = app.doc().find_shape(id).expect("rect").clone();
+    let c = s.page_corners().expect("corners");
+    assert!(c.fixed && c.radii.iter().all(|r| close(*r, 5.0)), "{c:?}");
+    // Circles of 5 mm: the area the four corners cut off is (4 - pi) r^2.
+    let path = s.page_path();
+    let b = path.bounding_box();
+    assert!(b.width() > 90.0, "{b:?}");
+    let cut = b.width() * b.height() - path.area().abs();
+    let circles = (4.0 - std::f64::consts::PI) * 25.0;
+    assert!((cut - circles).abs() < 0.2, "{cut} vs {circles}");
+    // Relative scaling turned on: the corners grow with the rectangle.
+    app.select(vec![id]);
+    edit_corners(&mut app, CornerEdit::Scaling(true));
+    let s = app.doc().find_shape(id).expect("rect").clone();
+    let c = s.page_corners().expect("corners");
+    assert!(!c.fixed && close(c.radii[0], 5.0), "{c:?}");
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    stretch(&mut app, Handle::N, 1.0, 2.0);
+    let r = app
+        .doc()
+        .find_shape(id)
+        .and_then(|s| s.page_corners())
+        .expect("corners")
+        .radii[0];
+    assert!(r > 8.0, "relative: {r}");
+}
+
+#[test]
+fn the_pen_deletes_a_node_of_the_selected_curve_and_the_toggle_turns_it_off() {
+    use crate::ui::cursors::CurveMark;
+    let (ctx, mut app, _) = setup();
+    let id = line_curve(&ctx, &mut app);
+    app.set_tool(Tool::Pen);
+    let on_node = app.view.to_screen(Point::new(150.0, 100.0));
+    let on_segment = app.view.to_screen(Point::new(125.0, 100.0));
+    click_at(&ctx, &mut app, on_node, Modifiers::NONE);
+    assert_eq!(node_count(&app, id), 2);
+    assert!(app.curve.is_none(), "no new curve was started");
+    // One undo step; a curve keeps two nodes.
+    let _ = app.undo();
+    assert_eq!(node_count(&app, id), 3);
+    // Auto add/delete off: the node is only edited, a segment click adds
+    // nothing.
+    app.settings.curves.pen_auto_add_delete = false;
+    assert_eq!(
+        for_tool(&app, false, false, false, Some(on_node)),
+        ToolCursor::CurveBadge(Tool::Pen, CurveMark::EditNode)
+    );
+    assert_eq!(
+        for_tool(&app, false, false, false, Some(on_segment)),
+        ToolCursor::Badge(Tool::Pen)
+    );
+    click_at(&ctx, &mut app, on_node, Modifiers::NONE);
+    assert_eq!(node_count(&app, id), 3);
+    // The Bezier tool adds on a segment and never deletes.
+    app.settings.curves.pen_auto_add_delete = true;
+    app.finish_curve();
+    app.select(vec![id]);
+    app.set_tool(Tool::Bezier);
+    assert_eq!(
+        for_tool(&app, false, false, false, Some(on_node)),
+        ToolCursor::CurveBadge(Tool::Bezier, CurveMark::EditNode)
+    );
+    assert_eq!(
+        for_tool(&app, false, false, false, Some(on_segment)),
+        ToolCursor::CurveBadge(Tool::Bezier, CurveMark::AddNode)
+    );
+    click_at(&ctx, &mut app, on_node, Modifiers::NONE);
+    assert!(node_count(&app, id) >= 3);
+}
+
+#[test]
+fn the_pen_adds_and_deletes_nodes_on_the_curve_being_drawn() {
+    use crate::ui::cursors::CurveMark;
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.set_tool(Tool::Pen);
+    for x in [100.0, 140.0, 180.0] {
+        click_page(&ctx, &mut app, Point::new(x, 150.0));
+    }
+    assert_eq!(app.curve.as_ref().map(|c| c.nodes.len()), Some(3));
+    let on_segment = app.view.to_screen(Point::new(120.0, 150.0));
+    let on_node = app.view.to_screen(Point::new(140.0, 150.0));
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(on_segment)],
+        Modifiers::NONE,
+    );
+    assert_eq!(
+        for_tool(&app, false, false, false, Some(on_segment)),
+        ToolCursor::CurveBadge(Tool::Pen, CurveMark::AddNode)
+    );
+    assert_eq!(
+        for_tool(&app, false, false, false, Some(on_node)),
+        ToolCursor::CurveBadge(Tool::Pen, CurveMark::DeleteNode)
+    );
+    click_page(&ctx, &mut app, Point::new(120.0, 150.0));
+    let xs: Vec<f64> = app
+        .curve
+        .as_ref()
+        .map(|c| c.nodes.iter().map(|n| n.0.x.round()).collect())
+        .unwrap_or_default();
+    assert_eq!(xs, vec![100.0, 120.0, 140.0, 180.0]);
+    click_page(&ctx, &mut app, Point::new(140.0, 150.0));
+    let xs: Vec<f64> = app
+        .curve
+        .as_ref()
+        .map(|c| c.nodes.iter().map(|n| n.0.x.round()).collect())
+        .unwrap_or_default();
+    assert_eq!(xs, vec![100.0, 120.0, 180.0]);
+    // Off: a click there places a node.
+    app.settings.curves.pen_auto_add_delete = false;
+    click_page(&ctx, &mut app, Point::new(110.0, 150.0));
+    assert_eq!(app.curve.as_ref().map(|c| c.nodes.len()), Some(4));
+}
+
+#[test]
+fn c_held_while_pulling_makes_a_cusp_that_stays_and_does_not_align() {
+    let (ctx, mut app, rect) = setup();
+    // The rectangle stays selected: C must not align it.
+    let before = bounds(&app, rect);
+    app.set_tool(Tool::Pen);
+    app.select(vec![rect]);
+    let (a, b, c) = (
+        Point::new(100.0, 150.0),
+        Point::new(140.0, 150.0),
+        Point::new(180.0, 150.0),
+    );
+    click_page(&ctx, &mut app, a);
+    let (from, to) = (
+        app.view.to_screen(b),
+        app.view.to_screen(Point::new(160.0, 170.0)),
+    );
+    drag(
+        &ctx,
+        &mut app,
+        from,
+        to,
+        Modifiers::NONE,
+        vec![key(egui::Key::C, Modifiers::NONE)],
+    );
+    let release = Event::Key {
+        key: egui::Key::C,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    frame(&ctx, &mut app, vec![release.clone()], Modifiers::NONE);
+    let cv = app.curve.clone().expect("drawing");
+    // The incoming handle was frozen before the pull ended: it is not the
+    // mirror of the outgoing one.
+    let out = cv.nodes[1].1.expect("outgoing handle");
+    assert!(near(out, Point::new(160.0, 170.0)), "{out:?}");
+    let frozen = cv.in_handles.get(&1).copied().expect("a cusp");
+    assert!(
+        frozen.is_none_or(|h| !near(h, Point::new(120.0, 130.0))),
+        "{frozen:?}"
+    );
+    assert_eq!(bounds(&app, rect), before, "C did not align the rectangle");
+    // C pressed before the press: the node is a cusp from the start (the
+    // segment arrives without a handle), and it stays one after C is let
+    // go.
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::C, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    pull(&ctx, &mut app, c, Point::new(190.0, 130.0));
+    frame(&ctx, &mut app, vec![release], Modifiers::NONE);
+    let cv = app.curve.clone().expect("drawing");
+    assert_eq!(cv.in_handles.get(&2).copied(), Some(None));
+    assert!(cv.in_handles.contains_key(&1), "the first cusp stayed");
+    // Without C the next pull is smooth.
+    pull(
+        &ctx,
+        &mut app,
+        Point::new(220.0, 150.0),
+        Point::new(230.0, 160.0),
+    );
+    let cv = app.curve.clone().expect("drawing");
+    assert!(!cv.in_handles.contains_key(&3));
+    assert_eq!(bounds(&app, rect), before);
+}
+
+#[test]
+fn c_during_the_closing_drag_keeps_the_first_node_handle() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.set_tool(Tool::Pen);
+    let a = Point::new(100.0, 150.0);
+    let a_out = Point::new(110.0, 170.0);
+    pull(&ctx, &mut app, a, a_out);
+    pull(
+        &ctx,
+        &mut app,
+        Point::new(150.0, 190.0),
+        Point::new(170.0, 190.0),
+    );
+    click_page(&ctx, &mut app, Point::new(160.0, 130.0));
+    let (from, to) = (
+        app.view.to_screen(a),
+        app.view.to_screen(Point::new(90.0, 140.0)),
+    );
+    drag(
+        &ctx,
+        &mut app,
+        from,
+        to,
+        Modifiers::NONE,
+        vec![key(egui::Key::C, Modifiers::NONE)],
+    );
+    assert!(app.curve.is_none());
+    let segs: Vec<_> = last_path(&app).segments().collect();
+    assert!(near(cubic(segs[0]).p1, a_out), "{segs:?}");
+    let closing = segs
+        .iter()
+        .rev()
+        .find_map(|s| match s {
+            tracedraw_core::geometry::PathSeg::Cubic(c) if near(c.p3, a) => Some(*c),
+            _ => None,
+        })
+        .expect("a curved closing segment");
+    assert!(near(closing.p2, Point::new(110.0, 160.0)), "{closing:?}");
+}
+
+#[test]
+fn the_snap_tip_shows_while_placing_and_pulling_with_the_pen() {
+    use crate::snap_points::SnapMode;
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.snap.off = false;
+    app.snap.grid = true;
+    app.snap.objects = false;
+    app.snap.guides = false;
+    app.snap.page = false;
+    app.set_tool(Tool::Pen);
+    click_page(&ctx, &mut app, Point::new(100.2, 150.3));
+    // Placing: the pointer near a grid crossing is marked "grid".
+    let near_grid = app.view.to_screen(Point::new(120.3, 140.2));
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(near_grid)],
+        Modifiers::NONE,
+    );
+    let mark = app.snap_mark.get().expect("a snap mark");
+    assert_eq!(mark.mode, SnapMode::Grid);
+    assert!(
+        (mark.point - Point::new(120.0, 140.0)).hypot() < 1e-6,
+        "{mark:?}"
+    );
+    // Pulling a handle: the handle snaps and the mark shows too.
+    let from = app.view.to_screen(Point::new(140.0, 150.0));
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(from)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(from, true, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    for p in [Point::new(150.0, 160.0), Point::new(160.3, 169.8)] {
+        let at = app.view.to_screen(p);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(at)],
+            Modifiers::NONE,
+        );
+    }
+    assert!(app.curve.as_ref().is_some_and(|c| c.dragging_handle));
+    let mark = app.snap_mark.get().expect("a snap mark while pulling");
+    assert_eq!(mark.mode, SnapMode::Grid);
+    let handle = app
+        .curve
+        .as_ref()
+        .and_then(|c| c.nodes.last())
+        .and_then(|n| n.1);
+    assert!(
+        handle.is_some_and(|h| (h - Point::new(160.0, 170.0)).hypot() < 1e-6),
+        "{handle:?}"
+    );
+    let up = app.view.to_screen(Point::new(160.3, 169.8));
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(up, false, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+}
+
+#[test]
+fn space_finishes_a_bezier_curve_then_picks() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.set_tool(Tool::Bezier);
+    let before = shape_count(&app);
+    let pts = [
+        Point::new(100.0, 150.0),
+        Point::new(140.0, 170.0),
+        Point::new(180.0, 150.0),
+    ];
+    for p in pts {
+        let at = app.view.to_screen(p);
+        click_at(&ctx, &mut app, at, Modifiers::NONE);
+    }
+    assert!(app.curve.is_some());
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::Space, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    assert!(app.curve.is_none(), "Space ends the curve");
+    assert_eq!(shape_count(&app), before + 1);
+    // Space is also the Pick tool's key: the curve is kept, then Pick.
+    assert_eq!(app.tool, Tool::Pick);
+    let nodes = tracedraw_core::nodes::nodes(&last_path(&app));
+    assert_eq!(nodes.len(), 3, "{nodes:?}");
 }

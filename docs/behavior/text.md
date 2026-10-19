@@ -95,8 +95,34 @@ concatenated spans; the layout's line boxes give its place on the page.
 | Esc | finish editing and return to the Pick tool; an empty text is removed |
 
 The property bar's font, size and style buttons act on the selected
-characters while a selection exists, and show the style at the caret. All
-the keystrokes of one editing session are one "Edit Text" undo step.
+characters while a selection exists, and show the style at the caret
+(the character before it). On a selection a button changes only what it
+changes from the style shown: a new size keeps the selected characters'
+fonts and styles, a new font keeps their sizes. All the keystrokes of
+one editing session are one "Edit Text" undo step.
+
+### Character colours
+
+- With characters selected while editing (artistic or paragraph text),
+  a colour picked anywhere goes to them only: a palette or document
+  palette swatch (click: their fill; right click: their outline), the
+  Properties docker's fill, the Text docker's fill and the Color
+  docker. Without a selection the colour goes to the whole object as
+  usual.
+- Each such change is its own undo step ("Character Fill", "Character
+  Outline"), not part of the typing, and the colour joins the document
+  palette in that step.
+- A character outline starts from the characters' own outline, else
+  the object's, else the default pen, in the new colour; No Color (an
+  outline of width 0) takes the outline off those characters only.
+- Characters without their own fill or outline take the object's. The
+  text is drawn (on the canvas, in exports to bitmaps, SVG and PDF) in
+  one part per look: each part lays out the whole text and draws only
+  its own characters, so letters keep their places. Character
+  backgrounds are drawn once under all parts; the drop shadow comes
+  with the first part.
+- Colours of characters read from `.cdr` files (the fill of each run of
+  characters) are drawn the same way.
 
 **Input methods** (Chinese, Japanese, Korean and the others): while text
 or a table cell is edited on the canvas, the system's input method is
@@ -433,6 +459,13 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
 
 ## Checks
 
+- Character colours: `text_editing::tests::a_colour_picked_with_characters_selected_colours_only_them`,
+  `text_editing::tests::without_a_character_selection_the_colour_goes_to_the_object`,
+  `text_editing::tests::the_bar_changes_only_what_it_changed_on_the_selection`,
+  `tracedraw_core` `document::tests::characters_with_their_own_colours_are_drawn_in_one_part_per_look`,
+  `document::tests::character_outlines_are_saved_and_layout_only_is_not`,
+  `tracedraw_render` `tests::characters_are_drawn_in_their_own_colours`,
+  `tests::spans_only_laid_out_keep_their_room_but_are_not_drawn` (text crate).
 - The Text docker: `ui::text_docker::tests::the_sections_open_close_and_draw_for_any_text`,
   `ui::text_docker::tests::vertical_alignment_is_kept_with_the_text`,
   `ui::text_docker::tests::section_buttons_boxes_and_apply_to_default`,
@@ -522,19 +555,44 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
 - The text itself goes on the path (no copy is left behind) and stays
   selected as one object, drawn in its fill. On an open path the letters
   follow the path from its start with the text's alignment. On a closed
-  path the path is followed clockwise from its highest point, so the
-  letters stand on its outside, upright to the curve, and the text is
-  centred on that highest point (its alignment becomes centred and the
-  offset half the path's length); Mirror puts it inside, reading the
-  other way.
+  path the path is followed clockwise, so the letters stand on its
+  outside, upright to the curve, from the point clicked (the point of
+  the path nearest to the click; its highest point when the text and
+  the path were selected together), and the text is centred on that
+  point (its alignment becomes centred and the offset half the path's
+  length). The Text tool clicked on a path's outline starts a new text
+  that begins at the point clicked (on a closed path too) and runs on
+  from there as it is typed
+  (`ops2::tests::the_text_tool_on_a_paths_outline_starts_text_on_it`).
+  A pick on the bottom of an ellipse puts the text there,
+  outside and upside down; both mirrors then turn it round onto the
+  inside, reading left to right, on the same spot.
 - With the Pick tool, a text fitted to a path shows its own property
   bar after the object fields: Text orientation (Rotated letters,
   Vertical skew, Horizontal skew, Upright letters), Vertical placement
   (Baseline, Ascender, Descender on path, Centred on path), Text
-  placement (start, centre or end of the path, the text's alignment),
+  placement (start, centre or end of the path, the text's alignment; on
+  a closed path also Top centre and Bottom centre: the text centred on
+  the path's highest point, outside and upright, both mirrors off, or
+  on its lowest point, inside and reading left to right, both mirrors
+  on; the list shows these while the text is so placed,
+  `text_path::tests::top_and_bottom_placement_on_a_closed_path`),
   Distance from path and Offset along path in the document's units,
+  Tick snapping and its spacing (1 mm by default, kept in the
+  preferences: a drag off the path then moves the text away from it in
+  whole steps,
+  `text_path::tests::tick_snapping_moves_the_text_off_the_path_in_steps`),
   Mirror horizontally and Mirror vertically (pressed while on) and
-  Straighten Text. Each change is one undo step and is stored with the
+  Straighten Text. Mirror horizontally flips the letters left to right
+  (the text reads the other way along the path), Mirror vertically
+  turns them upside down onto the path's other side, and both together
+  turn the text round by 180 degrees. The mirrors keep the letters where they are along
+  the path: mirrored horizontally the text is measured from the path's
+  other end, so its offset turns round and the start placement becomes
+  the end one (and back), the centre one staying
+  (`ops2::tests::text_goes_where_the_path_is_clicked_and_mirrors_keep_it_there`,
+  `ops2::tests::the_horizontal_mirror_keeps_text_on_a_line_in_place`).
+  Each change is one undo step and is stored with the
   text, so the bar shows it again when the text is selected again
   (`text_path::tests::the_bar_settings_edit_the_text_with_undo_and_come_back_on_reselect`).
 - A selected fitted text draws as usual, in its fill, with the selection

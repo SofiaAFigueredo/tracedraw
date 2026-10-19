@@ -6,6 +6,12 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Linux: the window can be resized and maximized under every window
+  manager (Xfwm4 kept it at one size) and fits small screens: a smaller
+  minimum size, maximized at start when the kept size does not fit.
+  Bars longer than the window slide with "«" and "»" buttons (and the
+  mouse wheel), and dialogs taller than the window scroll (#168).
+
 - Moving objects with the Pick tool shows the arrow with a dotted box,
   and the box gets a plus after a right click (the move leaves the
   original and a copy lands where the left button goes up). The pointer

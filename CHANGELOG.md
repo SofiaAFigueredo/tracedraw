@@ -15,6 +15,15 @@ full, row-by-row status.
   opens the page of its dialog or options page, F1 the page of the open
   dialog, panel or tool, and Help > Help Topics the first page, in the
   interface language.
+- VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
+  and other compound files with a VBA project (modules, their kinds and
+  code in the project's code page, references, protection, modules saved
+  without source), exported `.bas`, `.cls` and `.frm`/`.frx` files, and
+  the forms with their controls (labels, text boxes, buttons, check and
+  option boxes, lists, frames, pages, images, spin buttons, scroll bars,
+  tab strips). Projects can be written back as module files or as a
+  compound file.
+
 - Moving objects with the Pick tool shows the arrow with a dotted box,
   and the box gets a plus after a right click (the move leaves the
   original and a copy lands where the left button goes up). The pointer

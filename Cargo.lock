@@ -4037,6 +4037,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracedraw-vba"
+version = "0.9.4"
+dependencies = [
+ "boa_engine",
+]
+
+[[package]]
 name = "tracedraw-vba-project"
 version = "0.9.4"
 dependencies = [
@@ -4044,10 +4051,6 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "thiserror 2.0.21",
-name = "tracedraw-vba"
-version = "0.9.4"
-dependencies = [
- "boa_engine",
 ]
 
 [[package]]

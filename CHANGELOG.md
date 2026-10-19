@@ -22,6 +22,11 @@ full, row-by-row status.
   with the distance and angle beside the pointer and optional tick
   marks. Options > Dynamic Guides sets the angles, tip, ticks, colour
   and line style. Both also sit in the standard bar's Snap To list.
+- Linux: the window can be resized and maximized under every window
+  manager (Xfwm4 kept it at one size) and fits small screens: a smaller
+  minimum size, maximized at start when the kept size does not fit.
+  Bars longer than the window slide with "«" and "»" buttons (and the
+  mouse wheel), and dialogs taller than the window scroll (#168).
 - VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
   and other compound files with a VBA project (modules, their kinds and
   code in the project's code page, references, protection, modules saved

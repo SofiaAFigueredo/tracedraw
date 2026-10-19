@@ -88,6 +88,7 @@ mod ops;
 mod ops2;
 mod painterly_tool;
 mod palette;
+mod pen_look;
 mod perspective_draw;
 #[cfg(test)]
 mod pick_drag_tests;

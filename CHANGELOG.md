@@ -12,6 +12,17 @@ full, row-by-row status.
   instead of writing the old version again. The command line writes
   version 27 by default and the experimental 7 to 13 only with
   `TRACEDRAW_CDR_EXPERIMENTAL=1`; the MCP `save` tool takes 14 to 27.
+- Pen and Bezier: a plain click after a pulled node gives a straight
+  segment (the node becomes a cusp), clicking the last node again makes
+  it a cusp, C while pulling a handle makes the node a cusp and Alt
+  moves it, and dragging from the first node shapes only the closing
+  segment. With no curve being drawn they add a node on a segment of the
+  selected curve and drag its nodes. The pointer shows what a press
+  does: start, continue, add a node, close, edit a node.
+- Shape tool: nodes and handles are taken within a pick distance (6
+  pixels, Options > Nodes and Handles), and a near miss no longer
+  deselects the object. A rectangle, ellipse or polygon says what it is
+  on the property bar and the status bar, apart from a curve.
 - Linux: the window can be resized and maximized under every window
   manager (Xfwm4 kept it at one size) and fits small screens: a smaller
   minimum size, maximized at start when the kept size does not fit.

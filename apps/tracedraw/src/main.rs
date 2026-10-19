@@ -126,6 +126,8 @@ mod text_effect_tests;
 mod text_frames;
 mod text_nodes;
 mod text_path;
+#[cfg(test)]
+mod text_wrap_tests;
 mod textflow;
 mod theme;
 mod thesaurus;

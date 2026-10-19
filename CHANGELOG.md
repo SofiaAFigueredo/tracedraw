@@ -15,6 +15,10 @@ full, row-by-row status.
   tab strips). Projects can be written back as module files or as a
   compound file.
 
+- Moving objects with the Pick tool shows the arrow with a dotted box,
+  and the box gets a plus after a right click (the move leaves the
+  original and a copy lands where the left button goes up). The pointer
+  no longer vanishes after that right click.
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a
   report of the file, the document, its colour settings, objects and

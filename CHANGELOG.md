@@ -12,6 +12,15 @@ full, row-by-row status.
   instead of writing the old version again. The command line writes
   version 27 by default and the experimental 7 to 13 only with
   `TRACEDRAW_CDR_EXPERIMENTAL=1`; the MCP `save` tool takes 14 to 27.
+- Help: a user guide of 120 pages (getting started, lines and shapes,
+  objects, color, effects, text, templates and styles, pages, bitmaps,
+  printing, web graphics, file formats, customizing, reference) with
+  screenshots of the dialogs and panels, published with the browser
+  version in every interface language, with contents, search, previous
+  and next, light and dark and right-to-left Arabic. Every "?" button
+  opens the page of its dialog or options page, F1 the page of the open
+  dialog, panel or tool, and Help > Help Topics the first page, in the
+  interface language.
 - Wrap Paragraph Text now works: paragraph text flows around the objects
   marked to wrap it that lie over its frame, along their outline or
   their bounding box, with the text on the left, the right, both sides

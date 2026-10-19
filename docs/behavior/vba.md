@@ -10,7 +10,20 @@ follows the public MS-OVBA and MS-OFORMS specifications.
 
 - A compound file holding a VBA project (`.gms` files, and any file with
   a `VBA` storage containing a `dir` stream, at any depth) is read with
-  `read_gms`. The project's root is the storage holding `VBA`.
+  `read_gms`. The project's root is the storage holding `VBA`. Project
+  files saved by drawing suites start with a short header ("GMS", a
+  version byte and a few fields, 18 bytes) before the compound file; it
+  is skipped (`compound_part`).
+- Exported module files (`.bas`, `.cls`, `.frm`) are UTF-8 when they are,
+  else in the code page they were exported in, guessed from their bytes
+  (Cyrillic, Central European, Greek and the others).
+- Checked on four published macro projects (60 modules and their
+  forms, Russian comments in code page 1251): the code read from each
+  project file is the same, line by line, as the project's exported
+  source files, and the form controls land where the form shows them
+  (`cargo run -p tracedraw-vba-project --example compare -- file.gms
+  folder`; `--example dump -- file.gms` prints the modules and the
+  forms' controls).
 - The `dir` stream and the modules' code are stored compressed (MS-OVBA
   2.4.1). The crate expands them and also compresses (`ovba::compress`),
   so it can write projects; both follow the chunk and copy token rules of

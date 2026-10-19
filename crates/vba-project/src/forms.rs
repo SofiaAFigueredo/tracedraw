@@ -787,9 +787,10 @@ fn site(r: &mut R) -> Result<Site, Error> {
     s.name = b.string(name_len)?;
     s.tag = b.string(tag_len)?;
     if mask & 0x100 != 0 {
-        let (top, left) = b.pair()?;
-        s.top = top;
+        // SitePosition: left, then top (checked against saved projects).
+        let (left, top) = b.pair()?;
         s.left = left;
+        s.top = top;
     }
     s.tip = b.string(tip_len)?;
     b.string(lic_len)?;
@@ -1578,8 +1579,8 @@ fn write_form_control(form: &Form, sites: &[(&Control, u32, i32)]) -> Vec<u8> {
         s.align(4);
         s.base = s.out.len();
         s.string(&c.name);
-        s.u32(points_to_himetric(c.top) as u32);
         s.u32(points_to_himetric(c.left) as u32);
+        s.u32(points_to_himetric(c.top) as u32);
         site_bytes.extend_from_slice(&0u16.to_le_bytes());
         site_bytes.extend_from_slice(&(s.out.len() as u16).to_le_bytes());
         site_bytes.extend_from_slice(&s.out);

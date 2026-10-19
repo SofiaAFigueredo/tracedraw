@@ -302,3 +302,27 @@ fn folders_of_module_files() {
     assert_eq!(back.form("frmGrid").unwrap().controls.len(), 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn exported_files_in_a_cyrillic_code_page_are_read_as_such() {
+    let text = "Attribute VB_Name = \"m\"\r\n' Версия пресета\r\nPublic Sub Go()\r\nEnd Sub\r\n";
+    let (bytes, _, _) = encoding_rs::WINDOWS_1251.encode(text);
+    let p = crate::read_named("p", &[("m.bas".to_string(), bytes.into_owned())]).expect("project");
+    assert!(
+        p.modules[0].source.contains("Версия пресета"),
+        "{}",
+        p.modules[0].source
+    );
+}
+
+#[test]
+fn a_project_file_with_the_short_header_reads_like_the_compound_file() {
+    let plain = host_project(1252, false);
+    let mut wrapped = b"GMS\x01\x0a\x00\x00\x00\x02\x00\x00\x00\x00\x00\x01\x00\x00\x00".to_vec();
+    wrapped.extend_from_slice(&plain);
+    let a = crate::read_gms(&plain).expect("plain");
+    let b = crate::read_gms(&wrapped).expect("with the header");
+    assert_eq!(a.modules.len(), b.modules.len());
+    assert_eq!(a.forms.len(), b.forms.len());
+    assert!(crate::read_gms(b"GMS\x01 not a project").is_err());
+}

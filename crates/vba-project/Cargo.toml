@@ -12,4 +12,5 @@ rust-version.workspace = true
 [dependencies]
 cfb = "0.15"
 encoding_rs.workspace = true
+chardetng = "0.1"
 thiserror.workspace = true

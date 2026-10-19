@@ -187,8 +187,24 @@ fn all_streams(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, Error> {
 /// Read a VBA project from a compound file (`.gms` or any file with a
 /// `VBA` storage holding a `dir` stream).
 pub fn read_gms(bytes: &[u8]) -> Result<Project, Error> {
-    let streams = all_streams(bytes)?;
+    let streams = all_streams(compound_part(bytes))?;
     project_from_streams(&streams)
+}
+
+/// The compound file inside a macro project file. Files saved by drawing
+/// suites start with a short header ("GMS", a version byte and a few
+/// little-endian fields, 18 bytes in the files seen) before the compound
+/// file; plain compound files start with its signature.
+pub fn compound_part(bytes: &[u8]) -> &[u8] {
+    const MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    if bytes.starts_with(&MAGIC) || !bytes.starts_with(b"GMS") {
+        return bytes;
+    }
+    bytes
+        .windows(MAGIC.len())
+        .take(512)
+        .position(|w| w == MAGIC)
+        .map_or(bytes, |at| &bytes[at..])
 }
 
 fn project_from_streams(streams: &BTreeMap<String, Vec<u8>>) -> Result<Project, Error> {
@@ -311,14 +327,24 @@ fn project_from_streams(streams: &BTreeMap<String, Vec<u8>>) -> Result<Project, 
     Ok(project)
 }
 
-/// Text of a module file: UTF-8 when it is, else the given code page
-/// (exported files are in the system's ANSI code page).
+/// Text of a module file: UTF-8 when it is, else the system code page the
+/// file was exported in, guessed from its bytes (Cyrillic, Central
+/// European, Greek and the others); `cp` when the guess is the Western
+/// default and `cp` names another code page.
 fn file_text(bytes: &[u8], cp: u16) -> String {
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => codepage::decode(bytes, cp),
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
     }
+    let mut detector = chardetng::EncodingDetector::new();
+    detector.feed(bytes, true);
+    let guess = detector.guess(None, false);
+    let enc = if guess == encoding_rs::WINDOWS_1252 && cp != 1252 {
+        codepage::encoding(cp)
+    } else {
+        guess
+    };
+    enc.decode_without_bom_handling(bytes).0.into_owned()
 }
 
 /// Add one module file (`.bas`, `.cls`, `.frm`) to `project`. `frx` is

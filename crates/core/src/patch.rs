@@ -416,6 +416,33 @@ mod tests {
     }
 
     #[test]
+    fn position_mitre_and_dash_alignment_change_one_at_a_time() {
+        let mut a = stroke(Color::rgb8(255, 0, 0), 1.0);
+        let b = stroke(Color::rgb8(0, 0, 255), 2.0);
+        let mut new = a.clone();
+        new.position = crate::OutlinePosition::Inside;
+        new.miter_limit = 30.0;
+        new.align_dashes = true;
+        let fields = stroke_changes(&a, &new);
+        assert_eq!(
+            fields,
+            vec![
+                StrokeField::Position,
+                StrokeField::MiterLimit,
+                StrokeField::AlignDashes
+            ]
+        );
+        let out = patch_stroke(Some(&b), &new, &fields);
+        assert_eq!(out.color, b.color);
+        assert_eq!(out.width, b.width);
+        assert_eq!(out.position, crate::OutlinePosition::Inside);
+        assert_eq!(out.miter_limit, 30.0);
+        assert!(out.align_dashes);
+        a.position = crate::OutlinePosition::Outside;
+        assert!(!StrokeField::Position.same(&a, &b));
+    }
+
+    #[test]
     fn mixed_outline_values_are_found() {
         let a = stroke(Color::rgb8(0, 0, 255), 1.0);
         let mut b = stroke(Color::rgb8(255, 255, 0), 1.0);

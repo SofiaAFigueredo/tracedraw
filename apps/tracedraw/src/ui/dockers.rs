@@ -2254,6 +2254,8 @@ mod tests {
         let ctx = crate::theme::ui_context();
         let mut app = App::headless();
         app.settings.autocorrect.enabled = false;
+        // Widths in millimetres, as the numbers below are.
+        app.settings.outline_units = crate::app::Units::Millimeters.id().to_string();
         let mut ids = Vec::new();
         for (x, c, w) in [
             (10.0, tracedraw_core::Color::rgb8(0, 0, 255), 1.234),

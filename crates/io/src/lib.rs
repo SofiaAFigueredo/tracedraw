@@ -325,9 +325,9 @@ mod tests {
         let json = doc.to_json().unwrap();
         let back = Document::from_json(&json).unwrap();
         assert_eq!(back, doc);
-}
+    }
 
-#[test]
+    #[test]
     fn corners_that_keep_their_size_survive_native_svg_and_pdf() {
         use tracedraw_core::geometry::{Affine, Shape as _};
         use tracedraw_core::{CornerKind, Corners};

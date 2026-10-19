@@ -155,7 +155,7 @@ pub fn preview(ui: &mut Ui, dash: &[f64], width: f32) -> egui::Response {
     let mut i = 0usize;
     while x < rect.right() && i < 400 {
         let len = (dash[i % dash.len()].max(0.0) as f32 * unit).max(0.5);
-        if i % 2 == 0 {
+        if i.is_multiple_of(2) {
             let x1 = (x + len).min(rect.right());
             ui.painter().line_segment(
                 [egui::pos2(x, y), egui::pos2(x1, y)],

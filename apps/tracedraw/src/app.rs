@@ -819,6 +819,13 @@ pub struct App {
     /// The Shape tool's chosen rectangle corner: dragging it changes that
     /// corner only.
     pub rect_corner_selected: Option<(tracedraw_core::ShapeId, usize)>,
+    /// The selection as a marquee (or freehand region) left it. While the
+    /// selection still equals it, shaping and joining take the bottom-most
+    /// object as their target instead of the one selected last.
+    pub marquee_selection: Option<Vec<tracedraw_core::ShapeId>>,
+    /// The engine revision clones were last brought up to date at (see
+    /// `object_clone.rs`).
+    pub clone_sync_revision: u64,
     pub ellipse_arc: Option<tracedraw_core::EllipseArc>,
     /// The Contour tool's and panel's values and the tool's drag.
     pub contour: crate::contour_tool::ContourSettings,
@@ -1743,9 +1750,11 @@ impl App {
             star_complex: false,
             complex_points: 9,
             complex_sharpness: 2,
-            rect_corners: tracedraw_core::Corners::default(),
+            rect_corners: tracedraw_core::Corners::tool_default(),
             corners_together: true,
             rect_corner_selected: None,
+            marquee_selection: None,
+            clone_sync_revision: 0,
             ellipse_arc: None,
             contour: Default::default(),
             contour_drag: None,
@@ -2944,6 +2953,16 @@ impl App {
             }
             Command::SetFill { fill, .. } => Command::SetFill { shapes, fill },
             Command::SetStroke { stroke, .. } => Command::SetStroke { shapes, stroke },
+            Command::PatchStroke { stroke, fields, .. } => Command::PatchStroke {
+                shapes,
+                stroke,
+                fields,
+            },
+            Command::PatchFill { fill, fields, .. } => Command::PatchFill {
+                shapes,
+                fill,
+                fields,
+            },
             Command::SetOpacity { opacity, .. } => Command::SetOpacity { shapes, opacity },
             other => other,
         };
@@ -3075,6 +3094,29 @@ impl App {
             .collect()
     }
 
+    /// The selected objects with the target of Trim, Weld, Intersect,
+    /// Join Curves and the like last. Objects picked one by one keep
+    /// their order (the one selected last is the target); a selection
+    /// made with a marquee, while unchanged, puts the bottom-most object
+    /// last.
+    pub fn selected_shapes_target_last(&self) -> Vec<Shape> {
+        let mut shapes = self.selected_shapes();
+        if self.marquee_selection.as_ref() == Some(&self.selection) {
+            let doc = self.doc();
+            let layers: Vec<tracedraw_core::LayerId> =
+                self.page_layers().iter().map(|l| l.id).collect();
+            let key = |s: &Shape| {
+                let id = doc.ancestors(s.id).first().copied().unwrap_or(s.id);
+                doc.locate(id)
+                    .map(|(l, i)| (layers.iter().position(|x| *x == l).unwrap_or(0), i))
+                    .unwrap_or((0, 0))
+            };
+            // Topmost first, bottom-most last.
+            shapes.sort_by_key(|s| std::cmp::Reverse(key(s)));
+        }
+        shapes
+    }
+
     /// Some selected object lies inside a group (chosen with Ctrl+click or
     /// in the Objects docker).
     pub fn selection_nested(&self) -> bool {
@@ -3126,11 +3168,14 @@ impl App {
             return;
         }
         self.sync_effect_clones_for(&cmd);
+        self.sync_object_clones();
         if matches!(
             cmd,
             Command::TransformShapes { .. }
                 | Command::SetFill { .. }
                 | Command::SetStroke { .. }
+                | Command::PatchStroke { .. }
+                | Command::PatchFill { .. }
                 | Command::SetOpacity { .. }
         ) {
             self.last_repeatable = Some(cmd.clone());
@@ -3181,6 +3226,7 @@ impl App {
 
     pub fn select(&mut self, ids: Vec<ShapeId>) {
         self.selection = ids;
+        self.marquee_selection = None;
         self.rotate_mode = false;
         self.node_selection.clear();
         self.segment_spot = None;
@@ -3645,24 +3691,37 @@ impl App {
         self.select(members);
     }
 
+    /// Convert to Curves: shapes and text become curves; a table becomes a
+    /// group of curves (cell fills, borders, text) and a symbol instance
+    /// a group of its symbol's objects as curves. Bitmaps are left as they
+    /// are, with a note in the status bar.
     pub fn convert_to_curves(&mut self) {
         let shapes = self.selected_shapes();
-        let cmds: Vec<Command> = shapes
+        let symbols = self.doc().symbols.clone();
+        let mut cmds = Vec::new();
+        for s in &shapes {
+            let engine = &mut self.engine;
+            let mut next_id = || engine.new_shape_id();
+            if let Some(kind) = s.curves_kind(&symbols, &mut next_id) {
+                cmds.push(Command::SetShapeKind { shape: s.id, kind });
+            }
+        }
+        if shapes
             .iter()
-            .filter(|s| !matches!(s.kind, ShapeKind::Path { .. } | ShapeKind::Group { .. }))
-            .map(|s| Command::SetShapeKind {
-                shape: s.id,
-                kind: ShapeKind::Path {
-                    path: s.local_path(),
-                    closed: true,
-                },
-            })
-            .collect();
+            .any(|s| matches!(s.kind, ShapeKind::Bitmap { .. }))
+        {
+            self.status = crate::i18n::tr("status.bitmap_not_curves");
+        }
         if !cmds.is_empty() {
             if let Err(e) = self.engine.run_batch("Convert To Curves", &cmds) {
                 self.status = e.to_string();
             }
         }
+    }
+
+    /// Something selected that Convert to Curves would change.
+    pub fn can_convert_to_curves(&self) -> bool {
+        self.selected_shapes().iter().any(Shape::converts_to_curves)
     }
 
     /// Order: 0 = to front, 1 = forward one, 2 = back one, 3 = to back.
@@ -3866,24 +3925,26 @@ impl App {
                 return;
             }
         }
-        let make = |existing: Option<&Stroke>| -> Option<Stroke> {
-            color.map(|c| {
-                let mut s = existing.cloned().unwrap_or_default();
-                s.color = c;
-                s
-            })
-        };
         if self.selection.is_empty() {
             self.request_default_change(crate::defaults::DefaultChange::OutlineColor(color));
         } else {
-            let shapes = self.selected_shapes();
-            let cmds: Vec<Command> = shapes
-                .iter()
-                .map(|s| Command::SetStroke {
-                    shapes: vec![s.id],
-                    stroke: make(s.stroke.as_ref()),
-                })
-                .collect();
+            // Only the colour changes: each object (and each object in a
+            // group) keeps its own width, dash and the rest.
+            let shapes = self.selection.clone();
+            let cmds = vec![match color {
+                Some(c) => Command::PatchStroke {
+                    shapes,
+                    stroke: Stroke {
+                        color: c,
+                        ..Stroke::default()
+                    },
+                    fields: vec![tracedraw_core::patch::StrokeField::Paint],
+                },
+                None => Command::SetStroke {
+                    shapes,
+                    stroke: None,
+                },
+            }];
             if let Err(e) = self.engine.run_batch("Outline Color", &cmds) {
                 self.status = e.to_string();
             } else if let Some(c) = color {
@@ -3899,17 +3960,16 @@ impl App {
             self.request_default_change(crate::defaults::DefaultChange::OutlineWidth(width));
             return;
         }
-        let cmds: Vec<Command> = shapes
-            .iter()
-            .map(|s| {
-                let mut st = s.stroke.clone().unwrap_or_default();
-                st.width = width;
-                Command::SetStroke {
-                    shapes: vec![s.id],
-                    stroke: Some(st),
-                }
-            })
-            .collect();
+        // Only the width changes: each object (and each object in a
+        // group) keeps its own colour and the rest of its outline.
+        let cmds = vec![Command::PatchStroke {
+            shapes: shapes.iter().map(|s| s.id).collect(),
+            stroke: Stroke {
+                width,
+                ..Stroke::default()
+            },
+            fields: vec![tracedraw_core::patch::StrokeField::Width],
+        }];
         if let Err(e) = self.engine.run_batch("Outline Width", &cmds) {
             self.status = e.to_string();
         }
@@ -5523,6 +5583,22 @@ impl App {
         self.page = new;
         self.selection.clear();
         self.fit_pending = true;
+    }
+
+    /// Duplicate the current page before or after it, with its layers
+    /// only or with their contents too; the copy becomes the current page.
+    pub fn duplicate_page(&mut self, before: bool, contents: bool) {
+        let page = self.page;
+        let old: Vec<_> = self.doc().pages.iter().map(|p| p.id).collect();
+        self.run(Command::DuplicatePage {
+            page,
+            before,
+            contents,
+        });
+        let new = self.doc().pages.iter().position(|p| !old.contains(&p.id));
+        if let Some(i) = new {
+            self.goto_page(i);
+        }
     }
 
     pub fn delete_page(&mut self) {

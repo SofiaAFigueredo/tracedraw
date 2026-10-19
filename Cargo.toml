@@ -7,6 +7,7 @@ members = [
     "crates/text",
     "crates/render",
     "crates/vba",
+    "crates/vba-project",
     "apps/tracedraw",
     "apps/tracedraw-cli",
 ]
@@ -27,6 +28,7 @@ tracedraw-io = { path = "crates/io" }
 tracedraw-text = { path = "crates/text" }
 tracedraw-render = { path = "crates/render" }
 tracedraw-vba = { path = "crates/vba" }
+tracedraw-vba-project = { path = "crates/vba-project" }
 
 kurbo = { version = "0.13", features = ["serde"] }
 tiny-skia = "0.12"

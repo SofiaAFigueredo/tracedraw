@@ -9,6 +9,19 @@ full, row-by-row status.
 - VBA macros: a compiler from VBA modules, classes and form code to
   scripts over the TraceDraw object model, with the VBA run-time library,
   Collection and Scripting.Dictionary.
+- VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
+  and other compound files with a VBA project (modules, their kinds and
+  code in the project's code page, references, protection, modules saved
+  without source), exported `.bas`, `.cls` and `.frm`/`.frx` files, and
+  the forms with their controls (labels, text boxes, buttons, check and
+  option boxes, lists, frames, pages, images, spin buttons, scroll bars,
+  tab strips). Projects can be written back as module files or as a
+  compound file.
+
+- Moving objects with the Pick tool shows the arrow with a dotted box,
+  and the box gets a plus after a right click (the move leaves the
+  original and a copy lands where the left button goes up). The pointer
+  no longer vanishes after that right click.
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a
   report of the file, the document, its colour settings, objects and

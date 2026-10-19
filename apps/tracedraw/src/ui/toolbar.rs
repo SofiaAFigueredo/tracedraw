@@ -1816,11 +1816,31 @@ fn text_properties(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// The transparency settings of the Transparency tool's bar and the
-/// Properties docker: the kind (none, uniform, fountain, pattern, texture),
-/// the amount or the fountain's angle and kind, the merge mode and what
-/// it applies to; a change applies to the selection.
+/// The transparency settings of the Transparency tool's bar: the kind
+/// (none, uniform, fountain, pattern, texture), the amount or the
+/// fountain's angle and kind, the merge mode and what it applies to, in
+/// one row; a change applies to the selection.
 pub fn transparency_part(app: &mut App, ui: &mut Ui) {
+    transparency_controls(app, ui, false);
+}
+
+/// The same settings for the Properties docker, in rows that keep to the
+/// docker's width: the kind and what it applies to, then the amount (or
+/// the fountain's angle and kind), then the merge mode.
+pub fn transparency_section(app: &mut App, ui: &mut Ui) {
+    ui.vertical(|ui| transparency_controls(app, ui, true));
+}
+
+/// `f` in a row of its own when `stacked`, else straight in `ui`.
+fn part_row(ui: &mut Ui, stacked: bool, f: impl FnOnce(&mut Ui)) {
+    if stacked {
+        ui.horizontal(f);
+    } else {
+        f(ui);
+    }
+}
+
+fn transparency_controls(app: &mut App, ui: &mut Ui, stacked: bool) {
     let shapes = app.selected_shapes();
     let kinds = [
         tr("transparency.none"),
@@ -1847,21 +1867,94 @@ pub fn transparency_part(app: &mut App, ui: &mut Ui) {
         0
     };
     let mut changed = false;
-    egui::ComboBox::from_id_salt("transparency_kind")
-        .selected_text(kinds[current].clone())
-        .width(110.0)
-        .show_ui(ui, |ui| {
-            for (i, k) in kinds.iter().enumerate() {
-                if ui.selectable_label(current == i, k).clicked() {
-                    if i == 0 {
-                        app.clear_transparency();
-                    } else {
-                        app.transparency_default.set_kind((i - 1) as u8);
+    let targets = [
+        tr("transparency.target_fill"),
+        tr("transparency.target_outline"),
+        tr("transparency.target_all"),
+    ];
+    let target_list = |app: &mut App, ui: &mut Ui, changed: &mut bool| {
+        egui::ComboBox::from_id_salt("transparency_target")
+            .selected_text(targets[(app.transparency_default.target as usize).min(2)].clone())
+            .width(80.0)
+            .show_ui(ui, |ui| {
+                for (i, t) in targets.iter().enumerate() {
+                    if ui
+                        .selectable_label(app.transparency_default.target as usize == i, t)
+                        .clicked()
+                    {
+                        app.transparency_default.target = i as u8;
+                        *changed = true;
+                    }
+                }
+            });
+    };
+    part_row(ui, stacked, |ui| {
+        egui::ComboBox::from_id_salt("transparency_kind")
+            .selected_text(kinds[current].clone())
+            .width(110.0)
+            .show_ui(ui, |ui| {
+                for (i, k) in kinds.iter().enumerate() {
+                    if ui.selectable_label(current == i, k).clicked() {
+                        if i == 0 {
+                            app.clear_transparency();
+                        } else {
+                            app.transparency_default.set_kind((i - 1) as u8);
+                            changed = true;
+                        }
+                    }
+                }
+            });
+        // In the docker, what it applies to goes beside the kind.
+        if stacked {
+            target_list(app, ui, &mut changed);
+        }
+    });
+    part_row(ui, stacked, |ui| transparency_amount(app, ui, &shapes, first_opacity, &mut changed));
+    part_row(ui, stacked, |ui| {
+        if !stacked {
+            vsep(ui);
+        }
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(tr("transparency.merge_mode"))
+                    .color(Tokens::text_dim())
+                    .size(11.0),
+            )
+            .extend(),
+        );
+        egui::ComboBox::from_id_salt("transparency_merge")
+            .selected_text(app.transparency_default.merge.name())
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                for m in tracedraw_core::live::MergeMode::ALL {
+                    if ui
+                        .selectable_label(app.transparency_default.merge == m, m.name())
+                        .clicked()
+                    {
+                        app.transparency_default.merge = m;
                         changed = true;
                     }
                 }
-            }
-        });
+            });
+        if !stacked {
+            target_list(app, ui, &mut changed);
+        }
+    });
+    if changed && !shapes.is_empty() {
+        let s = app.transparency_default.clone();
+        app.apply_transparency(&s);
+    }
+}
+
+/// The amount of a uniform transparency, or the angle and kind of a
+/// fountain one.
+fn transparency_amount(
+    app: &mut App,
+    ui: &mut Ui,
+    shapes: &[tracedraw_core::Shape],
+    first_opacity: f64,
+    changed: &mut bool,
+) {
     if app.transparency_default.kind == 0 {
         let mut amount = if first_opacity < 1.0 {
             ((1.0 - first_opacity) * 100.0).round()
@@ -1876,7 +1969,7 @@ pub fn transparency_part(app: &mut App, ui: &mut Ui) {
             .changed()
         {
             app.transparency_default.amount = amount;
-            changed = true;
+            *changed = true;
         }
     } else if app.transparency_default.kind == 1 {
         if let Fill::Fountain(f) = &mut app.transparency_default.mask {
@@ -1890,7 +1983,7 @@ pub fn transparency_part(app: &mut App, ui: &mut Ui) {
                 .changed()
             {
                 f.angle = angle;
-                changed = true;
+                *changed = true;
             }
             let kinds = tracedraw_core::style::FountainKind::ALL
                 .map(|k| (k, crate::ui::dockers::fountain_kind_key(k)));
@@ -1906,57 +1999,11 @@ pub fn transparency_part(app: &mut App, ui: &mut Ui) {
                     for (k, n) in kinds {
                         if ui.selectable_label(f.kind == k, tr(n)).clicked() {
                             f.kind = k;
-                            changed = true;
+                            *changed = true;
                         }
                     }
                 });
         }
-    }
-    vsep(ui);
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new(tr("transparency.merge_mode"))
-                .color(Tokens::text_dim())
-                .size(11.0),
-        )
-        .extend(),
-    );
-    egui::ComboBox::from_id_salt("transparency_merge")
-        .selected_text(app.transparency_default.merge.name())
-        .width(100.0)
-        .show_ui(ui, |ui| {
-            for m in tracedraw_core::live::MergeMode::ALL {
-                if ui
-                    .selectable_label(app.transparency_default.merge == m, m.name())
-                    .clicked()
-                {
-                    app.transparency_default.merge = m;
-                    changed = true;
-                }
-            }
-        });
-    let targets = [
-        tr("transparency.target_fill"),
-        tr("transparency.target_outline"),
-        tr("transparency.target_all"),
-    ];
-    egui::ComboBox::from_id_salt("transparency_target")
-        .selected_text(targets[(app.transparency_default.target as usize).min(2)].clone())
-        .width(80.0)
-        .show_ui(ui, |ui| {
-            for (i, t) in targets.iter().enumerate() {
-                if ui
-                    .selectable_label(app.transparency_default.target as usize == i, t)
-                    .clicked()
-                {
-                    app.transparency_default.target = i as u8;
-                    changed = true;
-                }
-            }
-        });
-    if changed && !shapes.is_empty() {
-        let s = app.transparency_default.clone();
-        app.apply_transparency(&s);
     }
 }
 

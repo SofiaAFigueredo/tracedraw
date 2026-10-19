@@ -147,7 +147,18 @@ impl App {
         use egui::{Event, Key};
         let events = ctx.input(|i| i.events.clone());
         for ev in &events {
+            // An input method composing text owns the keys until it
+            // commits (Enter, Backspace and the arrows edit the
+            // composition, not the text).
+            if !self.ime_preedit.is_empty() && matches!(ev, Event::Key { .. }) {
+                continue;
+            }
             match ev {
+                Event::Ime(ime) => {
+                    if let Some(commit) = self.ime_event(ime) {
+                        self.text_insert(&commit);
+                    }
+                }
                 Event::Text(t) => self.text_insert(t),
                 Event::Paste(t) => self.text_insert(t),
                 Event::Copy => {
@@ -215,6 +226,22 @@ impl App {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Follow an input method: its composition is kept to show at the
+    /// caret; the committed text is returned to be inserted.
+    pub fn ime_event(&mut self, ime: &egui::ImeEvent) -> Option<String> {
+        match ime {
+            egui::ImeEvent::Preedit { text, .. } => {
+                self.ime_preedit = text.clone();
+                None
+            }
+            egui::ImeEvent::Commit(text) => {
+                self.ime_preedit.clear();
+                (!text.is_empty()).then(|| text.clone())
+            }
+            _ => None,
         }
     }
 
@@ -363,10 +390,25 @@ impl App {
                         .or_else(|| layout.caret(te.caret).map(|c| c.0))
                         .unwrap_or(0.0);
                     goal_x = Some(x);
+                    // The line above or below: parts of one line split
+                    // around a wrap object share a baseline and count as
+                    // one.
+                    let here = layout.lines.get(li).map_or(0.0, |l| l.baseline);
                     let target = if m == CaretMove::Up {
-                        li.checked_sub(1)
+                        layout
+                            .lines
+                            .get(..li)
+                            .unwrap_or(&[])
+                            .iter()
+                            .rposition(|l| l.baseline > here + 1e-6)
                     } else {
-                        Some(li + 1)
+                        layout
+                            .lines
+                            .iter()
+                            .enumerate()
+                            .skip(li + 1)
+                            .find(|(_, l)| l.baseline < here - 1e-6)
+                            .map(|(i, _)| i)
                     };
                     match target.and_then(|t| layout.lines.get(t)) {
                         Some(l) => layout

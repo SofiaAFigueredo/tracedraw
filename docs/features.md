@@ -6,7 +6,7 @@ checked screenshot behind it.
 "partial" names what is missing. "baked" means the result is applied once
 instead of staying live and editable. The goal is every row at "works".
 
-Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview; print merge), missing 1 (system windows), not applicable 4, icons close but not pixel-identical.
+Counts: works 189, partial 6 (`.cdr` content coverage; CMX import; print preview; print merge; colour styles; Find and Replace), missing 1 (system windows), not applicable 4, icons close but not pixel-identical.
 
 ## 1. Selection and navigation
 
@@ -38,10 +38,10 @@ Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview
 | Capability | Status |
 |---|---|
 | Rectangle, 3-point rectangle, page frame on double-click (Shift: a frame around the selection); Ctrl square, Shift from centre | works (see `behavior/shape-tools.md`) |
-| Rectangle corners: Round, Scalloped, Chamfered; a size per corner; Edit Corners Together; Relative Corner Scaling (property bar, Properties panel, Options > Toolbox > Rectangle tool) | works (see `behavior/shape-tools.md`) |
+| Rectangle corners: Round, Scalloped, Chamfered; a size per corner; Edit Corners Together; Relative Corner Scaling, off by default (property bar, Properties panel, Options > Toolbox > Rectangle tool) | works (see `behavior/shape-tools.md`) |
 | Ellipse, 3-point ellipse, pie and arc | works |
 | Polygon, Star, Complex star (crossing sides, Star and Complex Star buttons on the Star tool's bar), Spiral (symmetric, logarithmic), Graph paper, Common shapes (71 in five sets: basic shapes, arrows, flowchart, banners, callouts; picked from a grid of outlines), Action Lines | works (see `behavior/shape-tools.md`) |
-| Freehand, 2-point line, Bezier, Pen, B-spline, Polyline, 3-point curve; lines from an end node of the selected curve continue it (join, close, merge subpaths); Freehand smoothing; outline, arrowheads and Close Curve on the property bar | works (see `behavior/curve-tools.md`) |
+| Freehand, 2-point line, Bezier, Pen, B-spline, Polyline, 3-point curve; lines from an end node of the selected curve continue it (join, close, merge subpaths); Freehand smoothing; outline, arrowheads and Close Curve on the property bar; Pen Preview mode (dashed next segment to the pointer) and Auto add/delete of nodes, placed segments drawn in the new outline's colour | works (see `behavior/curve-tools.md`) |
 | Shape Recognition (lines, rectangles and ellipses at any tilt, triangles, four-sided shapes; recognition and smoothing levels) and Sketch (stroke joining with distance and smoothing) (see `behavior/curve-tools.md`) | works |
 | Brush Strokes: Preset, Brush, Sprayer, Calligraphic, Expression | works |
 | Dimensions: parallel, horizontal/vertical, angular, segment (a click on a segment); live preview; the bar's precision, units, prefix, suffix, text position and size; dynamic (drawn again when moved or scaled) (see `behavior/dimensions.md`) | works |
@@ -54,7 +54,7 @@ Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview
 | Export to PSD with one raster layer per document layer | works |
 | Text editing in place: caret, selection by keyboard and mouse, word selection, character-level bold/italic/underline, clipboard | works |
 | Crop (an area to move and resize before it is applied; open curves cut, groups member by member, bitmaps, tables and symbols in a clip frame), Knife (two-point or freehand cuts, a gap, pieces apart or as one object, open curves split), Segment delete (the stretch between crossings, by a click or every one inside a drag), Eraser (band subtraction with thickness and nib shape) | works (see `behavior/crop-knife-eraser.md`); the crop area does not turn |
-| QR code (a live object edited in Properties, see `behavior/qr-code.md`), barcode (Code 128, EAN-13, EAN-8) and page number insertion | works |
+| QR code (a live object edited in Properties, see `behavior/qr-code.md`), barcode (Barcode Wizard with 8 symbologies: Codabar, Code 39, Code 128, EAN-13, EAN-8, UPC-A, UPC-E, Interleaved 2 of 5; see `behavior/barcode.md`) and page number insertion | works |
 
 ## 3. Shape and node editing
 
@@ -74,7 +74,7 @@ Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview
 | Join Curves panel: Extend, Chamfer, Fillet, Bezier Curve joints, gap tolerance, nearest ends first, closes subpaths | works (see `behavior/corners-and-joins.md`) |
 | Corners panel: fillet, scallop, chamfer (A and B distances) the corners of curves or of chosen nodes, with preview; corners that do not fit are skipped | works (see `behavior/corners-and-joins.md`) |
 | Coordinates panel: rectangle, square, ellipse, circle, polygon, regular polygon, star, complex star, 2-point line and multipoint curve from typed coordinates (origin point, size, angle, bounding box, bounding circle, points list), set interactively by clicking or dragging, live preview, Create object and Replace object | works (see `behavior/coordinates.md`) |
-| Convert to curves, Convert outline to object | works |
+| Convert to curves (tables and symbol instances as groups of curves, clip frames keep their contents as curves, bitmaps left as they are; see `behavior/convert-to-curves.md`), Convert outline to object | works |
 | Painterly Brush tool: freehand strokes painted with 12 brushes in three groups (dry media, wet media, textures), size and transparency on the property bar, applied to selected outlines, Clear Brushstroke; drawn, exported to SVG and PDF, kept in `.tdraw` | works (see `behavior/painterly-brushes.md`) |
 | Variable Outline tool: width nodes along an outline (drag across it, Alt for one side), left and right width on the property bar, Delete Node, Clear Variable Outline; drawn, exported to SVG and PDF and converted to objects as a band | works (see `behavior/variable-outline.md`) |
 | Smear, Twirl, Attract, Repel, Smudge, Roughen, Smooth brushes, each with its bar (nib size; rate, pressure, speed and turn, attract or repel, spike frequency and size), one undo step per stroke, per subpath (see `behavior/brushes.md`) | works |
@@ -156,7 +156,7 @@ Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview
 | Spot colours: named inks with a process stand-in, applied at a tint from the Colour panel; Separation colour spaces in PDF, a plate per ink in separations | works (see `behavior/spot-colors.md`) |
 | Several fills and outlines on one object (Properties docker: Add Fill, Add Outline, each with its editor), drawn in layers on screen and in SVG and PDF | works (see `behavior/multiple-paint.md`) |
 | Palettes: the default CMYK palette (99 named colours), document palette (filled as colours are applied, eyedropper, add from selection or document, delete, reset; read from `.cdr`), scroll arrows and wheel, show all colours, click and hold for shades, Ctrl+click to mix, open/save, palette editor, palette manager, from document/selection; Options > Customization > Color Palette | works |
-| Colour styles and harmonies | works |
+| Colour styles and harmonies: New from Selection (fills), from the mixer colour, Fill and Outline per style, harmony sets | partial: no live link (changing a style recolours only top-level objects whose fill is exactly the old colour), no gradient shades, harmonies are a one-off set |
 | Object styles (fill, outline and transparency parts; objects stay linked and follow the style; break link) and default properties of new graphics, artistic text and paragraph text, saved with the drawing | works (see `behavior/object-styles.md`) |
 | Overprint fill, outline and bitmap; Simulate Overprints preview | works |
 | Proof colours (soft proofing: the page drawn through CMYK and back, with the CMYK profile in use or the built-in model; see `behavior/colour-management.md`) | works |
@@ -188,7 +188,7 @@ Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview
 
 | Capability | Status |
 |---|---|
-| Multiple pages, insert/duplicate/rename/delete/move, go to page, page sorter | works |
+| Multiple pages, insert/duplicate (before or after, layers only or with their contents)/rename/delete/move, go to page, page sorter | works (see `behavior/pages.md`) |
 | Page size presets and orientation, custom sizes, bleed, printable area | works |
 | Page background: solid or bitmap | works |
 | Master layers (all, odd, even pages; their objects selectable on the pages they show on), layer visibility, lock, printable | works |
@@ -230,8 +230,8 @@ Counts: works 191, partial 4 (`.cdr` content coverage; CMX import; print preview
 | Capability | Status |
 |---|---|
 | Undo/redo with history panel, repeat (Ctrl+R) | works |
-| Copy, paste, paste in view, Paste Special (system clipboard as text, bitmap or objects), duplicate, clone, copy properties from | works |
-| Find and Replace (text and object attributes) | works |
+| Copy, paste, paste in view, Paste Special (system clipboard as text, bitmap or objects), duplicate, clone (linked to its master: follows its fill, outline and shape until edited; Select Master, Select Clones, Revert to Master; see `behavior/clones.md`), copy properties from | works |
+| Find and Replace: text (match case, whole word); objects by name or kind | partial: no search or replace by fill, outline, font or effects |
 | Scripts panel: JavaScript object model (documents, pages, layers, shapes, fills, outlines, colours, curves with their subpaths and nodes, effects listed, added and removed), run, record macro, load/save | works (`scripting::tests`) |
 | File > GitHub: open a drawing from a repository, save it back as a commit with a message (refused over a newer version), the file's history and earlier versions; a personal access token, kept for the session or remembered | works (see `behavior/github.md`) |
 | Script filters: a script defining `TraceDrawFilter` installed from the Scripts panel adds a file format to File > Import and File > Export | works (see `behavior/script-filters.md`) |

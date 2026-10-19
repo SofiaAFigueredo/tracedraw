@@ -6,6 +6,13 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Page tab menu: six rows with a picture each and no separators (Rename
+  Page..., Insert Page After, Insert Page Before, Duplicate Page...,
+  Delete Page, Switch Page Orientation); Page Size and Page Background
+  stay in the Layout menu. Duplicate Page... (also in the Layout menu and
+  the Pages panel) opens a dialog: insert the copy before or after the
+  selected page, and copy the layers only or with their contents. The
+  copy becomes the current page and one undo removes it.
 - VBA macros: the object model they are written against (Application,
   Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
   Outline, Transparency, Curve, Text and its views, Color, the cdr*

@@ -24,6 +24,13 @@ full, row-by-row status.
   constants), with lengths in the document unit and the reference
   point (docs/behavior/vba.md). Ids minted by scripts no longer collide
   with the drawing's own after a run that groups or adds pages.
+- VBA macros in the app (desktop): Tools > Macros with the Macro
+  Manager docker, Run Macro (Alt+Shift+F8), Load Macro Project and the Macro
+  Editor (Alt+F11). Projects are kept in the settings folder and load at
+  start-up; macros run on their own thread with MsgBox and InputBox
+  dialogs, their user forms on screen with events, Stop and Esc, an
+  error box with the VBA line and one undo step per run. Each macro can
+  get a shortcut, and the Scripts panel runs VBA snippets too.
 
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a

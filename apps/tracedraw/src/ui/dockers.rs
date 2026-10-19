@@ -285,24 +285,18 @@ pub fn dockers(app: &mut App, ui: &mut Ui) {
 }
 
 fn color_row(ui: &mut Ui, label: &str, c: &mut Color) -> bool {
-    let [r, g, b] = c.to_rgb8();
-    let mut rgb = [r, g, b];
-    let changed = ui
-        .horizontal(|ui| {
-            ui.label(label);
-            let ch = ui.color_edit_button_srgb(&mut rgb).changed();
-            ui.label(
-                egui::RichText::new(crate::app::color_description(*c))
-                    .color(Tokens::text_dim())
-                    .size(11.0),
-            );
-            ch
-        })
-        .inner;
-    if changed {
-        *c = Color::rgb8(rgb[0], rgb[1], rgb[2]);
-    }
-    changed
+    ui.horizontal(|ui| {
+        ui.label(label);
+        // The picker opens beside the swatch and keeps the colour's model.
+        let ch = crate::ui::color_picker::color_button(ui, c);
+        ui.label(
+            egui::RichText::new(crate::app::color_description(*c))
+                .color(Tokens::text_dim())
+                .size(11.0),
+        );
+        ch
+    })
+    .inner
 }
 
 /// Give the selection these further fills and outlines (one undo step).

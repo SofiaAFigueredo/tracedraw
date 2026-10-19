@@ -18,6 +18,7 @@ pub mod brush_bars;
 pub mod callout_bar;
 pub mod chrome;
 pub mod color_docker;
+pub mod color_picker;
 pub mod color_management;
 pub mod comments_docker;
 pub mod connector_bar;

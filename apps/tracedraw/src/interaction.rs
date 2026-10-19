@@ -380,6 +380,7 @@ impl App {
             }
         }
         self.select(ids);
+        self.marquee_selection = Some(self.selection.clone());
     }
 
     /// Add `id` to the selection, taking out the groups holding it and the
@@ -2066,6 +2067,18 @@ impl App {
     }
 
     pub fn keyboard(&mut self, ctx: &egui::Context) {
+        // A macro's message, input box, modal form or error owns the
+        // keyboard (see ui/macros_ui.rs); Esc stops a running macro.
+        if self.macros.modal() {
+            return;
+        }
+        if self.macros.run.is_some()
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.input(|i| i.key_pressed(Key::Escape))
+        {
+            self.stop_macro();
+            return;
+        }
         let dialog_open = !matches!(self.dialog, crate::ui::dialogs::Dialog::None);
         // Table cell typing has priority while a cell is active (not
         // behind a dialog, which owns the keyboard).
@@ -2163,6 +2176,16 @@ impl App {
             }
         }
 
+        // Tools > Macros > Run Macro (Alt+Shift+F8: Alt+F8 is the
+        // Transformations panel's Rotate) and Macro Editor.
+        if pressed(Key::F8, Modifiers::ALT | Modifiers::SHIFT) {
+            self.open_run_macro();
+            return;
+        }
+        if pressed(Key::F11, Modifiers::ALT) {
+            self.open_macro_editor();
+            return;
+        }
         // The Welcome Screen alone (no drawing open): only the commands
         // that need no drawing.
         if !self.has_document() {
@@ -2536,6 +2559,11 @@ impl App {
             if self.tool == Tool::Crop && self.crop_area.is_some() {
                 self.apply_crop();
             }
+            self.finish_curve();
+        }
+        // Space finishes a Bezier curve too (then, as the Pick tool's
+        // key, it switches to Pick).
+        if pressed(Key::Space, Modifiers::NONE) && self.tool == Tool::Bezier {
             self.finish_curve();
         }
         // Esc with a menu or a list open only closes it.

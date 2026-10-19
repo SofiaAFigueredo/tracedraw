@@ -67,6 +67,7 @@ mod help;
 #[cfg(test)]
 mod help_shots;
 mod i18n;
+mod image_dpi;
 mod imposition;
 mod interaction;
 mod interaction2;
@@ -75,6 +76,8 @@ mod knife;
 mod lens;
 mod live_guides;
 #[cfg(not(target_arch = "wasm32"))]
+mod macro_forms;
+mod macros;
 mod mcp;
 #[cfg(not(target_arch = "wasm32"))]
 mod mcp_link;
@@ -84,6 +87,7 @@ mod multipage;
 mod net;
 mod new_document;
 mod node_edit;
+mod object_clone;
 mod ops;
 mod ops2;
 mod painterly_tool;

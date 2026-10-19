@@ -816,6 +816,13 @@ pub struct App {
     /// The Shape tool's chosen rectangle corner: dragging it changes that
     /// corner only.
     pub rect_corner_selected: Option<(tracedraw_core::ShapeId, usize)>,
+    /// The selection as a marquee (or freehand region) left it. While the
+    /// selection still equals it, shaping and joining take the bottom-most
+    /// object as their target instead of the one selected last.
+    pub marquee_selection: Option<Vec<tracedraw_core::ShapeId>>,
+    /// The engine revision clones were last brought up to date at (see
+    /// `object_clone.rs`).
+    pub clone_sync_revision: u64,
     pub ellipse_arc: Option<tracedraw_core::EllipseArc>,
     /// The Contour tool's and panel's values and the tool's drag.
     pub contour: crate::contour_tool::ContourSettings,
@@ -1108,6 +1115,8 @@ pub struct App {
     pub debug_paused: Option<u32>,
     pub breakpoints: std::collections::BTreeSet<u32>,
     pub debug_expr: String,
+    /// VBA macro projects, the running macro and its dialogs.
+    pub macros: crate::macros::MacroState,
     /// AI Drawing: the request, the key in use, the conversation.
     pub ai: crate::ai::AiSession,
     /// AI Generate and Remove Background.
@@ -1428,10 +1437,11 @@ pub enum DockerTab {
     Comments,
     AiGenerate,
     Effects,
+    Macros,
 }
 
 impl DockerTab {
-    pub const ALL: [DockerTab; 41] = [
+    pub const ALL: [DockerTab; 42] = [
         DockerTab::Properties,
         DockerTab::Objects,
         DockerTab::Hints,
@@ -1473,6 +1483,7 @@ impl DockerTab {
         DockerTab::PictureMosaic,
         DockerTab::Shelf,
         DockerTab::Effects,
+        DockerTab::Macros,
     ];
 
     /// Window > Panels, in groups divided by separators, in the order of
@@ -1511,7 +1522,12 @@ impl DockerTab {
             DockerTab::ColorStyles,
         ],
         &[DockerTab::Shelf, DockerTab::Links],
-        &[DockerTab::Undo, DockerTab::Hints, DockerTab::Scripts],
+        &[
+            DockerTab::Undo,
+            DockerTab::Hints,
+            DockerTab::Scripts,
+            DockerTab::Macros,
+        ],
     ];
 
     /// Window > Panels > Effects.
@@ -1572,6 +1588,7 @@ impl DockerTab {
             DockerTab::Export => "docker.export",
             DockerTab::Comments => "docker.comments",
             DockerTab::AiGenerate => "docker.ai_generate",
+            DockerTab::Macros => "docker.macros",
             DockerTab::Effects => "docker.effects",
         }
     }
@@ -1732,6 +1749,8 @@ impl App {
             rect_corners: tracedraw_core::Corners::default(),
             corners_together: true,
             rect_corner_selected: None,
+            marquee_selection: None,
+            clone_sync_revision: 0,
             ellipse_arc: None,
             contour: Default::default(),
             contour_drag: None,
@@ -1905,6 +1924,7 @@ impl App {
             scripts_output: Vec::new(),
             script_source: String::new(),
             script_debug: None,
+            macros: Default::default(),
             debug_paused: None,
             breakpoints: Default::default(),
             debug_expr: String::new(),
@@ -3060,6 +3080,29 @@ impl App {
             .collect()
     }
 
+    /// The selected objects with the target of Trim, Weld, Intersect,
+    /// Join Curves and the like last. Objects picked one by one keep
+    /// their order (the one selected last is the target); a selection
+    /// made with a marquee, while unchanged, puts the bottom-most object
+    /// last.
+    pub fn selected_shapes_target_last(&self) -> Vec<Shape> {
+        let mut shapes = self.selected_shapes();
+        if self.marquee_selection.as_ref() == Some(&self.selection) {
+            let doc = self.doc();
+            let layers: Vec<tracedraw_core::LayerId> =
+                self.page_layers().iter().map(|l| l.id).collect();
+            let key = |s: &Shape| {
+                let id = doc.ancestors(s.id).first().copied().unwrap_or(s.id);
+                doc.locate(id)
+                    .map(|(l, i)| (layers.iter().position(|x| *x == l).unwrap_or(0), i))
+                    .unwrap_or((0, 0))
+            };
+            // Topmost first, bottom-most last.
+            shapes.sort_by_key(|s| std::cmp::Reverse(key(s)));
+        }
+        shapes
+    }
+
     /// Some selected object lies inside a group (chosen with Ctrl+click or
     /// in the Objects docker).
     pub fn selection_nested(&self) -> bool {
@@ -3111,6 +3154,7 @@ impl App {
             return;
         }
         self.sync_effect_clones_for(&cmd);
+        self.sync_object_clones();
         if matches!(
             cmd,
             Command::TransformShapes { .. }
@@ -3166,6 +3210,7 @@ impl App {
 
     pub fn select(&mut self, ids: Vec<ShapeId>) {
         self.selection = ids;
+        self.marquee_selection = None;
         self.rotate_mode = false;
         self.node_selection.clear();
         self.segment_spot = None;
@@ -3630,24 +3675,37 @@ impl App {
         self.select(members);
     }
 
+    /// Convert to Curves: shapes and text become curves; a table becomes a
+    /// group of curves (cell fills, borders, text) and a symbol instance
+    /// a group of its symbol's objects as curves. Bitmaps are left as they
+    /// are, with a note in the status bar.
     pub fn convert_to_curves(&mut self) {
         let shapes = self.selected_shapes();
-        let cmds: Vec<Command> = shapes
+        let symbols = self.doc().symbols.clone();
+        let mut cmds = Vec::new();
+        for s in &shapes {
+            let engine = &mut self.engine;
+            let mut next_id = || engine.new_shape_id();
+            if let Some(kind) = s.curves_kind(&symbols, &mut next_id) {
+                cmds.push(Command::SetShapeKind { shape: s.id, kind });
+            }
+        }
+        if shapes
             .iter()
-            .filter(|s| !matches!(s.kind, ShapeKind::Path { .. } | ShapeKind::Group { .. }))
-            .map(|s| Command::SetShapeKind {
-                shape: s.id,
-                kind: ShapeKind::Path {
-                    path: s.local_path(),
-                    closed: true,
-                },
-            })
-            .collect();
+            .any(|s| matches!(s.kind, ShapeKind::Bitmap { .. }))
+        {
+            self.status = crate::i18n::tr("status.bitmap_not_curves");
+        }
         if !cmds.is_empty() {
             if let Err(e) = self.engine.run_batch("Convert To Curves", &cmds) {
                 self.status = e.to_string();
             }
         }
+    }
+
+    /// Something selected that Convert to Curves would change.
+    pub fn can_convert_to_curves(&self) -> bool {
+        self.selected_shapes().iter().any(Shape::converts_to_curves)
     }
 
     /// Order: 0 = to front, 1 = forward one, 2 = back one, 3 = to back.

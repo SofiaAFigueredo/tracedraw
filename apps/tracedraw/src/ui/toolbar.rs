@@ -2380,7 +2380,7 @@ fn shape_tool_bar(app: &mut App, ui: &mut Ui) {
             ui,
             Pic::ToCurves,
             &format!("{} (Ctrl+Q)", tr("menu.object.convert_to_curves")),
-            true,
+            app.can_convert_to_curves(),
             false,
         )
         .clicked()

@@ -12,6 +12,14 @@ full, row-by-row status.
   instead of writing the old version again. The command line writes
   version 27 by default and the experimental 7 to 13 only with
   `TRACEDRAW_CDR_EXPERIMENTAL=1`; the MCP `save` tool takes 14 to 27.
+- VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
+  and other compound files with a VBA project (modules, their kinds and
+  code in the project's code page, references, protection, modules saved
+  without source), exported `.bas`, `.cls` and `.frm`/`.frx` files, and
+  the forms with their controls (labels, text boxes, buttons, check and
+  option boxes, lists, frames, pages, images, spin buttons, scroll bars,
+  tab strips). Projects can be written back as module files or as a
+  compound file.
 
 - Moving objects with the Pick tool shows the arrow with a dotted box,
   and the box gets a plus after a right click (the move leaves the

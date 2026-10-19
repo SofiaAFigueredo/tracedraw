@@ -292,28 +292,26 @@ fn color_row(ui: &mut Ui, label: &str, c: &mut Color) -> bool {
 /// [`color_row`] for objects whose colours differ when `mixed`: no colour
 /// is shown, and the one picked goes to all of them.
 fn color_row_mixed(ui: &mut Ui, label: &str, c: &mut Color, mixed: bool) -> bool {
-    let changed = ui
-        .horizontal(|ui| {
-            ui.label(label);
-            // The picker opens beside the swatch and keeps the colour's
-            // model.
-            let before = ui.cursor().min;
-            let ch = crate::ui::color_picker::color_button(ui, c);
-            let swatch = egui::Rect::from_min_size(before, egui::vec2(40.0, 18.0));
-            if mixed {
-                crate::ui::field::mixed_swatch(ui, swatch);
-                crate::ui::field::mixed_note(ui);
-            } else {
-                ui.label(
-                    egui::RichText::new(crate::app::color_description(*c))
-                        .color(Tokens::text_dim())
-                        .size(11.0),
-                );
-            }
-            ch
-        })
-        .inner;
-    changed
+    ui.horizontal(|ui| {
+        ui.label(label);
+        // The picker opens beside the swatch and keeps the colour's
+        // model.
+        let before = ui.cursor().min;
+        let ch = crate::ui::color_picker::color_button(ui, c);
+        let swatch = egui::Rect::from_min_size(before, egui::vec2(40.0, 18.0));
+        if mixed {
+            crate::ui::field::mixed_swatch(ui, swatch);
+            crate::ui::field::mixed_note(ui);
+        } else {
+            ui.label(
+                egui::RichText::new(crate::app::color_description(*c))
+                    .color(Tokens::text_dim())
+                    .size(11.0),
+            );
+        }
+        ch
+    })
+    .inner
 }
 
 /// Give the selection these further fills and outlines (one undo step).

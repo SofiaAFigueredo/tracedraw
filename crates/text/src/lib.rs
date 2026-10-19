@@ -2242,7 +2242,7 @@ impl FontSystem {
         // underlines. Characters of a span that is only laid out take their
         // room but are not drawn (a text drawn in parts, one per character
         // colour).
-        let drawn = |span: usize| spans.get(span).is_none_or(|s| !s.layout_only);
+        let span_drawn = |span: usize| spans.get(span).is_none_or(|s| !s.layout_only);
         let mut path = BezPath::new();
         let mut glyph_count = 0usize;
         let mut min_y = 0.0f64;
@@ -2276,7 +2276,7 @@ impl FontSystem {
             let step = ps.line_step(m.line_height, m.size);
             let y = line.y;
             // Drawn only while the text fits the frame: the rest overflows.
-            let drawn = overflow_line.is_none_or(|o| li < o);
+            let line_drawn = overflow_line.is_none_or(|o| li < o);
 
             // The line's outlines; lines past the frame (overflow) are not
             // drawn.
@@ -2292,7 +2292,7 @@ impl FontSystem {
                 let gp = Affine::translate((cap_x, baseline))
                     * Affine::scale(scale)
                     * g.path.as_ref().clone();
-                if drawn(g.span) {
+                if span_drawn(g.span) {
                     line_path.extend(gp.elements().iter().copied());
                 }
                 glyphs = &glyphs[1..];
@@ -2301,7 +2301,7 @@ impl FontSystem {
             // Bullet.
             if let (Some(bx), false) = (line.bullet_x, artistic) {
                 let first_span = glyphs.first().map(|g| g.span).unwrap_or(0);
-                if let Some(span) = spans.get(first_span).filter(|_| drawn(first_span)) {
+                if let Some(span) = spans.get(first_span).filter(|_| span_drawn(first_span)) {
                     let b = self.shape_run(span, 0, &ps.bullet_char, size_scale, 0, ps);
                     for g in &b {
                         let gp = Affine::translate((bx, y)) * g.path.as_ref().clone();
@@ -2378,7 +2378,7 @@ impl FontSystem {
                     record(g.char_idx, next_idx, before, pen);
                     continue;
                 }
-                if drawn(g.span) {
+                if span_drawn(g.span) {
                     let gp = Affine::translate((pen + g.x_offset, y + g.y_offset))
                         * g.path.as_ref().clone();
                     line_path.extend(gp.elements().iter().copied());
@@ -2406,7 +2406,7 @@ impl FontSystem {
                 edges,
             });
             if let Some(h) = &line.hyphen {
-                if line.glyphs.last().is_none_or(|g| drawn(g.span)) {
+                if line.glyphs.last().is_none_or(|g| span_drawn(g.span)) {
                     let gp = Affine::translate((pen, y)) * h.path.clone();
                     line_path.extend(gp.elements().iter().copied());
                 }
@@ -2434,7 +2434,7 @@ impl FontSystem {
                     line_path.extend(r.to_path(0.01).elements().iter().copied());
                 }
             }
-            if drawn {
+            if line_drawn {
                 path.extend(line_path.elements().iter().copied());
             }
             line_baselines.push((line_start, y));

@@ -40,6 +40,7 @@ fn last_id() -> Id {
 }
 
 /// The picker that was open on the last frame (its swatch and popup).
+#[cfg(test)]
 pub fn last_shown(ctx: &egui::Context) -> Option<Shown> {
     ctx.data(|d| d.get_temp::<Shown>(last_id()))
 }
@@ -148,10 +149,14 @@ pub fn color_button(ui: &mut Ui, c: &mut Color) -> bool {
         });
         let outside = pressed_at.is_some_and(|p| !popup.contains(p) && !swatch.contains(p));
         open = (!outside && !esc).then_some(st);
-        ui.data_mut(|d| d.insert_temp(last_id(), Shown { swatch, popup }));
+        ui.data_mut(|d| {
+            d.insert_temp(last_id(), Shown { swatch, popup });
+        });
     }
     ui.data_mut(|d| match open {
-        Some(st) => d.insert_temp(id, st),
+        Some(st) => {
+            d.insert_temp(id, st);
+        }
         None => d.remove::<Open>(id),
     });
     changed
@@ -206,5 +211,43 @@ mod tests {
             Color::Rgb { .. }
         ));
         assert_eq!(edit_model(Color::Registration), "CMYK");
+    }
+
+    /// A click on a swatch near the window's right edge opens the popup
+    /// on its left, inside the window, and the swatch's colour stays CMYK.
+    #[test]
+    fn a_swatch_click_opens_the_popup_inside_the_window() {
+        let ctx = crate::theme::ui_context();
+        let mut c = Color::cmyk_pct(0.0, 100.0, 100.0, 0.0);
+        let at = Pos2::new(1340.0, 209.0);
+        let run = |ctx: &egui::Context, c: &mut Color, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen()),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                egui::Area::new(Id::new("swatch_area"))
+                    .fixed_pos(Pos2::new(1320.0, 200.0))
+                    .show(ui.ctx(), |ui| color_button(ui, c));
+            });
+            out.textures_delta.clear();
+        };
+        run(&ctx, &mut c, Vec::new());
+        run(&ctx, &mut c, vec![egui::Event::PointerMoved(at)]);
+        run(&ctx, &mut c, vec![egui::Event::PointerMoved(at)]);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&ctx, &mut c, vec![press(true)]);
+        run(&ctx, &mut c, vec![press(false)]);
+        run(&ctx, &mut c, Vec::new());
+        let shown = last_shown(&ctx).expect("the popup is open");
+        assert!(screen().contains_rect(shown.popup), "{shown:?}");
+        assert!(shown.popup.right() <= shown.swatch.left(), "{shown:?}");
+        assert!(matches!(c, Color::Cmyk { .. }));
     }
 }

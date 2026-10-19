@@ -8,6 +8,7 @@
 //! docs/behavior/help.md).
 
 use crate::app::{App, DockerTab};
+use crate::tools::Tool;
 use crate::ui::dialogs::{Dialog, OptionsPage};
 use egui::epaint::{Color32, Primitive, TextureId, Vertex};
 use std::collections::HashMap;
@@ -231,6 +232,8 @@ enum Shot {
     Dialog(fn(&mut App) -> Dialog),
     Options(OptionsPage),
     Docker(DockerTab),
+    /// The whole window after `setup`, the top `rows` pixels kept.
+    Window(fn(&mut App), usize),
 }
 
 const W: usize = 1400;
@@ -521,6 +524,81 @@ fn shots() -> Vec<(String, Shot, bool)> {
             ));
         }
     }
+    // Pages about tools and effects: the window with the tool's bar.
+    let windows: [(&str, fn(&mut App), usize); 18] = [
+        ("get-started/workspace", |_| {}, H),
+        ("objects/selecting", |app| app.select_all(), 560),
+        (
+            "lines-shapes/outlines",
+            |app| {
+                app.show_dockers = true;
+                app.docker_tab = DockerTab::Properties;
+            },
+            H,
+        ),
+        ("lines-shapes/lines", |app| app.set_tool(Tool::Pen), 420),
+        (
+            "lines-shapes/polygons-stars-spirals",
+            |app| app.set_tool(Tool::Star),
+            420,
+        ),
+        (
+            "lines-shapes/connectors",
+            |app| app.set_tool(Tool::Connector),
+            420,
+        ),
+        (
+            "lines-shapes/cut-and-erase",
+            |app| app.set_tool(Tool::Knife),
+            420,
+        ),
+        (
+            "lines-shapes/distortion-tools",
+            |app| app.set_tool(Tool::Smooth),
+            420,
+        ),
+        (
+            "lines-shapes/dimensions",
+            |app| app.set_tool(Tool::ParallelDimension),
+            420,
+        ),
+        (
+            "lines-shapes/shape-recognition",
+            |app| app.set_tool(Tool::ShapeRecognition),
+            420,
+        ),
+        (
+            "color/fills",
+            |app| app.set_tool(Tool::InteractiveFill),
+            560,
+        ),
+        (
+            "color/transparency",
+            |app| app.set_tool(Tool::Transparency),
+            560,
+        ),
+        (
+            "color/eyedroppers",
+            |app| app.set_tool(Tool::ColorEyedropper),
+            420,
+        ),
+        (
+            "effects/drop-shadow",
+            |app| app.set_tool(Tool::DropShadow),
+            560,
+        ),
+        (
+            "effects/block-shadow",
+            |app| app.set_tool(Tool::BlockShadow),
+            560,
+        ),
+        ("effects/distort", |app| app.set_tool(Tool::Distort), 560),
+        ("effects/perspective", |app| app.add_perspective(), 560),
+        ("objects/symmetry", |app| app.create_symmetry(), 560),
+    ];
+    for (page, setup, rows) in windows {
+        v.push((name(page), Shot::Window(setup, rows), false));
+    }
     for t in DockerTab::ALL {
         let _ = P::General;
         v.push((name(crate::help::docker_topic(t)), Shot::Docker(t), false));
@@ -572,6 +650,36 @@ fn help_shots() {
             Shot::Options(p) => {
                 app.options_page = *p;
                 app.dialog = Dialog::Options;
+            }
+            Shot::Window(setup, rows) => {
+                app.show_welcome = false;
+                app.zoom_to_page();
+                setup(&mut app);
+                let mut c = None;
+                for _ in 0..6 {
+                    sh.time += 0.5;
+                    let input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(W as f32, H as f32),
+                        )),
+                        time: Some(sh.time),
+                        ..Default::default()
+                    };
+                    let mut out = sh.ctx.run_ui(input, |ui| crate::ui::root(&mut app, ui));
+                    sh.tex.apply(&out.textures_delta);
+                    let shapes = std::mem::take(&mut out.shapes);
+                    let prims = sh.ctx.tessellate(shapes, out.pixels_per_point);
+                    let mut cv = Canvas::new(W, H);
+                    cv.paint(&sh.tex, &prims);
+                    out.textures_delta.clear();
+                    c = Some(cv);
+                }
+                if let Some(c) = c {
+                    c.save(&dir.join(format!("{file}.png")), (0, 0, W, (*rows).min(H)));
+                    made.push(file);
+                }
+                continue;
             }
             Shot::Docker(t) => {
                 app.show_dockers = true;

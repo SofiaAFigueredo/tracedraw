@@ -67,6 +67,7 @@ mod help;
 #[cfg(test)]
 mod help_shots;
 mod i18n;
+mod image_dpi;
 mod imposition;
 mod interaction;
 mod interaction2;
@@ -86,10 +87,12 @@ mod multipage;
 mod net;
 mod new_document;
 mod node_edit;
+mod object_clone;
 mod ops;
 mod ops2;
 mod painterly_tool;
 mod palette;
+mod pen_look;
 mod perspective_draw;
 #[cfg(test)]
 mod pick_drag_tests;

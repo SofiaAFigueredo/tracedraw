@@ -6,6 +6,13 @@ full, row-by-row status.
 
 ## Unreleased
 
+- VBA macros: the object model they are written against (Application,
+  Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
+  Outline, Transparency, Curve, Text and its views, Color, the cdr*
+  constants), with lengths in the document unit and the reference
+  point (docs/behavior/vba.md). Ids minted by scripts no longer collide
+  with the drawing's own after a run that groups or adds pages.
+
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a
   report of the file, the document, its colour settings, objects and

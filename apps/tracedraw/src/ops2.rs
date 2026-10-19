@@ -2231,14 +2231,9 @@ fn tiny_skia_white(w: u32, h: u32) -> tiny_skia::Pixmap {
 
 /// The path text is fitted to, in page space: its first subpath, and for a
 /// closed one turned to run clockwise (so the letters stand on its
-/// outside) and started at its highest point. Returns the path and whether
-/// it is closed.
-pub fn path_for_text(path: &BezPath) -> (BezPath, bool) {
-    path_for_text_at(path, None)
-}
-
-/// [`path_for_text`], a closed path started at the point nearest to `at`
-/// (where the path was clicked) instead of at its highest point.
+/// outside) and started at the point nearest to `at` (where the path was
+/// clicked), or at its highest point without one. Returns the path and
+/// whether it is closed.
 pub fn path_for_text_at(path: &BezPath, at: Option<Point>) -> (BezPath, bool) {
     use kurbo::{ParamCurve, ParamCurveExtrema, ParamCurveNearest, PathSeg};
     let mut first = BezPath::new();
@@ -2675,7 +2670,7 @@ mod tests {
         // A kurbo ellipse runs anticlockwise from its right end.
         let e =
             tracedraw_core::geometry::Ellipse::new((90.0, 130.0), (50.0, 30.0), 0.0).to_path(0.01);
-        let (path, closed) = path_for_text(&e);
+        let (path, closed) = path_for_text_at(&e, None);
         assert!(closed);
         let seg = path.segments().next().expect("a segment");
         let start = seg.start();
@@ -2689,7 +2684,7 @@ mod tests {
         let mut line = BezPath::new();
         line.move_to((0.0, 0.0));
         line.line_to((50.0, 0.0));
-        let (open, closed) = path_for_text(&line);
+        let (open, closed) = path_for_text_at(&line, None);
         assert!(!closed);
         assert_eq!(open, line);
     }

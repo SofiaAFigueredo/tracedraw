@@ -1296,20 +1296,44 @@ mod tests {
             shapes: vec![id],
             fill: Fill::Solid(k100),
         });
+        // The sheet may hold the page in groups or clip frames.
+        fn texts(s: &tracedraw_core::Shape, out: &mut Vec<Fill>) {
+            match &s.kind {
+                ShapeKind::Text { .. } => out.push(s.fill.clone()),
+                ShapeKind::Group { children } => children.iter().for_each(|c| texts(c, out)),
+                ShapeKind::ClipFrame { frame, contents } => {
+                    texts(frame, out);
+                    contents.iter().for_each(|c| texts(c, out));
+                }
+                _ => {}
+            }
+        }
         let text_fill = |doc: &Document| -> Vec<Fill> {
-            doc.pages[0]
-                .layers
-                .iter()
-                .flat_map(|l| &l.shapes)
-                .filter(|s| matches!(s.kind, ShapeKind::Text { .. }))
-                .map(|s| s.fill.clone())
-                .collect()
+            let mut out = Vec::new();
+            for l in doc.all_layers() {
+                l.shapes.iter().for_each(|s| texts(s, &mut out));
+            }
+            out
         };
         let st = PrintState::default();
         let sheets = print_sheets(&app, &st);
         assert_eq!(text_fill(&sheets), vec![Fill::Solid(k100)]);
-        let pdf =
-            String::from_utf8_lossy(&tracedraw_io::pdf::document_to_pdf(&sheets)).into_owned();
+        // The PDF as text with its zlib streams inflated.
+        let bytes = tracedraw_io::pdf::document_to_pdf(&sheets);
+        let mut pdf = String::from_utf8_lossy(&bytes).into_owned();
+        let mut rest: &[u8] = &bytes;
+        while let Some(i) = rest.windows(7).position(|w| w == b"stream\n") {
+            let data = &rest[i + 7..];
+            use std::io::Read;
+            let mut out = Vec::new();
+            if flate2::read::ZlibDecoder::new(data)
+                .read_to_end(&mut out)
+                .is_ok()
+            {
+                pdf.push_str(&String::from_utf8_lossy(&out));
+            }
+            rest = data;
+        }
         assert!(pdf.contains("0 0 0 1 k"), "black ink in the PDF");
         let st = PrintState {
             invert: true,

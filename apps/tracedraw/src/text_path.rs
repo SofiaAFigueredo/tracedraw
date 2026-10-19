@@ -3,6 +3,7 @@
 //! and away from it with the Pick tool (see docs/behavior/text.md).
 
 use crate::app::App;
+use tracedraw_core::geometry::{ParamCurve as _, Shape as _};
 use tracedraw_core::{
     document::{ShapeKind, TextAlign, TextOnPath},
     geometry::{Affine, BezPath, Point},
@@ -435,7 +436,8 @@ mod tests {
         assert_eq!(app.fitted_text_round_placement(), Some(false));
         let start = |app: &App| {
             let ft = app.fitted_text().expect("fitted");
-            ft.to_page * ft.on_path.path.segments().next().expect("segment").start()
+            let first = ft.on_path.path.segments().next().expect("segment").start();
+            ft.to_page * first
         };
         app.place_fitted_text_round(true);
         assert_eq!(app.fitted_text_round_placement(), Some(true));

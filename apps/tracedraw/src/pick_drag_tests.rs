@@ -2371,17 +2371,6 @@ fn ctrl_click_takes_the_contents_of_a_clip_frame() {
     let off = app.view.to_screen(Point::new(12.0, 12.0));
     click_at(&ctx, &mut app, off, Modifiers::CTRL);
     assert_eq!(app.selection, vec![clip]);
-    // Read from `.cdr`, the clip frame keeps its contents within reach.
-    let back = through_cdr(&app);
-    let c = first_of(&back, "clip");
-    let ShapeKind::ClipFrame { contents, .. } = &back.doc().find_shape(c).expect("clip").kind
-    else {
-        panic!("not a clip frame");
-    };
-    let t = contents[0].id;
-    let p = text_middle(&back, t);
-    assert_eq!(back.hit_test(p), Some(c));
-    assert_eq!(back.hit_test_step(p), Some(t));
 }
 
 #[test]

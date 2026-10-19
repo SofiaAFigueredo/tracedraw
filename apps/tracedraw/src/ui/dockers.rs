@@ -1778,7 +1778,7 @@ fn outline_editor_mixed(
         if !hair || width_mixed {
             // The slider applies when let go; the box takes any width
             // typed (Enter or leaving it applies).
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let r = ui.add(crate::ui::Rail(
                     egui::Slider::new(&mut s.width, 0.1..=25.0)
                         .logarithmic(true)
@@ -1802,7 +1802,7 @@ fn outline_editor_mixed(
                 }
             });
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(tr("docker.caps"));
             let mixed = mix.has(StrokeField::Cap);
             for (c, n) in [
@@ -1817,7 +1817,7 @@ fn outline_editor_mixed(
                 }
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(tr("docker.corners"));
             let mixed = mix.has(StrokeField::Join);
             for (j, n) in [
@@ -1832,7 +1832,7 @@ fn outline_editor_mixed(
                 }
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (field, id, key) in [
                 (StrokeField::StartArrow, "Start", "docker.arrow_start"),
                 (StrokeField::EndArrow, "End", "docker.arrow_end"),
@@ -1848,7 +1848,7 @@ fn outline_editor_mixed(
                 }
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(tr("docker.dash"));
             let mixed = mix.has(StrokeField::Dash);
             for (d, n) in [

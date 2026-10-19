@@ -747,6 +747,7 @@ impl PageWriter<'_> {
                 let arr: Vec<String> = s.dash.iter().map(|d| f(d * w)).collect();
                 let _ = writeln!(self.content, "[{}] 0 d", arr.join(" "));
             }
+            let _ = writeln!(self.content, "{} M", f(s.miter_ratio()));
             if let Some(brush) = &s.painterly {
                 // Painterly brush: the marks, one filled path per opacity.
                 for (alpha, marks) in tracedraw_core::painterly::marks_by_opacity(

@@ -558,6 +558,8 @@ pub struct PaletteEditorState {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dialog {
     None,
+    /// Edit Line Style: custom dash patterns.
+    LineStyle(crate::ui::line_style::State),
     /// File > New From Template.
     NewFromTemplate(Box<crate::ui::template_dialog::TemplateState>),
     /// Bitmaps > Mode > Black and White, Duotone and Paletted.
@@ -949,6 +951,10 @@ pub fn show(app: &mut App, ctx: &Context) {
         app.options_snapshot = None;
         app.shortcut_editor.capture = None;
     }
+    crate::ui::line_style::apply_units_request(app, ctx);
+    if crate::ui::line_style::take_request(ctx) && matches!(app.dialog, Dialog::None) {
+        app.dialog = Dialog::LineStyle(Default::default());
+    }
     let mut dialog = std::mem::replace(&mut app.dialog, Dialog::None);
     if !matches!(dialog, Dialog::None) {
         crate::ui::chrome::modal_blocker(ctx);
@@ -956,6 +962,7 @@ pub fn show(app: &mut App, ctx: &Context) {
     let mut close = false;
     match &mut dialog {
         Dialog::None => {}
+        Dialog::LineStyle(st) => crate::ui::line_style::dialog(app, ctx, st, &mut close),
         Dialog::BitmapBw(s) => crate::ui::bitmap_dialogs::bw_dialog(app, ctx, s, &mut close),
         Dialog::TimeTracker(st) => crate::ui::time_tracker::dialog(app, ctx, st, &mut close),
         Dialog::Preflight(st) => crate::ui::preflight_dialog::dialog(app, ctx, st, &mut close),

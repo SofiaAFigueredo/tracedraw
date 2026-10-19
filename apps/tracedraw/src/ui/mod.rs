@@ -56,6 +56,7 @@ pub mod hints;
 pub mod icons;
 pub mod lab_dialog;
 pub mod layout_options;
+pub mod line_style;
 pub mod menu_glyphs;
 pub mod menu_pics;
 pub mod menus;

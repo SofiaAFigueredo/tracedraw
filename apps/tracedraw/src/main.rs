@@ -103,6 +103,7 @@ mod scripting;
 mod segment_delete;
 mod select_region;
 mod settings;
+mod shadow_tool;
 mod shape_tool;
 mod shelf;
 mod shortcuts;

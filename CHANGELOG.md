@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Every property bar, page bar and tool bar button now shows a rich tip like the standard bar: its name in bold and what it does under it (descriptions in all 18 languages). The Options button of the standard bar has a down arrow, since it opens a list.
+
 - AI service presets for OpenCode Zen and OpenCode Go (drawings only); requests to them carry the `x-opencode-session` header those services require, one id per run (#173).
 
 - Dialogs can be dragged by their title bar; they open centred (or where they were left, with Center dialog boxes off).

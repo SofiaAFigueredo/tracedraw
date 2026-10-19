@@ -58,6 +58,7 @@ pub fn dialog_topic(d: &Dialog, options: OptionsPage) -> &'static str {
         Dialog::PageSize { .. } => "pages-layout/pages#page-size",
         Dialog::Options => options_topic(options),
         Dialog::PageNumberSettings => "pages-layout/pages#page-numbers",
+        Dialog::OldCdrVersion { .. } => "get-started/open-and-save#save-as",
         Dialog::RenameLayer { .. } | Dialog::RenameObject { .. } => {
             "objects/objects-and-layers#rename"
         }
@@ -120,7 +121,7 @@ pub fn options_topic(p: OptionsPage) -> &'static str {
         Edit => "customize/options-app#edit",
         NodesAndHandles => "customize/options-app#nodes-and-handles",
         ClipFrame => "customize/options-app#clip-frame",
-        Snapping => "customize/options-app#snapping",
+        Snapping | AlignmentGuides | DynamicGuides => "customize/options-app#snapping",
         Save => "customize/options-app#save",
         Text => "customize/options-app#text",
         Appearance => "customize/customization#appearance",
@@ -175,6 +176,7 @@ pub fn docker_topic(t: DockerTab) -> &'static str {
         DockerTab::ObjectStyles => "templates-styles/object-styles",
         DockerTab::FindReplace => "objects/find-replace",
         DockerTab::Scripts => "customize/scripts",
+        DockerTab::Macros => "customize/scripts#macros",
         DockerTab::Palettes => "color/palettes",
         DockerTab::Lens => "effects/lens",
         DockerTab::Blend => "effects/blend",

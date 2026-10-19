@@ -40,6 +40,12 @@ pub enum ToolCursor {
     },
     /// The Shape tool: a solid arrow with what is under it.
     ShapeArrow(ShapeMark),
+    /// Moving objects with the Pick tool: the arrow with a dotted box at
+    /// its lower right; with `copy` (after a right click, the move leaves
+    /// the original) a plus in a square beside the box.
+    DragMove {
+        copy: bool,
+    },
     /// The system cross hair with the tool's icon at its lower right (the
     /// drawing, effect and fill tools).
     Badge(Tool),
@@ -64,6 +70,11 @@ pub enum CurveMark {
     Join,
     /// Close the curve being drawn on its first node.
     Close,
+    /// A click adds a node to the selected curve's segment (Pen, Bezier).
+    AddNode,
+    /// A node a press edits: a node of the selected curve to drag, or the
+    /// last node of the curve being drawn, which a click makes a cusp.
+    EditNode,
 }
 
 /// What the Shape tool's arrow points at.
@@ -96,10 +107,15 @@ fn pick_cursor(app: &App, pos: Option<Pos2>) -> Option<ToolCursor> {
     match &app.drag {
         // Over the document palette letting go adds the colours; after a
         // right click the move leaves the original (a copy moves).
-        Drag::Move { .. } if app.over_document_palette() || app.drag_copy => {
+        Drag::Move { .. } if app.over_document_palette() => {
             return Some(ToolCursor::System(egui::CursorIcon::Copy))
         }
-        Drag::Move { .. } | Drag::Pivot => return Some(moving),
+        Drag::Move { .. } => {
+            return Some(ToolCursor::DragMove {
+                copy: app.drag_copy,
+            })
+        }
+        Drag::Pivot => return Some(moving),
         Drag::Scale { handle, .. } => return Some(ToolCursor::System(resize_icon(*handle))),
         Drag::Rotate { .. } | Drag::RotateGuide { .. } => return Some(ToolCursor::Rotate),
         Drag::Skew { handle, .. } => {
@@ -319,15 +335,30 @@ pub fn for_tool(
 fn curve_mark(app: &App, pos: Option<Pos2>) -> Option<CurveMark> {
     let pos = pos?;
     let p = app.view.to_page(pos);
+    let pen = matches!(app.tool, Tool::Bezier | Tool::Pen);
+    if app.pen_editing {
+        return Some(CurveMark::EditNode);
+    }
     if let Some(c) = &app.curve {
-        let near_first = c.nodes.first().is_some_and(|(f, _)| {
-            app.view.to_screen(*f).distance(pos) as f64 <= app.settings.curves.join_px()
-        });
-        if near_first && c.nodes.len() >= 3 {
+        let near = |q: &tracedraw_core::geometry::Point| {
+            app.view.to_screen(*q).distance(pos) as f64 <= app.settings.curves.join_px()
+        };
+        if c.nodes.len() >= 3 && c.nodes.first().is_some_and(|(f, _)| near(f)) {
             return Some(CurveMark::Close);
         }
+        if pen && c.nodes.len() >= 2 && c.nodes.last().is_some_and(|(l, _)| near(l)) {
+            return Some(CurveMark::EditNode);
+        }
+        return None;
     }
-    app.on_join_end(p).then_some(CurveMark::Join)
+    if app.on_join_end(p) {
+        return Some(CurveMark::Join);
+    }
+    match app.pen_edit_at(p) {
+        Some(crate::interaction::PenEdit::Node) => Some(CurveMark::EditNode),
+        Some(crate::interaction::PenEdit::Segment(..)) => Some(CurveMark::AddNode),
+        None => None,
+    }
 }
 
 /// The pointer at `pos` is over a text object (or the text being
@@ -405,6 +436,7 @@ pub fn paint(painter: &Painter, cursor: ToolCursor, p: Pos2) {
         ToolCursor::Rotate => rotate_arrows(painter, p),
         ToolCursor::Skew { horizontal } => skew_arrows(painter, p, horizontal),
         ToolCursor::ShapeArrow(mark) => shape_arrow(painter, p, mark),
+        ToolCursor::DragMove { copy } => drag_move(painter, p, copy),
         ToolCursor::Badge(tool) => badge(painter, p, tool),
         ToolCursor::CurveBadge(tool, mark) => {
             badge(painter, p, tool);
@@ -446,6 +478,32 @@ fn curve_mark_sign(painter: &Painter, p: Pos2, mark: CurveMark) {
         CurveMark::Close => {
             painter.circle_stroke(c, 4.0, Stroke::new(3.4, HALO));
             painter.circle_stroke(c, 4.0, Stroke::new(1.4, INK));
+        }
+        CurveMark::AddNode => {
+            haloed(
+                painter,
+                &[
+                    vec![c + Vec2::new(-4.0, 0.0), c + Vec2::new(4.0, 0.0)],
+                    vec![c + Vec2::new(0.0, -4.0), c + Vec2::new(0.0, 4.0)],
+                ],
+                1.4,
+            );
+        }
+        CurveMark::EditNode => {
+            // A hollow node with a small arrow head beside it.
+            let r = Rect::from_center_size(c, Vec2::splat(6.0));
+            painter.rect(
+                r,
+                CornerRadius::ZERO,
+                HALO,
+                Stroke::new(1.2, INK),
+                egui::StrokeKind::Inside,
+            );
+            haloed(
+                painter,
+                &[vec![c + Vec2::new(-7.0, 3.0), c + Vec2::new(-4.5, 0.5)]],
+                1.2,
+            );
         }
     }
 }
@@ -559,6 +617,73 @@ fn shape_arrow(painter: &Painter, tip: Pos2, mark: ShapeMark) {
         ShapeMark::Control => {
             painter.circle(m, 2.6, INK, Stroke::new(1.2, HALO));
         }
+    }
+}
+
+/// The pointer while objects are moved: a white arrow outlined in black
+/// with its tip on the hot spot, a dotted box under its tail, and with
+/// `copy` a plus in a square at the box's lower right.
+fn drag_move(painter: &Painter, tip: Pos2, copy: bool) {
+    let at = |x: f32, y: f32| tip + Vec2::new(x, y);
+    let arrow = vec![
+        at(0.0, 0.0),
+        at(0.0, 15.0),
+        at(3.6, 11.6),
+        at(6.2, 17.4),
+        at(8.6, 16.4),
+        at(6.0, 10.8),
+        at(10.8, 10.8),
+    ];
+    painter.add(Shape::closed_line(arrow.clone(), Stroke::new(3.0, HALO)));
+    // Filled as two convex parts (the head and the tail), outlined whole.
+    for part in [
+        vec![
+            at(0.0, 0.0),
+            at(0.0, 15.0),
+            at(3.6, 11.6),
+            at(6.0, 10.8),
+            at(10.8, 10.8),
+        ],
+        vec![at(3.6, 11.6), at(6.2, 17.4), at(8.6, 16.4), at(6.0, 10.8)],
+    ] {
+        painter.add(Shape::convex_polygon(part, HALO, Stroke::NONE));
+    }
+    painter.add(Shape::closed_line(arrow, Stroke::new(1.0, INK)));
+    // The dotted box.
+    let b = Rect::from_min_size(at(7.0, 13.0), Vec2::new(11.0, 8.0));
+    painter.rect_filled(b.expand(1.0), CornerRadius::ZERO, HALO);
+    let corners = [
+        b.left_top(),
+        b.right_top(),
+        b.right_bottom(),
+        b.left_bottom(),
+    ];
+    for i in 0..4 {
+        painter.extend(Shape::dashed_line(
+            &[corners[i], corners[(i + 1) % 4]],
+            Stroke::new(1.0, INK),
+            1.5,
+            1.5,
+        ));
+    }
+    if copy {
+        let s = Rect::from_min_size(at(15.0, 17.0), Vec2::splat(9.0));
+        painter.rect(
+            s,
+            CornerRadius::ZERO,
+            HALO,
+            Stroke::new(1.0, INK),
+            egui::StrokeKind::Inside,
+        );
+        let c = s.center();
+        painter.line_segment(
+            [c - Vec2::new(2.5, 0.0), c + Vec2::new(2.5, 0.0)],
+            Stroke::new(1.2, INK),
+        );
+        painter.line_segment(
+            [c - Vec2::new(0.0, 2.5), c + Vec2::new(0.0, 2.5)],
+            Stroke::new(1.2, INK),
+        );
     }
 }
 
@@ -751,6 +876,7 @@ mod tests {
             smooth: true,
             dragging_handle: false,
             bspline: false,
+            ..Default::default()
         });
         let first = app
             .view

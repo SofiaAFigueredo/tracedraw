@@ -52,7 +52,7 @@ pub enum EdgeBorder {
     /// No border on this side.
     None,
     /// This side's own outline.
-    Stroke(Stroke),
+    Stroke(Box<Stroke>),
 }
 
 impl EdgeBorder {
@@ -323,7 +323,7 @@ impl Table {
         match e {
             EdgeBorder::Table => self.border.clone(),
             EdgeBorder::None => None,
-            EdgeBorder::Stroke(s) => Some(s.clone()),
+            EdgeBorder::Stroke(s) => Some(s.as_ref().clone()),
         }
     }
 
@@ -617,7 +617,8 @@ impl Table {
         };
         let total: f64 = sizes.iter().skip(start as usize).take(span as usize).sum();
         // Pieces thinner than a tenth of a millimetre are refused.
-        if !(total / n as f64 >= 0.1) {
+        // (NaN sizes are refused too.)
+        if total / (n as f64) < 0.1 || total.is_nan() {
             return false;
         }
         let originals: Vec<TableCell> = picked
@@ -887,7 +888,11 @@ mod tests {
         let mut t = grid(3, 3);
         let sel = t.block_cells((0, 0), (1, 1));
         assert_eq!(sel, vec![(0, 0), (0, 1), (1, 0), (1, 1)]);
-        t.apply_borders(&sel, BorderSet::Outside, EdgeBorder::Stroke(red()));
+        t.apply_borders(
+            &sel,
+            BorderSet::Outside,
+            EdgeBorder::Stroke(Box::new(red())),
+        );
         let g = t.border_paths();
         let red_len = g
             .iter()
@@ -899,7 +904,7 @@ mod tests {
         // Inner lines of the block keep the table's border.
         let c = &t.cells[t.cell_index(0, 0).unwrap()];
         assert_eq!(c.borders.right, EdgeBorder::Table);
-        assert_eq!(c.borders.top, EdgeBorder::Stroke(red()));
+        assert_eq!(c.borders.top, EdgeBorder::Stroke(Box::new(red())));
     }
 
     #[test]
@@ -907,7 +912,7 @@ mod tests {
         let lens = |set: BorderSet| {
             let mut t = grid(3, 3);
             let sel = t.block_cells((0, 0), (1, 1));
-            t.apply_borders(&sel, set, EdgeBorder::Stroke(red()));
+            t.apply_borders(&sel, set, EdgeBorder::Stroke(Box::new(red())));
             t.border_paths()
                 .iter()
                 .find(|(s, _)| *s == red())
@@ -927,7 +932,11 @@ mod tests {
     #[test]
     fn no_border_removes_the_line_shared_with_a_neighbour() {
         let mut t = grid(1, 2);
-        t.apply_borders(&[(0, 0)], BorderSet::Right, EdgeBorder::Stroke(red()));
+        t.apply_borders(
+            &[(0, 0)],
+            BorderSet::Right,
+            EdgeBorder::Stroke(Box::new(red())),
+        );
         // The neighbour had its own setting later: the new one replaces it.
         t.apply_borders(&[(0, 1)], BorderSet::Left, EdgeBorder::None);
         let g = t.border_paths();

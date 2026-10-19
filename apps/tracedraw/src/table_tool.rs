@@ -748,7 +748,7 @@ impl App {
         }
         let cells = self.table_selected_cells(id, &t);
         let edge = match border {
-            Some(s) => EdgeBorder::Stroke(s),
+            Some(s) => EdgeBorder::Stroke(Box::new(s)),
             None => EdgeBorder::None,
         };
         t.apply_borders(&cells, set, edge);
@@ -773,7 +773,7 @@ impl App {
                     .cloned()
             });
         match own {
-            Some(EdgeBorder::Stroke(s)) => Some(s),
+            Some(EdgeBorder::Stroke(s)) => Some(*s),
             Some(_) => None,
             None => t.border.clone(),
         }
@@ -1250,7 +1250,7 @@ mod tests {
         app.table_apply_borders(Some(s.clone()));
         let t = table(&app);
         let c = &t.cells[t.cell_index(0, 0).unwrap()];
-        assert_eq!(c.borders.top, EdgeBorder::Stroke(s.clone()));
+        assert_eq!(c.borders.top, EdgeBorder::Stroke(Box::new(s.clone())));
         assert_eq!(c.borders.bottom, EdgeBorder::Table);
         assert_eq!(app.table_shown_border(), Some(s));
         app.table_set_margins(tracedraw_core::CellMargins {

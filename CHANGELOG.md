@@ -6,6 +6,27 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Wrap Paragraph Text now works: paragraph text flows around the objects
+  marked to wrap it that lie over its frame, along their outline or
+  their bounding box, with the text on the left, the right, both sides
+  or above and below, and a text wrap offset (the arrow beside the
+  property bar button). Drawing, printing, exports, clicks and the caret
+  follow the wrapped lines.
+- Alignment, spacing, indents, bullets, drop caps, tabs and hyphenation
+  are kept per paragraph: while a text is edited they change the
+  paragraphs of the selection, with the whole object selected every
+  paragraph (only the settings changed). Older drawings open with their
+  object-wide formatting on every paragraph; `.cdr` files keep each
+  paragraph's alignment both ways.
+- The context menu's Wrap Paragraph Text is a submenu with the seven
+  wrap styles and the offset. The Shape tool's spacing arrows change
+  every paragraph, keeping their differences. `.cdr` files keep each
+  paragraph's line spacing from version 16, and paragraph spacing
+  before and after is read from version 16 style strings.
+- Align to Baseline Grid puts the baselines on the page's baseline grid
+  (from the page top and the grid's start offset), so frames line up
+  with one another.
+
 - Moving objects with the Pick tool shows the arrow with a dotted box,
   and the box gets a plus after a right click (the move leaves the
   original and a copy lands where the left button goes up). The pointer

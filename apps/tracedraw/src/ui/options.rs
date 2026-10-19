@@ -2148,7 +2148,10 @@ fn curves_page(app: &mut App, ui: &mut Ui) {
         ui.checkbox(&mut c.pen_preview, tr("options.pen_preview"));
         ui.end_row();
         ui.label("");
-        ui.checkbox(&mut c.pen_auto_add_delete, tr("options.pen_auto_add_delete"));
+        ui.checkbox(
+            &mut c.pen_auto_add_delete,
+            tr("options.pen_auto_add_delete"),
+        );
         ui.end_row();
     });
     ui.add_space(4.0);

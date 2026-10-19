@@ -2331,7 +2331,10 @@ fn c_held_while_pulling_makes_a_cusp_that_stays_and_does_not_align() {
         Point::new(180.0, 150.0),
     );
     click_page(&ctx, &mut app, a);
-    let (from, to) = (app.view.to_screen(b), app.view.to_screen(Point::new(160.0, 170.0)));
+    let (from, to) = (
+        app.view.to_screen(b),
+        app.view.to_screen(Point::new(160.0, 170.0)),
+    );
     drag(
         &ctx,
         &mut app,
@@ -2374,7 +2377,12 @@ fn c_held_while_pulling_makes_a_cusp_that_stays_and_does_not_align() {
     assert_eq!(cv.in_handles.get(&2).copied(), Some(None));
     assert!(cv.in_handles.contains_key(&1), "the first cusp stayed");
     // Without C the next pull is smooth.
-    pull(&ctx, &mut app, Point::new(220.0, 150.0), Point::new(230.0, 160.0));
+    pull(
+        &ctx,
+        &mut app,
+        Point::new(220.0, 150.0),
+        Point::new(230.0, 160.0),
+    );
     let cv = app.curve.clone().expect("drawing");
     assert!(!cv.in_handles.contains_key(&3));
     assert_eq!(bounds(&app, rect), before);
@@ -2388,9 +2396,17 @@ fn c_during_the_closing_drag_keeps_the_first_node_handle() {
     let a = Point::new(100.0, 150.0);
     let a_out = Point::new(110.0, 170.0);
     pull(&ctx, &mut app, a, a_out);
-    pull(&ctx, &mut app, Point::new(150.0, 190.0), Point::new(170.0, 190.0));
+    pull(
+        &ctx,
+        &mut app,
+        Point::new(150.0, 190.0),
+        Point::new(170.0, 190.0),
+    );
     click_page(&ctx, &mut app, Point::new(160.0, 130.0));
-    let (from, to) = (app.view.to_screen(a), app.view.to_screen(Point::new(90.0, 140.0)));
+    let (from, to) = (
+        app.view.to_screen(a),
+        app.view.to_screen(Point::new(90.0, 140.0)),
+    );
     drag(
         &ctx,
         &mut app,
@@ -2435,10 +2451,18 @@ fn the_snap_tip_shows_while_placing_and_pulling_with_the_pen() {
     );
     let mark = app.snap_mark.get().expect("a snap mark");
     assert_eq!(mark.mode, SnapMode::Grid);
-    assert!((mark.point - Point::new(120.0, 140.0)).hypot() < 1e-6, "{mark:?}");
+    assert!(
+        (mark.point - Point::new(120.0, 140.0)).hypot() < 1e-6,
+        "{mark:?}"
+    );
     // Pulling a handle: the handle snaps and the mark shows too.
     let from = app.view.to_screen(Point::new(140.0, 150.0));
-    frame(&ctx, &mut app, vec![Event::PointerMoved(from)], Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(from)],
+        Modifiers::NONE,
+    );
     frame(
         &ctx,
         &mut app,
@@ -2447,12 +2471,21 @@ fn the_snap_tip_shows_while_placing_and_pulling_with_the_pen() {
     );
     for p in [Point::new(150.0, 160.0), Point::new(160.3, 169.8)] {
         let at = app.view.to_screen(p);
-        frame(&ctx, &mut app, vec![Event::PointerMoved(at)], Modifiers::NONE);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(at)],
+            Modifiers::NONE,
+        );
     }
     assert!(app.curve.as_ref().is_some_and(|c| c.dragging_handle));
     let mark = app.snap_mark.get().expect("a snap mark while pulling");
     assert_eq!(mark.mode, SnapMode::Grid);
-    let handle = app.curve.as_ref().and_then(|c| c.nodes.last()).and_then(|n| n.1);
+    let handle = app
+        .curve
+        .as_ref()
+        .and_then(|c| c.nodes.last())
+        .and_then(|n| n.1);
     assert!(
         handle.is_some_and(|h| (h - Point::new(160.0, 170.0)).hypot() < 1e-6),
         "{handle:?}"
@@ -2464,6 +2497,7 @@ fn the_snap_tip_shows_while_placing_and_pulling_with_the_pen() {
         vec![button(up, false, PointerButton::Primary, Modifiers::NONE)],
         Modifiers::NONE,
     );
+}
 
 #[test]
 fn space_finishes_a_bezier_curve_then_picks() {

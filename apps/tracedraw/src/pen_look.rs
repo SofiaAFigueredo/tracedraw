@@ -318,7 +318,10 @@ mod tests {
         assert_eq!(look.preview_color, crate::theme::Tokens::SELECTION);
         assert_eq!(look.placed.segments().count(), 2);
         // No outline for new objects: a black hairline.
-        assert_eq!(curve_look(&c, None, true, None).placed_color, Color32::BLACK);
+        assert_eq!(
+            curve_look(&c, None, true, None).placed_color,
+            Color32::BLACK
+        );
         let marks: Vec<NodeLook> = look.nodes.iter().map(|n| n.1).collect();
         assert_eq!(
             marks,

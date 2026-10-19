@@ -65,6 +65,57 @@ const __consts = {
   cdrPalettedImage: 3, cdrRGBColorImage: 4, cdrCMYKColorImage: 5,
   // cdrTrueFalse
   cdrTrue: -1, cdrFalse: 0,
+  // cdrColorType, more
+  cdrColorPantoneHex: 14, cdrColorUserInk: 21, cdrColorMultiChannel: 26,
+  // cdrTransparencyType
+  cdrNoTransparency: 0, cdrUniformTransparency: 1, cdrFountainTransparency: 2,
+  cdrPatternTransparency: 3, cdrTextureTransparency: 4,
+  // cdrMergeMode
+  cdrMergeNormal: 0, cdrMergeAdd: 1, cdrMergeSubtract: 2, cdrMergeDifference: 3,
+  cdrMergeMultiply: 4, cdrMergeDivide: 5, cdrMergeIfLighter: 6, cdrMergeIfDarker: 7,
+  cdrMergeTexturize: 8, cdrMergeColor: 9, cdrMergeHue: 10, cdrMergeSaturation: 11,
+  cdrMergeLightness: 12, cdrMergeInvert: 13, cdrMergeAND: 14, cdrMergeOR: 15, cdrMergeXOR: 16,
+  cdrMergeRed: 17, cdrMergeGreen: 18, cdrMergeBlue: 19,
+  // cdrImageType, more
+  cdrDuotoneImage: 6, cdrLABImage: 7, cdrCMYKMultiChannelImage: 8,
+  cdrRGBMultiChannelImage: 9, cdrSpotMultiChannelImage: 10,
+  // cdrEffectType
+  cdrBlend: 1, cdrExtrude: 2, cdrEnvelope: 3, cdrTextOnPath: 4, cdrDistortion: 5,
+  cdrDropShadow: 6, cdrContour: 7, cdrCustomEffect: 8, cdrLens: 9, cdrPerspective: 10,
+  cdrBevel: 11, cdrControlPath: 12,
+  // cdrLensType
+  cdrLensBrighten: 0, cdrLensColorAdd: 1, cdrLensColorLimit: 2, cdrLensCustomColorMap: 3,
+  cdrLensFishEye: 4, cdrLensHeatMap: 5, cdrLensInvert: 6, cdrLensMagnify: 7,
+  cdrLensTintedGrayscale: 8, cdrLensTransparency: 9, cdrLensWireframe: 10,
+  // cdrViewType
+  cdrSimpleWireframeView: 0, cdrWireframeView: 1, cdrDraftView: 2, cdrNormalView: 3,
+  cdrEnhancedView: 4, cdrPixelView: 6,
+  // cdrAntiAliasingType
+  cdrNoAntiAliasing: 0, cdrNormalAntiAliasing: 1, cdrSupersampling: 2,
+  // cdrFontCase
+  cdrNormalFontCase: 0, cdrSmallCapsFontCase: 1, cdrAllCapsFontCase: 2,
+  // cdrTextLanguage (Windows language ids)
+  cdrEnglishUS: 1033, cdrEnglishUK: 2057, cdrRussian: 1049, cdrGerman: 1031,
+  cdrFrench: 1036, cdrSpanish: 1034, cdrItalian: 1040, cdrPortuguese: 2070,
+  cdrBrazilianPortuguese: 1046,
+  // cdrOutlineLineJoin / caps / type
+  cdrOutlineMiterLineJoin: 0, cdrOutlineRoundLineJoin: 1, cdrOutlineBevelLineJoin: 2,
+  cdrOutlineButtLineCaps: 0, cdrOutlineRoundLineCaps: 1, cdrOutlineSquareLineCaps: 2,
+  cdrEnhancedOutline: 2,
+  // cdrImportMode
+  cdrImportFull: 0,
+  // cdrCursorShape
+  cdrCursorSmallcrosshair: 1, cdrCursorPick: 2, cdrCursorEyeDrop: 4,
+  // cdrFileVersion
+  cdrCurrentVersion: 0,
+  // cdrConnectorLinkType
+  cdrLinkAllConnections: 0,
+  // cdrCompressionType
+  cdrCompressionNone: 0, cdrCompressionLZW: 1,
+  // cdrFilter, more
+  cdrCPT: 1281,
+  // cdrApplyTo
+  cdrApplyToFillAndOutline: 0, cdrApplyToFill: 1, cdrApplyToOutline: 2,
 };
 for (const k in __consts) globalThis[k] = __consts[k];
 
@@ -463,7 +514,10 @@ class Shape extends __Geo {
     if (info.kind !== 'clipframe') return null;
     const id = this.id;
     return { get Shapes() { return new Shapes(() => __call('vg_info', { id: id }).contents); },
-      get Parent() { return new Shape(id); } };
+      get Parent() { return new Shape(id); },
+      // Editing the contents in place is a window mode; macros reach the
+      // contents through Shapes either way.
+      EnterEditMode() { }, LeaveEditMode() { } };
   }
   get PowerClipParent() {
     const p = this._info().parent;
@@ -1154,3 +1208,403 @@ for (const name of Object.getOwnPropertyNames(Application)) {
     globalThis[name] = d.value;
   }
 }
+
+
+// ----- Members published macros use ---------------------------------------
+
+function __no(member, why) {
+  throw new Error(member + ' is not available in TraceDraw' + (why ? ': ' + why : ''));
+}
+function __def(cls, name, get, set) {
+  Object.defineProperty(cls.prototype, name, { get: get, set: set, configurable: true });
+}
+
+// Application.Status: the progress shows in the status line.
+const __status = {
+  text: '', progress: 0, active: false,
+  _show() { __call('vg_status', { text: this.active ? (this.text + ' ' + Math.round(this.progress) + '%').trim() : this.text }); },
+  BeginProgress(Text, CanAbort) { this.text = String(Text || ''); this.progress = 0; this.active = true; this._show(); },
+  get Progress() { return this.progress; },
+  set Progress(v) { this.progress = Math.max(0, Math.min(100, Number(v) || 0)); this._show(); },
+  EndProgress() { this.active = false; this.text = ''; this._show(); },
+  SetMainText(Text) { this.text = String(Text || ''); this._show(); },
+  get Aborted() { return false; },
+};
+const __corelScript = { RedrawScreen() { } };
+const __profiles = () => __call('vg_doc', {}).profiles;
+function __colorContext() {
+  return {
+    get RGBColorProfile() { return { Name: __profiles()[0] }; },
+    get CMYKColorProfile() { return { Name: __profiles()[1] }; },
+    get GrayscaleColorProfile() { return { Name: __profiles()[2] }; },
+  };
+}
+const __colorManager = {
+  get DefaultColorContext() { return __colorContext(); },
+  engine: 1,
+  get ColorEngine() { return this.engine; },
+  set ColorEngine(v) { this.engine = v; },
+};
+Object.defineProperty(Application, 'Status', { get() { return __status; }, configurable: true });
+Object.defineProperty(Application, 'CorelScript', { get() { return __corelScript; }, configurable: true });
+Object.defineProperty(Application, 'ColorManager', { get() { return __colorManager; }, configurable: true });
+Object.defineProperty(Application, 'FrameWork', { get() { return __no('Application.FrameWork', 'dockers and commands of other programs'); }, configurable: true });
+Object.defineProperty(Application, 'VBE', { get() { return __no('Application.VBE'); }, configurable: true });
+Object.defineProperty(Application, 'UILanguage', { get() { return cdrEnglishUS; }, configurable: true });
+Application.CreateStructCreateOptions = function () { return { Units: cdrMillimeter, PageWidth: 210, PageHeight: 297, Resolution: 300 }; };
+Application.CreateDocumentEx = function () { return __no('Application.CreateDocumentEx', 'a macro works on the active drawing'); };
+for (const name of ['Status', 'CorelScript', 'ColorManager', 'FrameWork', 'VBE', 'UILanguage']) {
+  const d = Object.getOwnPropertyDescriptor(Application, name);
+  Object.defineProperty(globalThis, name, { get: d.get, configurable: true });
+}
+globalThis.CreateStructCreateOptions = Application.CreateStructCreateOptions;
+globalThis.CreateDocumentEx = Application.CreateDocumentEx;
+
+// The view.
+const __unitOf = { Inches: cdrInch, Millimeters: cdrMillimeter, Centimeters: cdrCentimeter,
+  Meters: cdrMeter, Picas: cdrPica, Points: cdrPoint, Pixels: cdrPixel, Ciceros: cdrCicero,
+  Didots: cdrDidots, Feet: cdrFoot, Yards: cdrYard, Miles: cdrMile, Kilometers: cdrKilometer };
+class __View {
+  get OriginX() { return __un(__call('vg_doc', {}).view[0]); }
+  get OriginY() { return __un(__call('vg_doc', {}).view[1]); }
+  get Zoom() { return 100; }
+  set Zoom(v) { }
+  get Type() { return cdrEnhancedView; }
+  set Type(v) { }
+  SetViewPoint() { }
+  SetViewArea() { }
+  ToFitPage() { }
+  ToFitSelection() { }
+  ToFitAllObjects() { }
+  Activate() { }
+}
+__def(__Window, 'ActiveView', function () { return new __View(); });
+
+// Document: settings, selection, master page, rulers, views, profiles.
+const __settingsStack = [];
+__def(Document, 'PreserveSelection', function () { return __vg.preserve !== false; }, function (v) { __vg.preserve = !!v; });
+Document.prototype.SaveSettings = function () { __settingsStack.push({ unit: __vg.unit, ref: __vg.ref, preserve: __vg.preserve }); };
+Document.prototype.RestoreSettings = function () {
+  const s = __settingsStack.pop();
+  if (s) { __vg.unit = s.unit; __vg.ref = s.ref; __vg.preserve = s.preserve; }
+};
+__def(Document, 'MasterPage', function () { return new Page(0); });
+__def(Document, 'Rulers', function () {
+  const u = __unitOf[__call('vg_doc', {}).units] || cdrMillimeter;
+  return { HUnits: u, VUnits: u };
+});
+__def(Document, 'Views', function () { const v = new __View(); return { Count: 1, Item: () => v, [Symbol.iterator]: () => __iter([v]) }; });
+__def(Document, 'ColorContext', function () { return __colorContext(); });
+Document.prototype.GetUserClick = function () { return __no('Document.GetUserClick', 'macros cannot wait for clicks'); };
+Document.prototype.GetUserArea = function () { return __no('Document.GetUserArea', 'macros cannot wait for clicks'); };
+
+// Page: unlocking, guides.
+Page.prototype.UnlockAllShapes = function () { __call('vg_unlock_all', { page: this.id }); };
+__def(Page, 'Guides', function () {
+  const page = this.id;
+  const list = () => __call('vg_guides', { page: page }).guides;
+  return { get Count() { return list().length; }, Item: (i) => new __GuideShape(page, i - 1),
+    [Symbol.iterator]: () => __iter(list().map((_, i) => new __GuideShape(page, i))) };
+});
+
+// Layers: the guides and grid are not layers here.
+__def(Layer, 'IsGuidesLayer', function () { return false; });
+__def(Layer, 'IsGridLayer', function () { return false; });
+__def(Layer, 'IsDesktopLayer', function () { return false; });
+Layer.prototype.Paste = function () { return __no('Layer.Paste', 'the clipboard is not open to macros'); };
+Layer.prototype.CreateGuide = function (x1, y1, x2, y2) {
+  const ax = __mm(x1), ay = __mm(y1), bx = __mm(x2), by = __mm(y2);
+  const angle = Math.atan2(by - ay, bx - ax) * 180 / Math.PI;
+  const page = this._l.page;
+  return new __GuideShape(page, __call('vg_add_guide', { page: page, x: ax, y: ay, angle: angle }).index);
+};
+Layer.prototype.CreateGuideAngle = function (x, y, Angle) {
+  const page = this._l.page;
+  return new __GuideShape(page, __call('vg_add_guide', { page: page, x: __mm(x), y: __mm(y), angle: Angle || 0 }).index);
+};
+class __Guide {
+  constructor(page, index) { this.page = page; this.index = index; }
+  get _g() { return __call('vg_guides', { page: this.page }).guides[this.index]; }
+  get Angle() { return this._g.angle; }
+  set Angle(a) { const g = this._g; this.SetPointAndAngle(__un(g.x), __un(g.y), a); }
+  get PointX() { return __un(this._g.x); }
+  get PointY() { return __un(this._g.y); }
+  GetPointAndAngle() { const g = this._g; return [__un(g.x), __un(g.y), g.angle]; }
+  SetPointAndAngle(x, y, Angle) { __call('vg_set_guide', { page: this.page, index: this.index, x: __mm(x), y: __mm(y), angle: Angle }); }
+}
+class __GuideShape {
+  constructor(page, index) { this.page = page; this.index = index; }
+  get Type() { return cdrGuidelineShape; }
+  get Guide() { return new __Guide(this.page, this.index); }
+  get Name() { return 'Guideline'; }
+}
+
+// Shape: what it can wear, conversion to a bitmap, effects.
+const __noFill = ['group', 'bitmap', 'symbol', 'table'];
+__def(Shape, 'CanHaveFill', function () { return !__noFill.includes(this._info().kind); });
+__def(Shape, 'CanHaveOutline', function () { return !__noFill.includes(this._info().kind); });
+const __imageMode = { 0: 'bw', 1: 'paletted', 2: 'gray', 3: 'paletted', 4: 'rgb', 5: 'cmyk' };
+function __toBitmap(ids, ImageType, Dithered, Transparent, Resolution, AntiAliasing, UseColorProfile, AlwaysOverprintBlack) {
+  return new Shape(__call('vg_to_bitmap', { ids: ids, mode: __imageMode[ImageType] || 'rgb',
+    dithered: !!Dithered, transparent: !!Transparent, dpi: Resolution || 300,
+    anti_alias: AntiAliasing === undefined ? true : AntiAliasing !== cdrNoAntiAliasing,
+    overprint: !!AlwaysOverprintBlack }).id);
+}
+for (const cls of [Shape, ShapeRange, SelectionShape]) {
+  cls.prototype.ConvertToBitmapEx = function (Mode, Dithered, Transparent, Resolution, AntiAliasing, UseColorProfile, AlwaysOverprintBlack, OverprintBlackLimit) {
+    return __toBitmap(this._ids(), Mode, Dithered, Transparent, Resolution, AntiAliasing, UseColorProfile, AlwaysOverprintBlack);
+  };
+  cls.prototype.ConvertToBitmap = function (BitDepth, Grayscale, Dithered, TransparentBG, Resolution, AntiAliasing) {
+    return __toBitmap(this._ids(), Grayscale ? cdrGrayscaleImage : cdrRGBColorImage, Dithered, TransparentBG, Resolution, AntiAliasing);
+  };
+}
+const __effectType = { blend: cdrBlend, extrude: cdrExtrude, envelope: cdrEnvelope, distort: cdrDistortion,
+  contour: cdrContour, lens: cdrLens, perspective: cdrPerspective, bevel: cdrBevel,
+  shadow: cdrDropShadow, textonpath: cdrTextOnPath };
+class __Effect {
+  constructor(id, e) { this.id = id; this.e = e; }
+  get Type() { return __effectType[this.e.kind] || cdrCustomEffect; }
+  get DropShadow() {
+    if (this.e.kind !== 'shadow') return null;
+    const e = this.e;
+    return {
+      get MergeMode() { return cdrMergeNormal; },
+      set MergeMode(v) { if (v !== cdrMergeNormal) __no('DropShadow.MergeMode', 'shadows are drawn in normal mode'); },
+      get Color() { return new Color(e.color); },
+      get Opacity() { return Math.round(e.opacity * 100); },
+      get Feather() { return e.blur; },
+      get OffsetX() { return __un(e.dx); },
+      get OffsetY() { return __un(e.dy); },
+    };
+  }
+  Separate() { return new ShapeRange(__call('vg_separate', { id: this.id }).ids); }
+  Clear() {
+    if (this.e.kind === 'shadow') { __call('vg_clear_shadow', { id: this.id }); return; }
+    if (this.e.index !== undefined) __call('remove_effects', { id: this.id, index: this.e.index });
+  }
+}
+__def(Shape, 'Effects', function () {
+  const id = this.id;
+  const list = __call('vg_effects', { id: id }).effects.map(e => new __Effect(id, e));
+  return { Count: list.length, Item: (i) => list[i - 1], [Symbol.iterator]: () => __iter(list) };
+});
+Shape.prototype.Separate = function () { return new ShapeRange(__call('vg_separate', { id: this.id }).ids); };
+
+// Fill: fountain colours, textures.
+class __FountainColor {
+  constructor(owner, i) { this.o = owner; this.i = i; }
+  get Position() { return Math.round(this.o._f.stops[this.i].pos * 100); }
+  get Color() {
+    const o = this.o, i = this.i;
+    return new Color(o._f.stops[i].color, (nv) => { const f = o._f; f.stops[i].color = nv; o._put(f); });
+  }
+}
+class __Fountain {
+  constructor(fill) { this.fill = fill; }
+  get _f() { const f = this.fill._f; if (f.fill !== 'fountain') __no('Fill.Fountain', 'the fill is not a fountain'); return f; }
+  _put(f) { this.fill._put(f); }
+  get Type() { return { linear: cdrLinearFountainFill, radial: cdrRadialFountainFill, conical: cdrConicalFountainFill, square: cdrSquareFountainFill }[this._f.kind] || cdrLinearFountainFill; }
+  get Angle() { return this._f.angle; }
+  set Angle(v) { const f = this._f; f.angle = Number(v); this._put(f); }
+  get StartColor() { return this.Colors.Item(1).Color; }
+  get EndColor() { const c = this.Colors; return c.Item(c.Count).Color; }
+  get Steps() { return 0; }
+  set Steps(v) { __no('Fill.Fountain.Steps', 'fountains are drawn smooth'); }
+  get Colors() {
+    const n = this._f.stops.length, me = this;
+    const list = () => Array.from({ length: n }, (_, i) => new __FountainColor(me, i));
+    return { Count: n, Item: (i) => new __FountainColor(me, i - 1), [Symbol.iterator]: () => __iter(list()) };
+  }
+}
+__def(Fill, 'Fountain', function () { return new __Fountain(this); });
+__def(Fill, 'Texture', function () {
+  return { get Resolution() { return __no('Fill.Texture.Resolution', 'textures are drawn at the output resolution'); } };
+});
+
+// Outline: scaling with the object, miter limit.
+__def(Outline, 'ScaleWithShape', function () { const s = this._s; return !!(s && s.scale_with_object); },
+  function (v) { const s = this._s || __defaultStroke(); s.scale_with_object = !!v; this._put(s); });
+// The renderer's miter ratio of 4, as the angle below which corners are
+// beveled.
+__def(Outline, 'MiterLimit', function () { return 28.955; },
+  function (v) { if (Math.abs(v - 28.955) > 0.01) __no('Outline.MiterLimit', 'the miter limit is fixed'); });
+
+// Transparency: uniform from the object's opacity, the others from a
+// transparency effect's mask.
+__def(Transparency, 'Type', function () {
+  const ids = this.o._ids();
+  if (!ids.length) return cdrNoTransparency;
+  const mask = __call('vg_info', { id: ids[0] }).transparency_mask;
+  if (mask) {
+    return { fountain: cdrFountainTransparency, pattern: cdrPatternTransparency,
+      texture: cdrTextureTransparency }[mask] || cdrUniformTransparency;
+  }
+  return this.Uniform > 0 ? cdrUniformTransparency : cdrNoTransparency;
+});
+__def(Transparency, 'Fountain', function () {
+  return { get Steps() { return 0; }, set Steps(v) { __no('Transparency.Fountain.Steps', 'fountains are drawn smooth'); } };
+});
+
+// Color: tints of spot colours.
+__def(Color, 'Tint', function () { return this.v.model === 'spot' ? Math.round(this.v.tint * 100) : 100; },
+  function (v) { if (this.v.model === 'spot') { const n = Object.assign({}, this.v, { tint: v / 100 }); this._set(n); } else __no('Color.Tint', 'only spot colours have a tint'); });
+
+// Bitmaps.
+const __modeType = { bw: cdrBlackAndWhiteImage, gray: cdrGrayscaleImage, paletted: cdrPalettedImage,
+  rgb: cdrRGBColorImage, cmyk: cdrCMYKColorImage };
+class __Bitmap {
+  constructor(id) { this.id = id; }
+  get _b() { return __call('vg_bitmap', { id: this.id }); }
+  get SizeWidth() { return this._b.w; }
+  get SizeHeight() { return this._b.h; }
+  get ResolutionX() { const b = this._b; return Math.round(b.w / (b.width_mm / 25.4)); }
+  get ResolutionY() { const b = this._b; return Math.round(b.h / (b.height_mm / 25.4)); }
+  get Mode() { return __modeType[this._b.mode]; }
+  get Transparent() { return this._b.transparent; }
+  get ExternallyLinked() { return false; }
+  get CropEnvelopeModified() { return false; }
+  get Watermarked() { return false; }
+  ResolveLink() { }
+  Crop() { }
+  ConvertTo(Mode) { __call('vg_bitmap_mode', { id: this.id, mode: __imageMode[Mode] || 'rgb' }); }
+  // Resample(Width, Height, AntiAlias, ResolutionX, ResolutionY): pixel
+  // sizes, or the resolutions at the bitmap's present size.
+  Resample(Width, Height, AntiAlias, ResolutionX, ResolutionY) {
+    const b = this._b;
+    let w = Width || 0, h = Height || 0;
+    if (!w && ResolutionX) w = b.width_mm / 25.4 * ResolutionX;
+    if (!h && (ResolutionY || ResolutionX)) h = b.height_mm / 25.4 * (ResolutionY || ResolutionX);
+    if (!w) w = b.w;
+    if (!h) h = b.h;
+    __call('vg_bitmap_resample', { id: this.id, w: w, h: h, anti_alias: AntiAlias === undefined ? true : !!AntiAlias });
+  }
+  ApplyBitmapEffect() { return __no('Bitmap.ApplyBitmapEffect', 'use the Effects menu'); }
+}
+__def(Shape, 'Bitmap', function () { return this._info().kind === 'bitmap' ? new __Bitmap(this.id) : null; });
+
+// Curves: the nodes chosen with the Shape tool, areas.
+class __NodeRange {
+  constructor(id, indices) { this.id = id; this.indices = indices; }
+  get Count() { return this.indices.length; }
+  Item(Index) { const i = this.indices[Index - 1]; return i === undefined ? null : new __Node(this.id, i); }
+  get FirstNode() { if (!this.indices.length) throw new Error('No node is selected'); return this.Item(1); }
+  get LastNode() { if (!this.indices.length) throw new Error('No node is selected'); return this.Item(this.Count); }
+  [Symbol.iterator]() { return __iter(this.indices.map(i => new __Node(this.id, i))); }
+}
+__ShapeCurve.prototype.Selection = function () { return new __NodeRange(this.id, __call('vg_node_selection', { id: this.id }).indices); };
+__def(__ShapeCurve, 'Area', function () { return __call('vg_area', { id: this.id }).total / (__f() * __f()); });
+__def(__SubPath, 'Area', function () { return __call('vg_area', { id: this.id }).subpaths[this.i] / (__f() * __f()); });
+__def(__Nodes, 'FirstNode', function () { return this.First; });
+__def(__Nodes, 'LastNode', function () { return this.Last; });
+
+// Text: overflow, words, character ranges, line spacing.
+__def(__Text, 'Overflow', function () { return __call('vg_overflow', { id: this.id }).overflow; });
+class __TextRange {
+  constructor(id, start, end) { this.id = id; this.start = start; this.end = end; }
+  // Rebuild the spans so [start, end) is its own span(s), then let `f`
+  // change those.
+  _edit(f) {
+    const k = __call('vg_kind', { id: this.id });
+    const out = [];
+    let pos = 0;
+    for (const sp of k.spans) {
+      const chars = Array.from(sp.text);
+      const a = Math.max(0, Math.min(chars.length, this.start - pos));
+      const b = Math.max(0, Math.min(chars.length, this.end - pos));
+      const parts = [[0, a, false], [a, b, true], [b, chars.length, false]];
+      for (const [x, y, inside] of parts) {
+        if (y <= x) continue;
+        const piece = Object.assign({}, sp, { text: chars.slice(x, y).join('') });
+        if (inside) f(piece);
+        out.push(piece);
+      }
+      pos += chars.length;
+    }
+    k.spans = out;
+    __call('vg_set_kind', { id: this.id, kind: k });
+  }
+  _first() {
+    const k = __call('vg_kind', { id: this.id });
+    let pos = 0;
+    for (const sp of k.spans) { const n = Array.from(sp.text).length; if (this.start < pos + n) return sp; pos += n; }
+    return k.spans[k.spans.length - 1];
+  }
+  get Text() { return Array.from(new __Story(this.id).Text).slice(this.start, this.end).join(''); }
+  get Start() { return this.start; }
+  get End() { return this.end; }
+  get Size() { return this._first().size_pt; }
+  set Size(v) { this._edit(s => { s.size_pt = Number(v); }); }
+  get Font() { return this._first().font_family; }
+  set Font(v) { this._edit(s => { s.font_family = String(v); }); }
+  get Bold() { return !!this._first().bold; }
+  set Bold(v) { this._edit(s => { s.bold = !!v; }); }
+  get Italic() { return !!this._first().italic; }
+  set Italic(v) { this._edit(s => { s.italic = !!v; }); }
+  get Fill() {
+    const me = this;
+    return { get UniformColor() { const f = me._first().fill; return new Color(f && f.fill === 'solid' ? __plain(f) : { model: 'rgb', r: 0, g: 0, b: 0 },
+      (nv) => me._edit(s => { s.fill = Object.assign({ fill: 'solid' }, nv); })); } };
+  }
+}
+__Story.prototype.Range = function (Start, End) { return new __TextRange(this.id, Start, End); };
+__def(__Story, 'Words', function () {
+  const t = Array.from(this.Text), list = [];
+  let i = 0;
+  while (i < t.length) {
+    while (i < t.length && /\s/.test(t[i])) i++;
+    const s = i;
+    while (i < t.length && !/\s/.test(t[i])) i++;
+    if (i > s) list.push(new __TextRange(this.id, s, i));
+  }
+  return { Count: list.length, Item: (n) => list[n - 1], [Symbol.iterator]: () => __iter(list) };
+});
+__def(__Story, 'Characters', function () {
+  const n = Array.from(this.Text).length, id = this.id;
+  const list = () => Array.from({ length: n }, (_, i) => new __TextRange(id, i, i + 1));
+  return { Count: n, Item: (i) => new __TextRange(id, i - 1, i), [Symbol.iterator]: () => __iter(list()) };
+});
+__def(__Story, 'LineSpacing', function () { return this.k.para.leading_pct; },
+  function (v) { const k = this.k; k.para.leading_pct = Number(v); this.put(k); });
+__def(__Story, 'LanguageID', function () { return __no('Story.LanguageID', 'text has no language of its own'); });
+Document.prototype.Close = function () { return __no('Document.Close', 'a macro works on the drawing that stays open'); };
+
+// Moving between layers, stacking order, clip frames, picking.
+Shape.prototype.MoveToLayer = function (Layer) { __call('vg_move_to_layer', { id: this.id, layer: Layer.id }); };
+ShapeRange.prototype.MoveToLayer = function (Layer) { for (const id of this._ids()) __call('vg_move_to_layer', { id: id, layer: Layer.id }); };
+Shape.prototype.OrderIsInFrontOf = function (Shape) {
+  const a = __call('vg_zorder', { id: this.id }).rank, b = __call('vg_zorder', { id: __ids(Shape)[0] }).rank;
+  return a > b;
+};
+Shape.prototype.AddToPowerClip = function (Shape) { __call('vg_place_inside', { ids: [this.id], frame: __ids(Shape)[0] }); };
+ShapeRange.prototype.AddToPowerClip = function (Shape) { __call('vg_place_inside', { ids: this._ids(), frame: __ids(Shape)[0] }); };
+for (const cls of [Shapes, ShapeRange]) {
+  cls.prototype.FindAnyOfType = function (...Types) {
+    const list = cls === Shapes ? this._list : this._ids();
+    return new ShapeRange(list.filter(id => Types.includes(__typeOf(__call('vg_info', { id: id })))));
+  };
+}
+Page.prototype.SelectShapesAtPoint = function (x, y, SelectUnfilled) {
+  const px = __mm(x), py = __mm(y);
+  const hit = __call('page_shapes', { page: this.id }).ids.filter(id => {
+    const b = __call('vg_bounds', { ids: [id] });
+    return px >= b.x0 && px <= b.x1 && py >= b.y0 && py <= b.y1;
+  });
+  __call('select', { ids: hit, add: false });
+  return new ShapeRange(hit);
+};
+Layer.prototype.ImportEx = function (FileName) {
+  const layer = this;
+  return { Finish() { return layer.Import(FileName); }, Reset() { } };
+};
+__def(Document, 'DrawingOriginX', function () { return 0; }, function (v) { if (v) __no('Document.DrawingOriginX', 'the origin is the page corner'); });
+__def(Document, 'DrawingOriginY', function () { return 0; }, function (v) { if (v) __no('Document.DrawingOriginY', 'the origin is the page corner'); });
+__def(Document, 'DesktopLayer', function () { return __no('Document.DesktopLayer', 'there is no desktop layer'); });
+__View.prototype.ToFitShapeRange = function () { };
+__View.prototype.GetViewArea = function () { return __no('ActiveView.GetViewArea'); };
+Application.Quit = function () { return __no('Application.Quit'); };
+Color.prototype.UserAssignEx = function () { return __no('Color.UserAssignEx', 'macros cannot open the colour picker'); };
+Color.prototype.UserAssign = Color.prototype.UserAssignEx;
+Layer.prototype.PasteSpecial = function () { return __no('Layer.PasteSpecial', 'the clipboard is not open to macros'); };
+__def(Fill, 'Pattern', function () { return { get Type() { return __no('Fill.Pattern'); } }; });
+__def(Shape, 'StartShape', function () { return __no('Shape.StartShape', 'connectors are not objects of their own'); });
+__Bitmap.prototype.GetPixelColor = function () { return __no('Bitmap.GetPixelColor'); };

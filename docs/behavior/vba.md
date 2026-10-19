@@ -49,6 +49,10 @@ selection as one object, type `cdrSelectionShape`, with `Shapes`),
 `CreateRGBColor`, `CreateCMYKColor`, `CreateGrayColor`,
 `CreateHSBColor`, `CreateShapeRange`, `CreateCurve`. `CreateDocument`
 and `OpenDocument` raise an error: a macro works on the active drawing.
+`Status` (`BeginProgress`, `Progress`, `EndProgress`, `SetMainText`:
+the text and percentage go to the status line), `ColorManager`
+(`DefaultColorContext` profile names, `ColorEngine`), `CorelScript`
+(`RedrawScreen`, no effect), `UILanguage`, `CreateStructCreateOptions`.
 
 ### Document
 
@@ -237,13 +241,77 @@ need to differ from each other:
 - `cdrColorMixed`;
 - the shape types from `cdrHTMLFormObjectShape` on.
 
+### Coverage from published macros
+
+Four published macro projects (60 modules) were read only to count
+which members they call; none of their code is in TraceDraw. The members
+called three times or more, with what they do here (W works; N works with
+no visible effect, because the feature it controls is a window mode or
+does not exist; E raises an error that names the member; F belongs to
+macro forms, not to this object model; R belongs to the VBA runtime or to
+other libraries):
+
+| Member | Uses | Here |
+|---|---|---|
+| Count, Item, Add, AddRange, RemoveAll, RemoveRange, Range, ReverseRange, All, Shapes, Layers, Pages | 195, 13, 99, 5, 66, 7, 5, 64, 53, 60, 19, 15 | W |
+| Type, Name, Layer, Page, Delete, Duplicate, Activate | 173, 96, 43, 39, 7, 3, 16 | W |
+| Fill, UniformColor, Fountain, Colors, ApplyUniformFill, CopyAssign | 105, 56, 22, 19, 3, 13 | W (fountain `Steps` set: E) |
+| Outline, Width, Color, ScaleWithShape | 103, 31, 109, 10 | W (`MiterLimit` set: E) |
+| CMYKCyan, CMYKMagenta, CMYKYellow, CMYKBlack, ConvertToRGB, ConvertToCMYK, ConvertToGray, Tint | 25 each, 10, 7, 3, 4 | W (`Tint` set on a non-spot colour: E) |
+| Text, Story, Words, Range, Size, Bold, Italic, Font, LineSpacing, Overflow, IsArtisticText | 100, 12, 3, 5, 9, 9, 9, 3, 8, 4, 3 | W (`LanguageID`: E) |
+| Bitmap, ResolutionX, ResolutionY, Mode, ConvertTo, Resample, ExternallyLinked, Resolution | 51, 12, 12, 7, 14, 5, 3, 4 | W |
+| ConvertToBitmapEx, ConvertToCurves | 6, 4 | W |
+| PowerClip, PowerClipParent | 44, 8 | W |
+| EnterEditMode, LeaveEditMode | 3, 3 | N |
+| Effects, DropShadow, Separate, Clear | 14, 6, 7, 14 | W (a separated shadow loses its blur) |
+| MergeMode | 6 | W for normal; others E |
+| Transparency | 14 | W (uniform; other kinds read their type) |
+| Curve, Nodes, SubPaths, FirstNode, LastNode, Selection, Area, Length | 11, 4, 6, 22, 4, 9, 7, 3 | W |
+| CanHaveFill, CanHaveOutline | 19, 21 | W |
+| Visible, Printable, Editable, IsSpecialLayer, Master, MasterPage, UnlockAllShapes | 14, 14, 14, 12, 7, 4, 6 | W |
+| IsGuidesLayer, IsGridLayer | 6, 6 | W (always false: guides and grid are not layers) |
+| CreateGuide, Guide | 7, 3 | W |
+| PositionX, PositionY, SizeWidth, SizeHeight, Height, SetSize, GetSize, SetPosition, GetPosition, Rotate | 16, 16, 9, 9, 5, 7, 6, 5, 3, 4 | W |
+| Unit, ReferencePoint, Units | 18, 13, 3 | W |
+| ClearSelection, CreateSelection, AddToSelection, FindShapes, OrderBackOf, CreateRectangle2, ActiveLayer | 30, 8, 7, 6, 3, 3, 3 | W |
+| OverprintFill, OverprintOutline | 6, 5 | W |
+| Status, BeginProgress, Progress, EndProgress | 22, 9, 14, 9 | W (shown in the status line when the run ends) |
+| BeginCommandGroup, EndCommandGroup, PreserveSelection, SaveSettings, RestoreSettings | 4, 4, 6, 3, 3 | W |
+| ColorContext, DefaultColorContext, ColorEngine | 6, 3, 4 | W (profile names in use) |
+| ActiveWindow, ActiveView, OriginX, OriginY | 4, 13, 3, 3 | W (the window's centre); view changes N |
+| CorelScript, RedrawScreen | 5, 4 | N |
+| Finish | 3 | W (exports and imports) |
+| Paste, FrameWork, Close | 3, 3, 3 | E |
+| PageWidth, PageHeight | 3, 3 | E (the options of a new document: `CreateDocumentEx` is E) |
+| AddItem, SpecialEffect, Enabled, Caption, Show, SelText, ListIndex, List, ListCount, ControlTipText, SelLength, Value | | F |
+| Number, Description, Kill, Date, Case, ToString | | R |
+
+The constants they use (128 names) all exist, except five names the
+projects define themselves and six enumeration names used only to
+declare variables (`cdrShapeType`, `cdrColorType`, `cdrImageType`,
+`cdrUnit`, `cdrTextType`, `cdrAntiAliasingType`).
+
+The remaining rarer members follow the same rules:
+
+- Works: `MoveToLayer`, `OrderIsInFrontOf`, `AddToPowerClip`,
+  `FindAnyOfType`, `SelectShapesAtPoint`, `ImportEx`, `DrawingOriginX`
+  and `DrawingOriginY` (0: the origin is the page corner).
+- Raise a named error: `GetUserClick`, `GetUserArea`, `DesktopLayer`,
+  `UserAssignEx`, `PasteSpecial`, `StartShape`, `Fill.Pattern`,
+  `GetPixelColor`, `Quit`, `VBE`.
+
 ### Not supported
 
 - More than one drawing: `CreateDocument`, `OpenDocument`, and
   `Documents` beyond the active drawing.
-- `Undo` and `Redo` inside a run, and `Paste`.
+- `Undo` and `Redo` inside a run, `Paste` and `PasteSpecial`.
+- Window and interactive members: `GetUserClick`, `GetUserArea`,
+  `FrameWork`, `VBE`, `Quit`, and the colour picker (`UserAssignEx`).
 - Arrowheads: `StartArrow` and `EndArrow` read as nothing and setting
   them is ignored.
+- The text's own language (`Story.LanguageID`), texture resolutions,
+  fountain steps, a miter limit other than the renderer's, shadow merge
+  modes other than normal.
 - Fountain fills other than linear.
 - Hatch and PostScript fills.
 - Editing a curve built by a macro after it became an object
@@ -282,3 +350,17 @@ need to differ from each other:
   - lay out a 3 x 3 grid;
   - replace a colour across the page, inside groups too;
   - export every page as PNG.
+- Members published macros use (one test per area):
+  - progress in the status line;
+  - bitmap resolution, mode, resampling and conversion;
+  - converting objects to bitmaps;
+  - clip frame contents and parents;
+  - effects with drop shadows, their merge mode and separating them;
+  - guides;
+  - fountain colours and transparency;
+  - text words, ranges, overflow and line spacing;
+  - curve areas and the Shape tool's node selection;
+  - document settings, master page, layers, unlocking, view origin and
+    colour profiles;
+  - the named errors;
+  - the constants they use.

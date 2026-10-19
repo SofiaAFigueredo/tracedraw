@@ -18,6 +18,41 @@ use tracedraw_core::{
     Color, Command, Fill, LayerId, PageId, ShapeId, Stroke,
 };
 
+/// What the app shows that macros read but a drawing does not hold.
+#[derive(Debug, Clone, Default)]
+pub(super) struct AppView {
+    /// The app's units, by name ("Millimeters").
+    pub units: String,
+    /// The centre of the drawing window, page millimetres.
+    pub center: (f64, f64),
+    /// The nodes selected with the Shape tool (object, node index).
+    pub nodes: Vec<(u64, usize)>,
+    /// The colour profiles in use: RGB, CMYK, grayscale.
+    pub profiles: [String; 3],
+}
+
+impl AppView {
+    pub fn of(app: &crate::app::App) -> AppView {
+        let c = app.view.visible_page_rect(app.canvas_rect).center();
+        let p = &app.settings.color;
+        let doc_cmyk = app.doc().cmyk_profile.as_ref().map(|d| d.name.clone());
+        AppView {
+            units: format!("{:?}", app.units),
+            center: (c.x, c.y),
+            nodes: app
+                .node_selection
+                .iter()
+                .map(|(s, i)| (s.raw(), *i))
+                .collect(),
+            profiles: [
+                p.rgb_profile.clone(),
+                doc_cmyk.unwrap_or_else(|| p.cmyk_profile.clone()),
+                p.gray_profile.clone(),
+            ],
+        }
+    }
+}
+
 fn ids(a: &Value, key: &str) -> Vec<ShapeId> {
     a.get(key)
         .and_then(|v| v.as_array())
@@ -185,6 +220,15 @@ impl HostInner {
             "rotation": b.atan2(a).to_degrees(),
             "effects": effects,
             "uid": s.uid,
+            "transparency_mask": s.effects.iter().find_map(|e| match e {
+                tracedraw_core::live::Effect::Transparency { mask, .. } => Some(match mask {
+                    Fill::Fountain(_) => "fountain",
+                    Fill::Pattern(_) => "pattern",
+                    Fill::Texture(_) => "texture",
+                    _ => "uniform",
+                }),
+                _ => None,
+            }),
         }))
     }
 
@@ -207,6 +251,10 @@ impl HostInner {
                 "selection": self.selection.iter().map(|s| s.raw()).collect::<Vec<_>>(),
                 "changed": !self.commands.is_empty(),
                 "dpi": self.doc.metadata.resolution_dpi,
+                "units": self.view.units,
+                "view": [self.view.center.0, self.view.center.1],
+                "profiles": self.view.profiles,
+                "master": self.doc.master.iter().map(|l| l.id.raw()).collect::<Vec<_>>(),
             }),
             "vg_info" => self.info(ShapeId(id_arg(a, "id")?))?,
             "vg_default_stroke" => {
@@ -554,6 +602,13 @@ impl HostInner {
                 }
                 self.add(layer, s)?
             }
+            "vg_page" if id_arg(a, "page")? == 0 => {
+                // The master page: the layers drawn on every page.
+                let size = self.doc.page(self.page).map(|p| p.size).unwrap_or_default();
+                let master: Vec<u64> = self.doc.master.iter().map(|l| l.id.raw()).collect();
+                json!({"name": "Master Page", "w": size.width, "h": size.height, "index": 0,
+                       "layers": master, "master": master})
+            }
             "vg_page" => {
                 let pid = PageId(id_arg(a, "page")?);
                 let (i, p) = self
@@ -787,6 +842,459 @@ impl HostInner {
                 };
                 crate::files::write(p, data).map_err(|e| e.to_string())?;
                 json!({})
+            }
+            "vg_move_to_layer" => {
+                let shape = ShapeId(id_arg(a, "id")?);
+                let layer = LayerId(id_arg(a, "layer")?);
+                let index = self
+                    .doc
+                    .layer(layer)
+                    .map(|l| l.shapes.len())
+                    .map_err(|e| e.to_string())?;
+                self.run(Command::Reorder {
+                    shape,
+                    layer,
+                    index,
+                })?;
+                json!({})
+            }
+            "vg_zorder" => {
+                let id = ShapeId(id_arg(a, "id")?);
+                let top = self.doc.ancestors(id).first().copied().unwrap_or(id);
+                let (layer, i) = self.doc.locate(top).map_err(|e| e.to_string())?;
+                let rank = self
+                    .doc
+                    .all_layers()
+                    .position(|l| l.id == layer)
+                    .unwrap_or(0);
+                json!({"rank": rank as f64 * 1e6 + i as f64})
+            }
+            "vg_place_inside" => {
+                let contents = ids(a, "ids");
+                let frame = ShapeId(id_arg(a, "frame")?);
+                self.run(Command::PlaceInside { contents, frame })?;
+                json!({})
+            }
+            "vg_clear_shadow" => {
+                self.run(Command::SetShadow {
+                    shapes: vec![ShapeId(id_arg(a, "id")?)],
+                    shadow: None,
+                })?;
+                json!({})
+            }
+            "vg_status" => {
+                self.status = a.get("text").and_then(|t| t.as_str()).map(str::to_string);
+                json!({})
+            }
+            "vg_node_selection" => {
+                let id = id_arg(a, "id")?;
+                let list: Vec<usize> = self
+                    .view
+                    .nodes
+                    .iter()
+                    .filter(|(s, _)| *s == id)
+                    .map(|(_, i)| *i)
+                    .collect();
+                json!({"indices": list})
+            }
+            "vg_guides" => {
+                use tracedraw_core::document::GuideLine;
+                let page = PageId(id_arg(a, "page")?);
+                let p = self.doc.page(page).map_err(|e| e.to_string())?;
+                let list: Vec<Value> = p
+                    .guides
+                    .iter()
+                    .map(|g| match g.line {
+                        GuideLine::Horizontal { y } => json!({"x": 0.0, "y": y, "angle": 0.0}),
+                        GuideLine::Vertical { x } => json!({"x": x, "y": 0.0, "angle": 90.0}),
+                        GuideLine::Angled { x, y, angle } => {
+                            json!({"x": x, "y": y, "angle": angle})
+                        }
+                    })
+                    .collect();
+                json!({"guides": list})
+            }
+            "vg_add_guide" | "vg_set_guide" => {
+                use tracedraw_core::document::GuideLine;
+                let page = PageId(id_arg(a, "page")?);
+                let (x, y) = (num(a, "x", 0.0), num(a, "y", 0.0));
+                let angle = num(a, "angle", 0.0).rem_euclid(180.0);
+                let line = if angle.abs() < 1e-9 {
+                    GuideLine::Horizontal { y }
+                } else if (angle - 90.0).abs() < 1e-9 {
+                    GuideLine::Vertical { x }
+                } else {
+                    GuideLine::Angled { x, y, angle }
+                };
+                if method == "vg_add_guide" {
+                    self.run(Command::AddGuide {
+                        page,
+                        guide: line.into(),
+                    })?;
+                    let n = self.doc.page(page).map(|p| p.guides.len()).unwrap_or(1);
+                    json!({"index": n - 1})
+                } else {
+                    let index = id_arg(a, "index")? as usize;
+                    let mut guide = self
+                        .doc
+                        .page(page)
+                        .ok()
+                        .and_then(|p| p.guides.get(index).cloned())
+                        .ok_or("no such guideline")?;
+                    guide.line = line;
+                    self.run(Command::MoveGuide { page, index, guide })?;
+                    json!({})
+                }
+            }
+            "vg_unlock_all" => {
+                let page = id_arg(a, "page")?;
+                let layers: Vec<&tracedraw_core::document::Layer> = if page == 0 {
+                    self.doc.master.iter().collect()
+                } else {
+                    self.doc
+                        .page(PageId(page))
+                        .map(|p| p.layers.iter().collect())
+                        .unwrap_or_default()
+                };
+                let shapes: Vec<ShapeId> = layers
+                    .iter()
+                    .flat_map(|l| l.shapes.iter().filter(|s| s.locked).map(|s| s.id))
+                    .collect();
+                if !shapes.is_empty() {
+                    self.run(Command::SetLocked {
+                        shapes,
+                        locked: false,
+                    })?;
+                }
+                json!({})
+            }
+            "vg_area" => {
+                use kurbo::Shape as _;
+                let s = self
+                    .doc
+                    .shape_on_page(ShapeId(id_arg(a, "id")?))
+                    .ok_or("no shape")?;
+                let path = s.page_path();
+                // Each closed subpath's area; holes (opposite winding) count
+                // against the total, as the even-odd fill draws them.
+                let mut parts: Vec<tracedraw_core::BezPath> = Vec::new();
+                for el in path.elements() {
+                    if matches!(el, tracedraw_core::geometry::PathEl::MoveTo(_)) || parts.is_empty()
+                    {
+                        parts.push(tracedraw_core::BezPath::new());
+                    }
+                    if let Some(p) = parts.last_mut() {
+                        p.push(*el);
+                    }
+                }
+                let areas: Vec<f64> = parts.iter().map(|p| p.area().abs()).collect();
+                let total = path.area().abs();
+                json!({"total": total, "subpaths": areas})
+            }
+            "vg_bitmap" => {
+                let s = self.shape(id_arg(a, "id")?)?;
+                let ShapeKind::Bitmap {
+                    width_px,
+                    height_px,
+                    png,
+                    ..
+                } = &s.kind
+                else {
+                    return Err("not a bitmap".into());
+                };
+                let on_page = self.doc.shape_on_page(s.id).unwrap_or_else(|| s.clone());
+                let b = on_page.bounds();
+                // The PNG header's colour type: 0 gray, 2 RGB, 3 palette,
+                // 4 gray with alpha, 6 RGB with alpha.
+                let ctype = png.get(25).copied().unwrap_or(6);
+                let img = crate::bitmap_fx::decode(png);
+                let transparent = img
+                    .as_ref()
+                    .map(|i| i.pixels().any(|p| p.0[3] < 255))
+                    .unwrap_or(false);
+                let gray_only = img
+                    .as_ref()
+                    .map(|i| i.pixels().all(|p| p.0[0] == p.0[1] && p.0[1] == p.0[2]))
+                    .unwrap_or(false);
+                let bw = gray_only
+                    && img
+                        .as_ref()
+                        .map(|i| i.pixels().all(|p| p.0[0] == 0 || p.0[0] == 255))
+                        .unwrap_or(false);
+                let mode = match ctype {
+                    3 => "paletted",
+                    0 | 4 if bw => "bw",
+                    0 | 4 => "gray",
+                    _ if bw => "bw",
+                    _ if gray_only => "gray",
+                    _ => "rgb",
+                };
+                json!({"w": width_px, "h": height_px, "width_mm": b.width(), "height_mm": b.height(),
+                       "mode": mode, "transparent": transparent})
+            }
+            "vg_bitmap_resample" | "vg_bitmap_mode" => {
+                let id = ShapeId(id_arg(a, "id")?);
+                let s = self.shape(id.raw())?;
+                let ShapeKind::Bitmap { rect, png, .. } = &s.kind else {
+                    return Err("not a bitmap".into());
+                };
+                let img = crate::bitmap_fx::decode(png).ok_or("the bitmap cannot be read")?;
+                let out = if method == "vg_bitmap_resample" {
+                    let w = num(a, "w", img.width() as f64).round().max(1.0) as u32;
+                    let h = num(a, "h", img.height() as f64).round().max(1.0) as u32;
+                    let how = if a
+                        .get("anti_alias")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true)
+                    {
+                        crate::resample::Method::Smooth
+                    } else {
+                        crate::resample::Method::Pixels
+                    };
+                    crate::resample::resample(&img, w, h, how)
+                } else {
+                    use crate::bitmap_modes::{ConvertMode, ConvertOptions};
+                    let mode = match a.get("mode").and_then(|m| m.as_str()).unwrap_or("rgb") {
+                        "bw" => ConvertMode::BlackWhite,
+                        "gray" => ConvertMode::Grayscale,
+                        "paletted" => ConvertMode::Paletted,
+                        "cmyk" => ConvertMode::Cmyk,
+                        _ => ConvertMode::Rgb,
+                    };
+                    crate::bitmap_modes::convert_pixels(
+                        &img,
+                        &ConvertOptions {
+                            mode,
+                            dithered: a.get("dithered").and_then(|v| v.as_bool()).unwrap_or(false),
+                            ..Default::default()
+                        },
+                    )
+                };
+                let encoded =
+                    crate::bitmap_fx::encode(&out).ok_or("the bitmap cannot be written")?;
+                self.run(Command::SetShapeKind {
+                    shape: id,
+                    kind: ShapeKind::Bitmap {
+                        rect: *rect,
+                        width_px: out.width(),
+                        height_px: out.height(),
+                        png: encoded,
+                        fx: None,
+                    },
+                })?;
+                json!({})
+            }
+            "vg_to_bitmap" => {
+                let list = ids(a, "ids");
+                let shapes: Vec<Shape> = list
+                    .iter()
+                    .filter_map(|id| self.doc.shape_on_page(*id))
+                    .collect();
+                let Some(bounds) = shapes.iter().map(|s| s.bounds()).reduce(|x, y| x.union(y))
+                else {
+                    return Err("nothing to convert".into());
+                };
+                let dpi = num(a, "dpi", 300.0).clamp(36.0, 2400.0);
+                let transparent = a
+                    .get("transparent")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let anti_alias = a
+                    .get("anti_alias")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let mut tmp = tracedraw_core::Document::new(
+                    "tmp",
+                    tracedraw_core::Size::new(bounds.width().max(0.1), bounds.height().max(0.1)),
+                );
+                tmp.symbols = self.doc.symbols.clone();
+                let l = tmp.pages[0].layers[0].id;
+                for s in &shapes {
+                    let mut c = s.clone();
+                    c.transform = Affine::translate((-bounds.x0, -bounds.y0)) * c.transform;
+                    if let Ok(layer) = tmp.layer_mut(l) {
+                        layer.shapes.push(c);
+                    }
+                }
+                let page = tmp.pages[0].id;
+                let zoom = dpi / 25.4;
+                let w = (bounds.width() * zoom).ceil().max(1.0) as u32;
+                let h = (bounds.height() * zoom).ceil().max(1.0) as u32;
+                let pm = tracedraw_render::render_page(
+                    &tmp,
+                    page,
+                    &tracedraw_render::RenderOptions {
+                        width: w,
+                        height: h,
+                        view: tracedraw_render::ViewTransform {
+                            zoom,
+                            origin_x: 0.0,
+                            origin_y: h as f64,
+                        },
+                        anti_alias,
+                        ..tracedraw_render::RenderOptions::default()
+                    },
+                )
+                .ok_or("render failed")?;
+                let mut img =
+                    image::RgbaImage::from_raw(w, h, pm.data().to_vec()).ok_or("render failed")?;
+                // Premultiplied pixels back to plain ones, on white unless
+                // the bitmap keeps its transparency.
+                for p in img.pixels_mut() {
+                    let al = p.0[3] as f32 / 255.0;
+                    for k in 0..3 {
+                        let c = if al > 0.0 { p.0[k] as f32 / al } else { 0.0 };
+                        p.0[k] = if transparent {
+                            c.round().min(255.0) as u8
+                        } else {
+                            (c * al + 255.0 * (1.0 - al)).round().min(255.0) as u8
+                        };
+                    }
+                    if !transparent {
+                        p.0[3] = 255;
+                    }
+                }
+                {
+                    use crate::bitmap_modes::{ConvertMode, ConvertOptions};
+                    let mode = match a.get("mode").and_then(|m| m.as_str()).unwrap_or("rgb") {
+                        "bw" => Some(ConvertMode::BlackWhite),
+                        "gray" => Some(ConvertMode::Grayscale),
+                        "paletted" => Some(ConvertMode::Paletted),
+                        _ => None,
+                    };
+                    if let Some(mode) = mode {
+                        img = crate::bitmap_modes::convert_pixels(
+                            &img,
+                            &ConvertOptions {
+                                mode,
+                                dithered: a
+                                    .get("dithered")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
+                let png = crate::bitmap_fx::encode(&img).ok_or("encode failed")?;
+                let layer = self.layer_of(list[0])?;
+                let id = self.new_id();
+                let mut bitmap = Shape::new(
+                    id,
+                    ShapeKind::Bitmap {
+                        rect: bounds,
+                        width_px: w,
+                        height_px: h,
+                        png,
+                        fx: None,
+                    },
+                );
+                bitmap.fill = Fill::None;
+                bitmap.stroke = None;
+                bitmap.overprint_fill = a
+                    .get("overprint")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                self.run(Command::DeleteShapes {
+                    shapes: list.clone(),
+                })?;
+                self.selection.retain(|s| !list.contains(s));
+                self.run(Command::AddShape {
+                    layer,
+                    shape: bitmap,
+                })?;
+                json!({"id": id.raw()})
+            }
+            "vg_overflow" => {
+                let s = self
+                    .doc
+                    .shape_on_page(ShapeId(id_arg(a, "id")?))
+                    .ok_or("no shape")?;
+                let over = crate::text_editing::layout_of_text_shape(&s, Affine::IDENTITY)
+                    .map(|(l, _)| l.overflow)
+                    .unwrap_or(false);
+                json!({"overflow": over})
+            }
+            "vg_effects" => {
+                let s = self.shape(id_arg(a, "id")?)?;
+                let mut list: Vec<Value> = s
+                    .effects
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| {
+                        let kind = serde_json::to_value(e)
+                            .ok()
+                            .and_then(|v| v.get("effect").cloned())
+                            .unwrap_or(Value::Null);
+                        json!({"kind": kind, "index": i})
+                    })
+                    .collect();
+                if let Some(sh) = &s.shadow {
+                    list.push(
+                        json!({"kind": "shadow", "color": sh.color, "opacity": sh.opacity,
+                                     "blur": sh.blur, "dx": sh.offset.x, "dy": sh.offset.y}),
+                    );
+                }
+                if let ShapeKind::Text {
+                    on_path: Some(_), ..
+                } = &s.kind
+                {
+                    list.push(json!({"kind": "textonpath"}));
+                }
+                json!({"effects": list})
+            }
+            "vg_separate" => {
+                // The object and its effects become plain objects, as
+                // Flatten Effects makes them; a drop shadow becomes a
+                // curve of its colour and opacity under the object (its
+                // blur is not kept).
+                let id = ShapeId(id_arg(a, "id")?);
+                let mut s = self.shape(id.raw())?;
+                let layer = self.layer_of(id)?;
+                let mut fresh = Vec::new();
+                if let Some(sh) = s.shadow {
+                    let on_page = self.doc.shape_on_page(id).ok_or("no shape")?;
+                    let path = Affine::translate(sh.offset) * on_page.page_path();
+                    let sid = self.new_id();
+                    let mut shadow = Shape::new(sid, ShapeKind::Path { path, closed: true });
+                    shadow.fill = Fill::Solid(sh.color);
+                    shadow.stroke = None;
+                    shadow.opacity = sh.opacity.clamp(0.0, 1.0);
+                    self.run(Command::SetShadow {
+                        shapes: vec![id],
+                        shadow: None,
+                    })?;
+                    self.run(Command::AddShape {
+                        layer,
+                        shape: shadow,
+                    })?;
+                    self.run(Command::OrderRelative {
+                        shapes: vec![sid],
+                        reference: id,
+                        in_front: false,
+                    })?;
+                    fresh.push(sid.raw());
+                    s.shadow = None;
+                    if s.effects.is_empty() {
+                        fresh.push(id.raw());
+                        return Ok(Some(json!({"ids": fresh})));
+                    }
+                }
+                let next = self.doc.ids().peek_next();
+                let mut k = 0u64;
+                let parts = tracedraw_core::live::break_apart(&s, || {
+                    let id = ShapeId(next + k);
+                    k += 1;
+                    id
+                });
+                self.run(Command::DeleteShapes { shapes: vec![id] })?;
+                for p in parts {
+                    let p = self.fresh_ids(p);
+                    fresh.push(p.id.raw());
+                    self.run(Command::AddShape { layer, shape: p })?;
+                }
+                self.selection.retain(|x| *x != id);
+                json!({"ids": fresh})
             }
             _ => return Ok(None),
         }))

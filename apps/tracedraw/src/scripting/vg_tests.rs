@@ -404,3 +404,288 @@ fn errors_stop_the_macro_and_keep_what_ran() {
     assert!(err.contains("out of range"), "{err}");
     assert!(all(&app).iter().any(|s| s.name.as_deref() == Some("kept")));
 }
+
+// ----- Members published macros use -----------------------------------------
+
+fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(w, h, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+    crate::bitmap_fx::encode(&img).expect("png")
+}
+
+/// A 20 x 10 pixel bitmap, one inch wide and half an inch high.
+fn bitmap(app: &mut App) -> ShapeId {
+    app.new_shape(ShapeKind::Bitmap {
+        rect: Rect::new(0.0, 0.0, 25.4, 12.7),
+        width_px: 20,
+        height_px: 10,
+        png: png(20, 10, [200, 30, 30]),
+        fx: None,
+    })
+    .expect("bitmap")
+}
+
+#[test]
+fn progress_shows_in_the_status_line() {
+    let mut app = App::headless();
+    run(
+        &mut app,
+        "Application.Status.BeginProgress('Converting', false);
+         for (let i = 1; i <= 4; i++) Application.Status.Progress = i * 10;",
+    );
+    assert_eq!(app.status, "Converting 40%");
+    run(
+        &mut app,
+        "Status.BeginProgress('Again'); Status.EndProgress();",
+    );
+    assert_eq!(app.status, "");
+}
+
+#[test]
+fn bitmaps_report_resolution_and_mode_and_resample() {
+    let mut app = App::headless();
+    let id = bitmap(&mut app);
+    let out = run(
+        &mut app,
+        &format!(
+            "const b = ActivePage.Shapes.FindShape('', 0, {id}).Bitmap;
+             print(b.ResolutionX, b.ResolutionY, b.Mode === cdrRGBColorImage, b.Transparent, b.ExternallyLinked);
+             b.Resample(0, 0, true, 40, 40);
+             b.ConvertTo(cdrGrayscaleImage);
+             print(b.SizeWidth, b.SizeHeight, b.ResolutionX, b.Mode === cdrGrayscaleImage);",
+            id = id.raw()
+        ),
+    );
+    assert_eq!(out[0], "20 20 true false false");
+    assert_eq!(out[1], "40 20 40 true");
+}
+
+#[test]
+fn objects_convert_to_bitmaps() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "ActiveDocument.Unit = cdrInch;
+         const r = ActiveLayer.CreateRectangle2(1, 1, 2, 1);
+         r.Fill.UniformColor.RGBAssign(0, 0, 255);
+         const b = r.ConvertToBitmapEx(cdrGrayscaleImage, false, false, 72, cdrNormalAntiAliasing);
+         print(b.Type === cdrBitmapShape, b.Bitmap.ResolutionX, b.Bitmap.Mode === cdrGrayscaleImage, ActivePage.Shapes.Count);",
+    );
+    assert_eq!(out[0], "true 72 true 1");
+}
+
+#[test]
+fn power_clip_contents_and_parent() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "ActiveDocument.Unit = cdrMillimeter;
+         const frame = ActiveLayer.CreateRectangle2(0, 0, 50, 50); frame.Name = 'frame';
+         const inside = ActiveLayer.CreateEllipse2(25, 25, 40); inside.Name = 'inside';
+         inside.AddToPowerClip(frame);
+         const f = ActivePage.Shapes.Item('frame');
+         f.PowerClip.EnterEditMode(); f.PowerClip.LeaveEditMode();
+         print(f.PowerClip.Shapes.Count, f.PowerClip.Shapes.Item(1).Name, f.PowerClip.Shapes.Item(1).PowerClipParent.Name);
+         print(ActivePage.Shapes.Count, ActiveLayer.CreateRectangle2(0, 0, 1, 1).PowerClip === null);",
+    );
+    assert_eq!(out[0], "1 inside frame");
+    assert_eq!(out[1], "1 true");
+}
+
+#[test]
+fn effects_list_drop_shadows_and_separate_them() {
+    let mut app = App::headless();
+    let id = app
+        .new_shape(ShapeKind::Rect {
+            rect: Rect::new(0.0, 0.0, 20.0, 20.0),
+            radius: 0.0,
+            corners: None,
+        })
+        .expect("rect");
+    app.run(tracedraw_core::Command::SetShadow {
+        shapes: vec![id],
+        shadow: Some(tracedraw_core::Shadow::default()),
+    });
+    let out = run(
+        &mut app,
+        &format!(
+            "const s = ActivePage.Shapes.FindShape('', 0, {id});
+             const e = s.Effects.Item(1);
+             print(s.Effects.Count, e.Type === cdrDropShadow, e.DropShadow.MergeMode === cdrMergeNormal);
+             let msg = '';
+             try {{ e.DropShadow.MergeMode = cdrMergeMultiply; }} catch (x) {{ msg = String(x); }}
+             print(msg.includes('DropShadow.MergeMode'));
+             print(e.Separate().Count >= 2);",
+            id = id.raw()
+        ),
+    );
+    assert_eq!(out[0], "1 true true");
+    assert_eq!(out[1], "true");
+    assert_eq!(out[2], "true");
+}
+
+#[test]
+fn guides_are_created_and_turned() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "ActiveDocument.Unit = cdrMillimeter;
+         const g = ActiveLayer.CreateGuide(0, 50, 100, 50);
+         print(g.Type === cdrGuidelineShape, g.Guide.Angle, g.Guide.PointY);
+         g.Guide.SetPointAndAngle(30, 0, 90);
+         print(ActivePage.Guides.Count, ActivePage.Guides.Item(1).Guide.Angle, ActivePage.Guides.Item(1).Guide.PointX);",
+    );
+    assert_eq!(out[0], "true 0 50");
+    assert_eq!(out[1], "1 90 30");
+    let guides = &app.doc().pages[0].guides;
+    assert!(matches!(
+        guides[0].line,
+        tracedraw_core::document::GuideLine::Vertical { x } if (x - 30.0).abs() < 1e-9
+    ));
+}
+
+#[test]
+fn fountain_colours_and_transparency() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "const r = ActiveLayer.CreateRectangle2(0, 0, 1, 1);
+         r.Fill.ApplyFountainFill(CreateRGBColor(255, 0, 0), CreateRGBColor(0, 0, 255), cdrLinearFountainFill, 0);
+         const f = r.Fill.Fountain;
+         print(r.Fill.Type === cdrFountainFill, f.Colors.Count, f.StartColor.RGBRed, f.EndColor.RGBBlue);
+         f.Colors.Item(2).Color.RGBAssign(0, 255, 0);
+         let steps = '';
+         try { f.Steps = 10; } catch (x) { steps = String(x); }
+         r.Transparency.ApplyUniformTransparency(30);
+         print(r.Fill.Fountain.EndColor.RGBGreen, steps.includes('Fill.Fountain.Steps'), r.Transparency.Type === cdrUniformTransparency, r.Transparency.Uniform);",
+    );
+    assert_eq!(out[0], "true 2 255 255");
+    assert_eq!(out[1], "255 true true 30");
+}
+
+#[test]
+fn text_words_ranges_overflow_and_spacing() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "const t = ActiveLayer.CreateArtisticText(0, 0, 'one two three', 0, 0, 'Arial', 10);
+         const st = t.Text.Story;
+         print(st.Words.Count, st.Words.Item(2).Text, st.Characters.Count, t.Text.Overflow);
+         st.Range(4, 7).Size = 20;
+         st.LineSpacing = 150;
+         let sizes = [];
+         for (const w of st.Words) sizes.push(w.Size);
+         print(sizes.join(','), st.Text, st.LineSpacing);",
+    );
+    assert_eq!(out[0], "3 two 13 false");
+    assert_eq!(out[1], "10,20,10 one two three 150");
+}
+
+#[test]
+fn curve_areas_and_the_shape_tool_selection() {
+    let mut app = App::headless();
+    let id = app
+        .new_shape(ShapeKind::Rect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            radius: 0.0,
+            corners: None,
+        })
+        .expect("rect");
+    run(
+        &mut app,
+        &format!(
+            "ActivePage.Shapes.FindShape('', 0, {}).ConvertToCurves();",
+            id.raw()
+        ),
+    );
+    app.node_selection = vec![(id, 0), (id, 2)];
+    let out = run(
+        &mut app,
+        &format!(
+            "ActiveDocument.Unit = cdrCentimeter;
+             const c = ActivePage.Shapes.FindShape('', 0, {}).Curve;
+             const nr = c.Selection();
+             print(Math.round(c.Area * 1000) / 1000, Math.round(c.SubPaths.Item(1).Area * 1000) / 1000, nr.Count, nr.LastNode.PositionX, c.Nodes.FirstNode.PositionX);",
+            id.raw()
+        ),
+    );
+    assert_eq!(out[0], "1 1 2 1 0");
+}
+
+#[test]
+fn documents_pages_layers_and_settings() {
+    let mut app = App::headless();
+    let id = app
+        .new_shape(ShapeKind::Rect {
+            rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+            radius: 0.0,
+            corners: None,
+        })
+        .expect("rect");
+    app.run(tracedraw_core::Command::SetLocked {
+        shapes: vec![id],
+        locked: true,
+    });
+    let out = run(
+        &mut app,
+        "ActiveDocument.SaveSettings();
+         ActiveDocument.Unit = cdrMillimeter; ActiveDocument.ReferencePoint = cdrTopLeft;
+         ActiveDocument.RestoreSettings();
+         const l = ActiveLayer;
+         print(ActiveDocument.Unit === cdrInch, ActiveDocument.ReferencePoint === cdrCenter, l.IsGuidesLayer, l.IsGridLayer, l.IsSpecialLayer);
+         ActivePage.UnlockAllShapes();
+         const s = ActivePage.Shapes.Item(1);
+         print(s.Locked, s.CanHaveFill, s.CanHaveOutline, typeof ActiveWindow.ActiveView.OriginX, ActiveDocument.Rulers.HUnits === cdrMillimeter);
+         print(ActiveDocument.MasterPage.Layers.Count >= 0, ColorManager.DefaultColorContext.RGBColorProfile.Name.length > 0, ActiveDocument.PreserveSelection);",
+    );
+    assert_eq!(out[0], "true true false false false");
+    assert_eq!(out[1], "false true true number true");
+    assert_eq!(out[2], "true true true");
+    assert!(!app.doc().find_shape(id).expect("rect").locked);
+}
+
+#[test]
+fn members_without_a_counterpart_raise_named_errors() {
+    for (src, member) in [
+        ("ActiveLayer.Paste();", "Layer.Paste"),
+        (
+            "Application.FrameWork.ShowDocker('x');",
+            "Application.FrameWork",
+        ),
+        ("ActiveDocument.GetUserClick();", "Document.GetUserClick"),
+        (
+            "ActiveLayer.CreateArtisticText(0, 0, 'a').Text.Story.LanguageID;",
+            "Story.LanguageID",
+        ),
+        (
+            "CreateDocumentEx(CreateStructCreateOptions());",
+            "Application.CreateDocumentEx",
+        ),
+    ] {
+        let mut app = App::headless();
+        let err = run_vgcore(&mut app, src, "Macro").expect_err(member);
+        assert!(err.contains(member), "{src}: {err}");
+        assert!(err.contains("not available in TraceDraw"), "{err}");
+    }
+}
+
+#[test]
+fn constants_macros_use_exist_with_their_values() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "const names = ['cdrNoTransparency', 'cdrUniformTransparency', 'cdrFountainTransparency',
+           'cdrMergeNormal', 'cdrMergeMultiply', 'cdrDropShadow', 'cdrContour', 'cdrBlend', 'cdrLens',
+           'cdrEnvelope', 'cdrPerspective', 'cdrDistortion', 'cdrTextOnPath', 'cdrControlPath',
+           'cdrLensMagnify', 'cdrLensFishEye', 'cdrLensInvert', 'cdrPixelView', 'cdrEnhancedView',
+           'cdrSimpleWireframeView', 'cdrNoAntiAliasing', 'cdrNormalAntiAliasing', 'cdrLABImage',
+           'cdrDuotoneImage', 'cdrCMYKMultiChannelImage', 'cdrSmallCapsFontCase', 'cdrAllCapsFontCase',
+           'cdrEnglishUS', 'cdrEnglishUK', 'cdrRussian', 'cdrOutlineRoundLineJoin', 'cdrEnhancedOutline',
+           'cdrImportFull', 'cdrCursorEyeDrop', 'cdrCurrentVersion', 'cdrCompressionLZW', 'cdrCPT',
+           'cdrApplyToFill', 'cdrApplyToFillAndOutline', 'cdrColorPantoneHex', 'cdrColorUserInk',
+           'cdrColorMultiChannel', 'cdrLinkAllConnections'];
+         print(names.filter(n => typeof globalThis[n] !== 'number').join(','));
+         print(cdrInch, cdrMillimeter, cdrCenter, cdrBottomLeft, cdrCurveShape, cdrUniformFill, cdrColorCMYK, cdrEnglishUS);",
+    );
+    assert_eq!(out[0], "");
+    assert_eq!(out[1], "1 3 9 5 3 1 2 1033");
+}

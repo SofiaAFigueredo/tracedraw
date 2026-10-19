@@ -45,6 +45,10 @@ struct HostInner {
     /// The object model of VBA macros (see `scripting/vg.rs`) instead of
     /// TraceDraw's own JavaScript one.
     vg: bool,
+    /// What the app shows that macros read: see [`vg::AppView`].
+    view: vg::AppView,
+    /// The status line text a macro left (`Application.Status`).
+    status: Option<String>,
 }
 
 /// How far a script is trusted.
@@ -337,6 +341,8 @@ fn host_for(app: &App, trust: Trust) -> HostInner {
         trust,
         file: app.file.as_ref().map(|f| f.display().to_string()),
         vg: false,
+        view: vg::AppView::of(app),
+        status: None,
     }
 }
 
@@ -477,6 +483,9 @@ fn run_host(
         }
     }
     let changes = inner.commands.len();
+    if let Some(s) = inner.status {
+        app.status = s;
+    }
     apply(app, inner.commands, inner.selection, inner.page, label);
     Ok((output, changes))
 }
@@ -525,6 +534,8 @@ fn blank_host(doc: Document, trust: Trust) -> HostInner {
         trust,
         file: None,
         vg: false,
+        view: vg::AppView::default(),
+        status: None,
     }
 }
 

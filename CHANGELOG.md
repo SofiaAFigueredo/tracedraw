@@ -26,6 +26,15 @@ full, row-by-row status.
 - Align to Baseline Grid puts the baselines on the page's baseline grid
   (from the page top and the grid's start offset), so frames line up
   with one another.
+- Text: Chinese, Japanese, Korean and other input methods work while
+  typing on the canvas and in table cells (the text being composed shows
+  at the caret). Break Apart (Ctrl+K) on artistic text splits it into
+  lines, words or letters, each a text object of its own.
+- A right click on a page tab opens the page menu: rename, insert a page
+  before or after, duplicate, delete, switch orientation, page size and
+  background.
+- Blends of text and of shapes with several parts (letters, holes)
+  morph part by part, so the steps between two texts read as letters.
 - Pen and Bezier: a plain click after a pulled node gives a straight
   segment (the node becomes a cusp), clicking the last node again makes
   it a cusp, C while pulling a handle makes the node a cusp and Alt

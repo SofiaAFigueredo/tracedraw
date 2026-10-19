@@ -515,6 +515,12 @@ pub fn standard_toolbar(app: &mut App, ui: &mut Ui) {
                 ui.checkbox(&mut app.snap.guides, tr("menu.view.snap_guidelines"));
                 ui.checkbox(&mut app.snap.objects, tr("menu.view.snap_objects"));
                 ui.checkbox(&mut app.snap.page, tr("menu.view.snap_page"));
+                ui.separator();
+                ui.checkbox(
+                    &mut app.snap.alignment_guides,
+                    tr("menu.view.alignment_guides"),
+                );
+                ui.checkbox(&mut app.snap.dynamic_guides, tr("menu.view.dynamic_guides"));
             });
         std_sep(ui);
         // Options opens its list of option pages.
@@ -1763,7 +1769,10 @@ fn text_properties(app: &mut App, ui: &mut Ui) {
         }
     }
     vsep(ui);
-    changed |= text_align_list(app, ui);
+    if text_align_list(app, ui) {
+        let a = app.text_align;
+        app.apply_text_align(a);
+    }
     vsep(ui);
     let shapes = app.selected_shapes();
     let is_text = shapes
@@ -2088,6 +2097,31 @@ fn shape_tool_bar(app: &mut App, ui: &mut Ui) {
     // Rectangles, ellipses and polygons: the Shape tool edits them through
     // their own controls (corners, pie and arc, points), as with their tools.
     let shapes = app.selected_shapes();
+    // The kind of the object being edited first, so a rectangle still
+    // being one reads apart from a curve.
+    let kind_label = |ui: &mut Ui, key: &str| {
+        ui.label(
+            egui::RichText::new(tr(key))
+                .strong()
+                .color(Tokens::text_dim()),
+        );
+    };
+    if let Some(first) = shapes.first() {
+        let key = match first.kind {
+            ShapeKind::Rect { .. } => Some("kind.rectangle"),
+            ShapeKind::Ellipse { .. } => Some("kind.ellipse"),
+            ShapeKind::Polygon { .. } => Some("toolbar.kind_polygon"),
+            ShapeKind::Path { .. } => Some("kind.curve"),
+            _ => None,
+        };
+        let same = shapes
+            .iter()
+            .all(|s| std::mem::discriminant(&s.kind) == std::mem::discriminant(&first.kind));
+        if let (Some(key), true) = (key, same) {
+            kind_label(ui, key);
+            crate::ui::propbar::sep(ui);
+        }
+    }
     if !shapes.is_empty()
         && shapes.iter().all(|s| {
             matches!(

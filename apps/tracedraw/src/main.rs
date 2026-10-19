@@ -63,6 +63,9 @@ mod github;
 mod gradient_presets;
 mod grammar;
 mod guides;
+mod help;
+#[cfg(test)]
+mod help_shots;
 mod i18n;
 mod imposition;
 mod interaction;
@@ -70,6 +73,7 @@ mod interaction2;
 mod kind_nodes;
 mod knife;
 mod lens;
+mod live_guides;
 #[cfg(not(target_arch = "wasm32"))]
 mod mcp;
 #[cfg(not(target_arch = "wasm32"))]
@@ -117,9 +121,13 @@ mod system_prefs;
 mod table;
 mod templates;
 mod text_editing;
+#[cfg(test)]
+mod text_effect_tests;
 mod text_frames;
 mod text_nodes;
 mod text_path;
+#[cfg(test)]
+mod text_wrap_tests;
 mod textflow;
 mod theme;
 mod thesaurus;
@@ -178,10 +186,14 @@ fn main() -> eframe::Result<()> {
     });
     let splash = settings.show_splash && !plain;
     let viewport = if splash {
+        // The splash has no frame, so it cannot be dragged larger; it is
+        // still created resizable: some window managers (Xfwm4) keep a
+        // window made not resizable at its size for good, and the main
+        // window it becomes could then neither be resized nor maximized.
         egui::ViewportBuilder::default()
             .with_inner_size(splash::SIZE)
             .with_decorations(false)
-            .with_resizable(false)
+            .with_resizable(true)
             .with_title("TraceDraw")
     } else {
         egui::ViewportBuilder::default()

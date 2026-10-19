@@ -31,9 +31,10 @@ Full justify), Bullets and Drop Cap (for paragraph text; they open their
 dialogs), Text Properties (the Text docker, Ctrl+T) and Edit Text
 (Ctrl+Shift+T). Each change applies to the
 selected text objects at once (every span takes the font, size and
-style; the object takes the alignment) as one "Text Style" undo step,
-and becomes the default for the next text. Double-clicking text with the
-Pick tool edits it in place.
+style) as one "Text Style" undo step, and becomes the default for the
+next text. The alignment goes to the paragraphs (see Paragraph
+formatting below) as one "Text Alignment" step. Double-clicking text
+with the Pick tool edits it in place.
 
 ## Font list
 
@@ -123,6 +124,32 @@ one editing session are one "Edit Text" undo step.
 - Colours of characters read from `.cdr` files (the fill of each run of
   characters) are drawn the same way.
 
+**Input methods** (Chinese, Japanese, Korean and the others): while text
+or a table cell is edited on the canvas, the system's input method is
+switched on at the caret (its candidate window opens there). The text it
+composes shows underlined at the caret, keys go to it while it composes,
+and what it commits is inserted like typed text. A focused field of a
+docker or bar keeps its own input method. Letters the text's font lacks
+are drawn from an installed font that has them (Noto CJK and the
+system's CJK fonts), for each character
+(`text_effect_tests::an_input_method_composes_then_commits_cjk_text`,
+`text_effect_tests::the_canvas_asks_for_the_input_method_while_text_is_typed`).
+
+**Break Apart** (Ctrl+K) on artistic text makes separate text objects of
+its lines when it has more than one line, else of its words, else of its
+letters (a text without spaces, like CJK text, breaks into its
+characters). Each piece keeps the text's look (font, size, styles, fill,
+outline, transformation) and sits where its letters were; the first
+piece keeps the object, the others go just above it, all selected, in one
+"Break Apart" undo step. A single letter, paragraph text and text on a
+path stay as they are
+(`text_effect_tests::break_apart_splits_text_into_lines_words_then_letters`).
+
+Text takes blends (with another text or any object) and extrusions like
+any other object; the steps and sides follow the letters' outlines
+(`text_effect_tests::the_blend_tool_blends_two_texts_and_a_text_with_a_shape`,
+`text_effect_tests::text_can_be_extruded`).
+
 ## Paragraph text frames
 
 - A paragraph text's bounds are its whole frame (with the letters, when
@@ -145,6 +172,43 @@ one editing session are one "Edit Text" undo step.
   slanting, mirroring and moving act on the whole text, and a turned
   text scales as a whole. With other objects in the selection each is
   scaled as usual, all in one undo step.
+
+## Paragraph formatting
+
+- Alignment, line spacing, character and word spacing, space before and
+  after, the first-line, left and right indents, bullets, the drop cap,
+  tab stops and hyphenation belong to each paragraph. Columns, vertical
+  alignment, Fit Text to Frame, the baseline grid and the frame
+  background belong to the frame.
+- A text object keeps one alignment and paragraph style of its own,
+  which every paragraph has unless it was given its own. A paragraph with
+  its own formatting carries it on its characters
+  (`TextSpan::paragraph`, `crates/core/src/paragraphs.rs`); the format of
+  its first character rules it, and an empty last paragraph follows the
+  one before it. Typing at the start of a paragraph keeps its format;
+  Enter splits a paragraph into two with the same format; joining two
+  paragraphs keeps the first one's.
+- While a text is edited, the property bar's alignment, the Text
+  docker's Paragraph and Frame fields and the Tabs, Bullets and Drop Cap
+  dialogs act on the paragraphs the selection touches (the one holding
+  the caret without a selection) and show the values of the first of
+  them. With the whole object selected they act on every paragraph and
+  show the first paragraph's values. Only the settings changed reach
+  the paragraphs: changing the left indent of a whole text keeps each
+  paragraph's alignment and spacing. Each change is one undo step.
+- A paragraph set back to the object's formatting stops carrying its
+  own. `.tdraw` files write `paragraph` only on characters whose
+  paragraph has its own formatting; files without it give every
+  paragraph the object's formatting.
+- `.cdr`: artistic text is written with each paragraph's alignment
+  and, from version 16, its line spacing. Paragraph text goes out as one
+  artistic text a line, each placed where its paragraph's spacing and
+  indents put it, so the look is kept but the spacing values are not
+  (the frame records of paragraph text are not known well enough to
+  write; see `docs/cdr-format.md`). Reading, paragraphs whose alignment,
+  line spacing, space before and after (version 16+ style strings) or
+  indents differ from one another keep their own; text whose paragraphs
+  agree keeps one object-level format as before.
 
 ## Text docker
 
@@ -189,7 +253,9 @@ the preferences, `text_sections_closed`).
   Hyphenate. With artistic text the section says it is for paragraph
   text.
 - Every field edits the selected text: the characters selected while
-  editing, otherwise every selected text object, one undo step each.
+  editing (the paragraphs they touch for the Paragraph and Frame fields,
+  see Paragraph formatting), otherwise every selected text object, one
+  undo step each.
   With no text selected the font, style, size, underline and alignment
   become those of new text.
 - Labels show without a trailing colon.
@@ -250,6 +316,11 @@ Window > Panels > Glyphs. From the top:
   space. The Interactive vertical spacing arrow, below the lower left
   corner, changes line spacing so the last baseline follows the pointer:
   `leading' = leading * (pitch - dy / (lines - 1)) / pitch`.
+- The arrows act on every paragraph of the text, those with spacing of
+  their own too, so they keep their differences: the character or word
+  spacing change (in percent) is added to each paragraph's, and each
+  paragraph's line spacing is multiplied by the same factor. One undo
+  step per drag.
 - Text fitted to a path shows no character nodes.
 
 ## Placeholder text

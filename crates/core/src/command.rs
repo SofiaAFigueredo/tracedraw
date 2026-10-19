@@ -237,6 +237,11 @@ pub enum Command {
         shapes: Vec<ShapeId>,
         wrap: bool,
     },
+    /// Turn wrapping on for `shapes` with this wrap style and offset.
+    SetWrapStyle {
+        shapes: Vec<ShapeId>,
+        style: crate::text_flow::TextWrap,
+    },
     SetObjectData {
         shape: ShapeId,
         data: Vec<(String, String)>,
@@ -383,6 +388,7 @@ impl Command {
             Command::SetOverprint { .. } => "Overprint",
             Command::SetLink { .. } => "Hyperlink",
             Command::SetWrapText { .. } => "Wrap Paragraph Text",
+            Command::SetWrapStyle { .. } => "Wrap Style",
             Command::SetObjectData { .. } => "Object Data",
             Command::OrderRelative { in_front: true, .. } => "In Front Of",
             Command::OrderRelative { .. } => "Behind",
@@ -579,7 +585,28 @@ impl Command {
             }
             Command::SetLayerLocked { layer, locked } => doc.layer_mut(*layer)?.locked = *locked,
 
-            Command::AddShape { layer, shape } => doc.layer_mut(*layer)?.shapes.push(shape.clone()),
+            Command::AddShape { layer, shape } => {
+                // Ids minted on a copy of the drawing (a script's) stay
+                // ahead of the ones this drawing gives out next.
+                fn highest(s: &Shape) -> u64 {
+                    let inner = match &s.kind {
+                        ShapeKind::Group { children } => {
+                            children.iter().map(highest).max().unwrap_or(0)
+                        }
+                        ShapeKind::ClipFrame { frame, contents } => contents
+                            .iter()
+                            .map(highest)
+                            .max()
+                            .unwrap_or(0)
+                            .max(highest(frame)),
+                        _ => 0,
+                    };
+                    s.id.raw().max(inner)
+                }
+                let top = highest(shape);
+                doc.layer_mut(*layer)?.shapes.push(shape.clone());
+                doc.ids_mut().reserve(top);
+            }
             Command::DeleteShapes { shapes } => {
                 for id in shapes {
                     any(doc, *id)?;
@@ -767,6 +794,21 @@ impl Command {
                 }
                 for id in shapes {
                     any_mut(doc, *id)?.wrap_text = *wrap;
+                }
+            }
+            Command::SetWrapStyle { shapes, style } => {
+                for id in shapes {
+                    any(doc, *id)?;
+                }
+                let mut style = *style;
+                if !style.offset.is_finite() {
+                    style.offset = 0.0;
+                }
+                style.offset = style.offset.clamp(0.0, 1000.0);
+                for id in shapes {
+                    let s = any_mut(doc, *id)?;
+                    s.wrap_text = true;
+                    s.wrap_style = style;
                 }
             }
             Command::SetLink { shapes, link } => {

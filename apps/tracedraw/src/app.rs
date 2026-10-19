@@ -591,9 +591,62 @@ pub struct CurveInProgress {
     pub dragging_handle: bool,
     /// B-Spline tool: the nodes are control points the curve runs near.
     pub bspline: bool,
+    /// Nodes made cusps (clicking the last node again, C while pulling a
+    /// handle, a click after a dragged node): their incoming handle as it
+    /// was frozen (`None`: the segment arrives straight), no longer the
+    /// mirror of their outgoing one.
+    pub in_handles: std::collections::BTreeMap<usize, Option<Point>>,
+    /// A press on the first node closes the curve: while it is dragged,
+    /// where the pointer is (it pulls the closing segment's handle at the
+    /// first node; the first node's own outgoing handle stays).
+    pub closing: Option<Point>,
+    /// Alt held while a handle is pulled moves the node instead: the last
+    /// pointer position of that move.
+    pub alt_from: Option<Point>,
 }
 
 impl CurveInProgress {
+    /// The incoming handle of node `i`: frozen for a cusp, else the mirror
+    /// of its outgoing handle about the node.
+    pub fn in_handle(&self, i: usize) -> Option<Point> {
+        if let Some(h) = self.in_handles.get(&i) {
+            return *h;
+        }
+        let (p, out) = *self.nodes.get(i)?;
+        out.map(|o| p - (o - p))
+    }
+
+    /// Make the last node a cusp: its incoming handle stays as it is now
+    /// and it has no outgoing handle, so the next segment leaves it
+    /// straight (unless a new handle is pulled).
+    pub fn cusp_last(&mut self) {
+        let Some(i) = self.nodes.len().checked_sub(1) else {
+            return;
+        };
+        let incoming = self.in_handle(i);
+        self.in_handles.insert(i, incoming);
+        self.nodes[i].1 = None;
+    }
+
+    /// Freeze the last node's incoming handle where it is, so pulling its
+    /// handle further moves the outgoing side only (C while dragging).
+    pub fn freeze_last_in(&mut self) {
+        let Some(i) = self.nodes.len().checked_sub(1) else {
+            return;
+        };
+        let incoming = self.in_handle(i);
+        self.in_handles.insert(i, incoming);
+    }
+
+    /// The handle the closing drag gives the first node for the closing
+    /// segment: the mirror of the pointer about the first node, like a
+    /// handle pulled out of it (`None` for a press without a drag).
+    pub fn closing_handle(&self) -> Option<Point> {
+        let first = self.nodes.first()?.0;
+        let p = self.closing?;
+        ((p - first).hypot() > 1e-9).then(|| first - (p - first))
+    }
+
     /// Path through the nodes, optionally extended to a preview point.
     pub fn path(&self, preview: Option<Point>) -> tracedraw_core::BezPath {
         self.path_closed(preview, false)
@@ -607,6 +660,17 @@ impl CurveInProgress {
         }
         let mut path = self.open_path(preview);
         if closed {
+            // The closing segment: curved when the last node leaves with a
+            // handle or the closing drag pulled one at the first node.
+            let last = self.nodes.len().saturating_sub(1);
+            if let (Some((first, _)), Some((end, end_out))) =
+                (self.nodes.first().copied(), self.nodes.last().copied())
+            {
+                let into = self.closing_handle();
+                if self.smooth && last > 0 && (end_out.is_some() || into.is_some()) {
+                    path.curve_to(end_out.unwrap_or(end), into.unwrap_or(first), first);
+                }
+            }
             path.close_path();
         }
         path
@@ -628,7 +692,11 @@ impl CurveInProgress {
                 continue;
             }
             let (prev, prev_out) = nodes[i - 1];
-            let cur_in = nodes[i].1.map(|out| *p - (out - *p));
+            let cur_in = if i < self.nodes.len() {
+                self.in_handle(i)
+            } else {
+                None
+            };
             match (self.smooth, prev_out, cur_in) {
                 (false, _, _) | (true, None, None) => path.line_to(*p),
                 (true, po, ci) => path.curve_to(po.unwrap_or(prev), ci.unwrap_or(*p), *p),
@@ -679,8 +747,15 @@ pub struct App {
     /// A right click during a move, scale, rotation or skew: on release
     /// the change goes to copies and the originals stay.
     pub drag_copy: bool,
+    /// The Pen or Bezier tool is dragging a node of the selected curve
+    /// (as the Shape tool does), not drawing.
+    pub pen_editing: bool,
     pub curve: Option<CurveInProgress>,
     pub text_edit: Option<TextEdit>,
+    /// Text an input method is composing at the caret (Chinese, Japanese,
+    /// Korean and other input methods), shown underlined until it is
+    /// committed.
+    pub ime_preedit: String,
     /// The last colours picked for a fill and for an outline (the
     /// palette's left and right clicks): the "current colours" the first
     /// built-in gradient runs between.
@@ -699,6 +774,10 @@ pub struct App {
     /// the `.cdr` file it came from, or the one last chosen when saving
     /// it. `None`: the version of Options > Global > File Formats.
     pub cdr_version: Option<u16>,
+    /// The `.cdr` version the active drawing was opened from, when it is
+    /// one TraceDraw does not save in (older than the checked versions):
+    /// Save asks for a version first.
+    pub cdr_unsaved_version: Option<u16>,
     /// The `.tdraw` format version the active drawing is saved in: the
     /// version of the file it came from, or the one chosen in Save As.
     /// `None`: the current one.
@@ -863,7 +942,18 @@ pub struct App {
     pub docker_preview_point: Option<Point>,
     /// The point the pointer snapped to this frame, for its mark.
     pub snap_mark: std::cell::Cell<Option<crate::snap_points::Target>>,
+    /// The alignment and dynamic guides to draw this frame.
+    pub live_guides: std::cell::RefCell<crate::live_guides::Overlay>,
+    /// The snap points the pointer acquired, newest first: dynamic guides
+    /// come from them.
+    pub guide_anchors: std::cell::RefCell<Vec<Point>>,
+    /// The other objects' boxes for alignment guides, kept while the
+    /// drawing, the page, the view and the objects left out stay the same.
+    pub align_cache: std::cell::RefCell<Option<crate::snap::AlignCache>>,
     pub dialog: crate::ui::dialogs::Dialog,
+    /// The Help page of the dialog being drawn, for its "?" button
+    /// (`help.rs`).
+    pub dialog_help: &'static str,
     /// Layout > Page Number Settings.
     pub page_numbers: PageNumberSettings,
     /// Last loaded print-merge data, for Edit / Perform without reloading.
@@ -1541,6 +1631,13 @@ impl App {
         // and the application closes through File > Exit (Alt+F4).
         // The Bitmap Effects lens runs the application's bitmap effects.
         tracedraw_render::set_pixel_effects(crate::fx::lens_effects);
+        Self::setup_context(ctx);
+        Self::build(open)
+    }
+
+    /// The interface style every window context takes: options, visuals
+    /// and text sizes (the headless Help screenshots use it too).
+    pub(crate) fn setup_context(ctx: &egui::Context) {
         ctx.options_mut(|o| {
             o.quit_shortcuts.clear();
             // Ctrl+plus and Ctrl+minus zoom the drawing, not the interface;
@@ -1576,7 +1673,6 @@ impl App {
             ]
             .into();
         });
-        Self::build(open)
     }
 
     /// An app without a window, for tests, scripts and the MCP server.
@@ -1611,14 +1707,17 @@ impl App {
             pivots: Pivots::default(),
             drag: Drag::None,
             drag_copy: false,
+            pen_editing: false,
             curve: None,
             text_edit: None,
+            ime_preedit: String::new(),
             current_colors: (Color::BLACK, Color::WHITE),
             file: None,
             remote: None,
             vector_fx_base: Default::default(),
             github: Default::default(),
             cdr_version: None,
+            cdr_unsaved_version: None,
             tdraw_version: None,
             cdr_embed_profile: true,
             cdr_embed_fonts: false,
@@ -1712,11 +1811,15 @@ impl App {
             segment_spot: None,
             snap: crate::snap::SnapSettings::default(),
             snap_mark: std::cell::Cell::new(None),
+            live_guides: Default::default(),
+            guide_anchors: Default::default(),
+            align_cache: Default::default(),
             corners: Default::default(),
             join_settings: Default::default(),
             docker_preview: Vec::new(),
             docker_preview_point: None,
             dialog: crate::ui::dialogs::Dialog::None,
+            dialog_help: crate::help::HOME,
             merge_state: None,
             page_numbers: PageNumberSettings::default(),
             show_welcome: false,
@@ -3374,11 +3477,21 @@ impl App {
                 self.text_italic = sp.italic;
                 self.text_underline = sp.underline;
             }
-            self.text_align = *align;
+            // The alignment of the paragraph at the caret.
+            let index = self.paragraph_range(id).map_or(0, |(a, _)| {
+                tracedraw_core::paragraphs::paragraph_of(spans, a)
+            });
+            self.text_align = match &kind {
+                Ok(ShapeKind::Text { para, .. }) => {
+                    tracedraw_core::paragraphs::paragraph_format(spans, *align, para, index).align
+                }
+                _ => *align,
+            };
         }
     }
 
     pub fn finish_text(&mut self) {
+        self.ime_preedit.clear();
         let empty = self.edit_text().trim().is_empty();
         if let Some(te) = self.text_edit.take() {
             if empty {
@@ -3874,6 +3987,7 @@ impl App {
         let mut unread = 0usize;
         // The version of an opened `.cdr` file: saving keeps it.
         let mut cdr_version = None;
+        let mut opened_version = None;
         // The format version of an opened `.tdraw` file: saving keeps it.
         let mut tdraw_version = None;
         let result = if ext == "svg" || ext == "svgz" {
@@ -4183,18 +4297,28 @@ impl App {
                     }
                     unread = report.skipped_objects;
                     cdr_version = report.version.map(|v| writable_cdr_version(v.0));
-                    (
-                        doc,
-                        crate::i18n::trf(
-                            "status.opened_cdr",
-                            &[
-                                ("version", &ver.to_string()),
-                                ("pages", &report.pages.to_string()),
-                                ("objects", &report.shapes.to_string()),
-                                ("skipped", &report.skipped_objects.to_string()),
-                            ],
-                        ),
-                    )
+                    opened_version = report.version.map(|v| v.0);
+                    let mut msg = crate::i18n::trf(
+                        "status.opened_cdr",
+                        &[
+                            ("version", &ver.to_string()),
+                            ("pages", &report.pages.to_string()),
+                            ("objects", &report.shapes.to_string()),
+                            ("skipped", &report.skipped_objects.to_string()),
+                        ],
+                    );
+                    // An older version than TraceDraw saves: say which
+                    // version Save will write.
+                    if let (Some(v), Some(w)) = (report.version, cdr_version) {
+                        if v.0 != w {
+                            msg.push(' ');
+                            msg.push_str(&crate::i18n::trf(
+                                "status.cdr_saves_as",
+                                &[("version", &w.to_string())],
+                            ));
+                        }
+                    }
+                    (doc, msg)
                 })
                 .map_err(|e| e.to_string())
         } else {
@@ -4213,6 +4337,8 @@ impl App {
             Ok((doc, msg)) => {
                 self.open_document(doc, None);
                 self.cdr_version = cdr_version;
+                self.cdr_unsaved_version =
+                    opened_version.filter(|v| *v < tracedraw_cdr::write::CHECKED_SINCE);
                 self.tdraw_version = tdraw_version;
                 if cdr_version.is_some() {
                     self.apply_open_policy();
@@ -4274,6 +4400,14 @@ impl App {
             self.dialog = crate::ui::dialogs::Dialog::GithubSave(self.github_form(true));
             return;
         }
+        // A drawing opened from a `.cdr` version TraceDraw does not save
+        // in: say so and let the user choose the version first.
+        if !save_as {
+            if let Some(version) = self.cdr_unsaved_version {
+                self.dialog = crate::ui::dialogs::Dialog::OldCdrVersion { version };
+                return;
+            }
+        }
         // In a browser every save is a download, so there is no path to
         // write back to.
         if !save_as && !crate::files::WEB {
@@ -4283,6 +4417,15 @@ impl App {
             }
         }
         self.save_as_dialog();
+    }
+
+    /// Save As for a drawing opened from a `.cdr` version TraceDraw does
+    /// not save in, offering the oldest version it saves.
+    pub(crate) fn save_as_from_old_cdr(&mut self) {
+        self.save_as_dialog();
+        if let crate::ui::dialogs::Dialog::SaveAs(st) = &mut self.dialog {
+            st.version = tracedraw_cdr::write::CHECKED_SINCE;
+        }
     }
 
     /// The `.cdr` version the active drawing is saved in.
@@ -4298,6 +4441,7 @@ impl App {
     pub(crate) fn save_cdr_to(&mut self, path: PathBuf, version: u16) {
         let version = writable_cdr_version(version);
         self.cdr_version = Some(version);
+        self.cdr_unsaved_version = None;
         self.save_to(path);
     }
 
@@ -5469,12 +5613,13 @@ pub(crate) fn is_cdr_path(path: &std::path::Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("cdr"))
 }
 
-/// The `.cdr` version saving writes for `version`: versions older than
-/// the oldest one written become the oldest, newer ones the newest.
+/// The `.cdr` version saving writes for `version`: only versions checked
+/// to open in other programs are saved, so older ones become the oldest
+/// of those and newer ones the newest.
 pub(crate) fn writable_cdr_version(version: u16) -> u16 {
     version.clamp(
-        tracedraw_cdr::write::OLDEST_VERSION,
-        tracedraw_cdr::write::NEWEST_VERSION,
+        tracedraw_cdr::write::CHECKED_SINCE,
+        tracedraw_cdr::write::CHECKED_UNTIL,
     )
 }
 
@@ -5668,6 +5813,8 @@ mod tests {
         app.view_mode = ViewMode::Wireframe;
         app.snap.dynamic_guides = true;
         app.snap.off = true;
+        app.settings.snap.dynamic.angles = vec![30.0, 60.0];
+        app.settings.snap.align.each_object = true;
         app.color_model = 0;
         app.color_docker.shown = [false, true, true];
         app.align_to = crate::ops2::AlignTo::PageCenter;
@@ -5699,6 +5846,8 @@ mod tests {
         assert!(next.show_grid && !next.show_page_border);
         assert_eq!(next.view_mode, ViewMode::Wireframe);
         assert!(next.snap.dynamic_guides && next.snap.off);
+        assert_eq!(next.settings.snap.dynamic.angles, vec![30.0, 60.0]);
+        assert!(next.settings.snap.align.each_object);
         assert_eq!(next.color_model, 0);
         assert_eq!(next.color_docker.shown, [false, true, true]);
         assert_eq!(next.align_to, crate::ops2::AlignTo::PageCenter);
@@ -5741,7 +5890,13 @@ mod tests {
             serde_json::from_str(r#"{"language":"en"}"#).expect("old file");
         assert_eq!(old.tools, crate::settings::ToolPrefs::default());
         assert_eq!(old.view, crate::settings::ViewPrefs::default());
-        assert!(old.snap.alignment_guides && !old.snap.off);
+        // Alignment and dynamic guides start off, with their defaults.
+        assert!(!old.snap.alignment_guides && !old.snap.dynamic_guides && !old.snap.off);
+        assert_eq!(old.snap.align, crate::live_guides::AlignOptions::default());
+        assert_eq!(
+            old.snap.dynamic,
+            crate::live_guides::DynamicOptions::default()
+        );
     }
 
     /// The preferences are saved when something changed, not every

@@ -684,8 +684,44 @@ fn constants_macros_use_exist_with_their_values() {
            'cdrApplyToFill', 'cdrApplyToFillAndOutline', 'cdrColorPantoneHex', 'cdrColorUserInk',
            'cdrColorMultiChannel', 'cdrLinkAllConnections'];
          print(names.filter(n => typeof globalThis[n] !== 'number').join(','));
-         print(cdrInch, cdrMillimeter, cdrCenter, cdrBottomLeft, cdrCurveShape, cdrUniformFill, cdrColorCMYK, cdrEnglishUS);",
+         print(cdrInch, cdrMillimeter, cdrCenter, cdrBottomLeft, cdrCurveShape, cdrUniformFill, cdrColorCMYK, cdrEnglishUS);
+         print(cdrTextureFill, cdrPatternFill, cdrHatchFill, cdrCDR, cdrTIFF, cdrPDF, cdrCPT, cdrWEBP);
+         print(cdrMergeMultiply, cdrMergeDifference, cdrBlend, cdrDropShadow, cdrInnerShadow, cdrApplyToFill,
+           cdrCursorPick, cdrColorUserInk, cdrUnitQ, cdrAlignDistributeHAlignLeft, cdrDistributeToRect,
+           cdrMixedAlignment, cdrUndefined, cdrOutlineUndefinedLineCaps);
+         print(typeof cdrBevel, typeof cdrUISUnit);",
     );
     assert_eq!(out[0], "");
     assert_eq!(out[1], "1 3 9 5 3 1 2 1033");
+    assert_eq!(out[2], "8 9 10 1795 772 1333 1808 825");
+    assert_eq!(out[3], "9 24 0 5 11 0 305 22 15 2 2 6 -2 -1");
+    assert_eq!(out[4], "undefined undefined");
+}
+
+#[test]
+fn align_and_distribute_take_the_reference_methods() {
+    let mut app = App::headless();
+    let out = run(
+        &mut app,
+        "ActiveDocument.Unit = cdrMillimeter;
+         const l = ActiveLayer;
+         const a = l.CreateRectangle2(10, 10, 10, 10), b = l.CreateRectangle2(40, 22, 20, 10),
+           c = l.CreateRectangle2(100, 50, 10, 30);
+         const r = ActiveDocument.CreateShapeRangeFromArray(a, b, c);
+         r.AlignAndDistribute(cdrAlignDistributeHAlignLeft, cdrAlignDistributeVNone);
+         print(a.LeftX, b.LeftX, c.LeftX, a.BottomY, b.BottomY);
+         r.AlignAndDistribute(cdrAlignDistributeHNone, cdrAlignDistributeVDistributeSpacing);
+         print(a.BottomY, a.TopY, b.BottomY, b.TopY, c.BottomY);
+         r.AlignAndDistribute(cdrAlignDistributeHAlignCenter, 0, cdrAlignShapesToCenterOfPage);
+         print(Math.round(a.CenterX * 1000) / 1000 === Math.round(ActivePage.SizeWidth / 2 * 1000) / 1000, b.CenterX === a.CenterX);
+         r.AlignAndDistribute(cdrAlignDistributeHAlignRight, 0, cdrAlignShapesToPoint, 0, false, 0, 150, 0);
+         print(a.RightX, c.RightX);
+         try { r.AlignAndDistribute(cdrAlignDistributeHAlignLeft, 0, cdrAlignShapesToGrid); } catch (x) { print(String(x).includes('AlignAndDistribute')); }",
+    );
+    assert_eq!(out[0], "100 100 100 10 22");
+    // Gaps of (80 - 10 - 10 - 10 - 30) / 2 = 10 between the rectangles.
+    assert_eq!(out[1], "10 20 30 40 50");
+    assert_eq!(out[2], "true true");
+    assert_eq!(out[3], "150 150");
+    assert_eq!(out[4], "true");
 }

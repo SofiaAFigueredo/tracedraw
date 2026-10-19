@@ -132,10 +132,12 @@ fn pdf_security(
 fn load(
     path: &str,
 ) -> Result<(tracedraw_core::Document, Option<tracedraw_cdr::ParseReport>), String> {
-    let loaded = read_document(path)?;
+    let mut loaded = read_document(path)?;
     if !loaded.0.fonts.is_empty() {
         tracedraw_text::fonts().add_document_fonts(&loaded.0.fonts);
     }
+    // Paragraph text flows around the objects marked to wrap it.
+    loaded.0.refresh_text_flow();
     // CMYK colours render through the profile the drawing carries.
     if let Some(p) = &loaded.0.cmyk_profile {
         match tracedraw_core::icc::Profile::parse(&p.data) {
@@ -621,11 +623,34 @@ fn main() -> ExitCode {
                 std::fs::write(output, tracedraw_io::eps::document_to_ps(&doc))
                     .map_err(tracedraw_io::Error::from)
             } else if output.to_ascii_lowercase().ends_with(".cdr") {
-                // TRACEDRAW_CDR_VERSION picks the version written (7 to 27).
-                let version = std::env::var("TRACEDRAW_CDR_VERSION")
+                // TRACEDRAW_CDR_VERSION picks the version written (14 to
+                // 27, the versions checked to open in other programs; the
+                // experimental 7 to 13 only with TRACEDRAW_CDR_EXPERIMENTAL=1).
+                let asked: u16 = std::env::var("TRACEDRAW_CDR_VERSION")
                     .ok()
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(tracedraw_cdr::write::DEFAULT_VERSION);
+                let experimental =
+                    std::env::var("TRACEDRAW_CDR_EXPERIMENTAL").is_ok_and(|v| v.trim() == "1");
+                let allowed = if experimental {
+                    tracedraw_cdr::write::versions()
+                } else {
+                    tracedraw_cdr::write::checked_versions()
+                };
+                if !allowed.contains(&asked) {
+                    eprintln!(
+                        "cdr version {asked} is not saved: use {} to {}{}",
+                        allowed.start(),
+                        allowed.end(),
+                        if experimental {
+                            ""
+                        } else {
+                            " (7 to 13 are experimental: TRACEDRAW_CDR_EXPERIMENTAL=1)"
+                        }
+                    );
+                    std::process::exit(2);
+                }
+                let version = asked;
                 std::fs::write(
                     output,
                     tracedraw_cdr::write::document_to_cdr_version_with(&doc, version, &{

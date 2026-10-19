@@ -6,6 +6,94 @@ full, row-by-row status.
 
 ## Unreleased
 
+- VBA macros: the object model they are written against (Application,
+  Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
+  Outline, Transparency, Curve, Text and its views, Color, the cdr*
+  constants), with lengths in the document unit and the reference
+  point (docs/behavior/vba.md); constant values and parameter names
+  checked against the published developer reference. Ids minted by
+  scripts no longer collide with the drawing's own after a run that
+  groups or adds pages.
+
+- VBA macros: a compiler from VBA modules, classes and form code to
+  scripts over the TraceDraw object model, with the VBA run-time library,
+  Collection and Scripting.Dictionary.
+- `.cdr` saving writes only the versions checked in other programs (14
+  to 27). Save on a drawing opened from an older version asks to choose a
+  version first ("Older file version", then Save As on version 14)
+  instead of writing the old version again. The command line writes
+  version 27 by default and the experimental 7 to 13 only with
+  `TRACEDRAW_CDR_EXPERIMENTAL=1`; the MCP `save` tool takes 14 to 27.
+- Help: a user guide of 120 pages (getting started, lines and shapes,
+  objects, color, effects, text, templates and styles, pages, bitmaps,
+  printing, web graphics, file formats, customizing, reference) with
+  screenshots of the dialogs and panels, published with the browser
+  version in every interface language, with contents, search, previous
+  and next, light and dark and right-to-left Arabic. Every "?" button
+  opens the page of its dialog or options page, F1 the page of the open
+  dialog, panel or tool, and Help > Help Topics the first page, in the
+  interface language.
+- Wrap Paragraph Text now works: paragraph text flows around the objects
+  marked to wrap it that lie over its frame, along their outline or
+  their bounding box, with the text on the left, the right, both sides
+  or above and below, and a text wrap offset (the arrow beside the
+  property bar button). Drawing, printing, exports, clicks and the caret
+  follow the wrapped lines.
+- Alignment, spacing, indents, bullets, drop caps, tabs and hyphenation
+  are kept per paragraph: while a text is edited they change the
+  paragraphs of the selection, with the whole object selected every
+  paragraph (only the settings changed). Older drawings open with their
+  object-wide formatting on every paragraph; `.cdr` files keep each
+  paragraph's alignment both ways.
+- The context menu's Wrap Paragraph Text is a submenu with the seven
+  wrap styles and the offset. The Shape tool's spacing arrows change
+  every paragraph, keeping their differences. `.cdr` files keep each
+  paragraph's line spacing from version 16, and paragraph spacing
+  before and after is read from version 16 style strings.
+- Align to Baseline Grid puts the baselines on the page's baseline grid
+  (from the page top and the grid's start offset), so frames line up
+  with one another.
+- Alignment guides (View > Alignment Guides, Alt+Shift+A) now work:
+  while moving, drawing or resizing, lines show where the selection or
+  the pointer lines up with other objects' edges and centres, the page
+  or margin lines, and the move snaps there; equal gaps between
+  neighbours snap and are marked, and a box being drawn or resized
+  takes another object's width or height, marked on both. In the
+  Multipage View the other pages' objects count too. Off by default (the code default was
+  on). Options > Alignment Guides sets the object (the selection or
+  each object), edges, centres, page, margins with offset and inset,
+  equal spacing, equal sizes, colour and line style.
+- Dynamic guides (View > Dynamic Guides, Alt+Shift+D) now work: guides
+  at chosen angles run from the snap points the pointer acquired and
+  from the line's start; points snap onto them and their crossings,
+  with the distance and angle beside the pointer and optional tick
+  marks. Options > Dynamic Guides sets the angles, tip, ticks, colour
+  and line style. Both also sit in the standard bar's Snap To list.
+- Text: Chinese, Japanese, Korean and other input methods work while
+  typing on the canvas and in table cells (the text being composed shows
+  at the caret). Break Apart (Ctrl+K) on artistic text splits it into
+  lines, words or letters, each a text object of its own.
+- A right click on a page tab opens the page menu: rename, insert a page
+  before or after, duplicate, delete, switch orientation, page size and
+  background.
+- Blends of text and of shapes with several parts (letters, holes)
+  morph part by part, so the steps between two texts read as letters.
+- Pen and Bezier: a plain click after a pulled node gives a straight
+  segment (the node becomes a cusp), clicking the last node again makes
+  it a cusp, C while pulling a handle makes the node a cusp and Alt
+  moves it, and dragging from the first node shapes only the closing
+  segment. With no curve being drawn they add a node on a segment of the
+  selected curve and drag its nodes. The pointer shows what a press
+  does: start, continue, add a node, close, edit a node.
+- Shape tool: nodes and handles are taken within a pick distance (6
+  pixels, Options > Nodes and Handles), and a near miss no longer
+  deselects the object. A rectangle, ellipse or polygon says what it is
+  on the property bar and the status bar, apart from a curve.
+- Linux: the window can be resized and maximized under every window
+  manager (Xfwm4 kept it at one size) and fits small screens: a smaller
+  minimum size, maximized at start when the kept size does not fit.
+  Bars longer than the window slide with "«" and "»" buttons (and the
+  mouse wheel), and dialogs taller than the window scroll (#168).
 - VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
   and other compound files with a VBA project (modules, their kinds and
   code in the project's code page, references, protection, modules saved
@@ -32,6 +120,10 @@ full, row-by-row status.
   error box with the VBA line and one undo step per run. Each macro can
   get a shortcut, and the Scripts panel runs VBA snippets too.
 
+- Moving objects with the Pick tool shows the arrow with a dotted box,
+  and the box gets a plus after a right click (the move leaves the
+  original and a copy lands where the left button goes up). The pointer
+  no longer vanishes after that right click.
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a
   report of the file, the document, its colour settings, objects and

@@ -125,8 +125,11 @@ Query)`, `FindShape(Name, Type, StaticID, Recursive, Query)`.
 `Sort("@shape1.Left < @shape2.Left")` (Left, Right, Top, Bottom,
 CenterX, CenterY, Width, Height, Name; `>` sorts down), `Group`,
 `Combine`, `Ungroup`, `UngroupAll`, `BreakApart`, `Duplicate`, `Clone`,
-`FindShapes`, `FindShape`, `AlignAndDistribute(MethodH, MethodV)`,
-`DistributeHorizontally`, `DistributeVertically`, and every geometry and
+`FindShapes`, `FindShape`, `AlignAndDistribute(MethodH, MethodV,
+AlignTo, DistributeArea, ..., PointX, PointY, DistributeRect)` (align
+to the range's last shape, the page edge or centre, or a point; spread
+edges or centres, or make the gaps equal, across the range, the page or
+a rectangle; the grid raises an error), `DistributeHorizontally`, `DistributeVertically`, and every geometry and
 style member below, acting on the range as one.
 
 Queries take comparisons of `@name`, `@type` (rectangle, ellipse,
@@ -225,21 +228,40 @@ Creatable with `New`.
 
 ### Constants
 
-The enumerations above are globals: units, reference points, shape
-types, fill and fountain types, colour types, outline types, flip axes,
-alignment (`cdrAlignLeft` 1, `cdrAlignRight` 2, `cdrAlignHCenter` 3,
-`cdrAlignTop` 4, `cdrAlignBottom` 8, `cdrAlignVCenter` 12), text
-alignment and type, font lines, node and segment types, page
-orientation, export ranges, export filters, image types, `cdrTrue` and
-`cdrFalse`.
+The enumerations macros use are globals with their numeric values.
 
-Most values are the documented ones. These values are assumed and only
-need to differ from each other:
+Checked member by member against the published developer reference
+(enumeration pages listing each member's value):
+`cdrUnit` (including `cdrUnitQ` and `cdrUnitH`, both 0.25 mm),
+`cdrReferencePoint`, `cdrShapeType`, `cdrFillType`, `cdrFilter` (every
+member, `cdrWEBP` from a later version of the reference), `cdrImageType`,
+`cdrEffectType`, `cdrAlignment`, `cdrFontLine`, `cdrFontCase`,
+`cdrSegmentType`, `cdrOutlineType`, `cdrOutlineLineCaps`, `cdrMergeMode`,
+`cdrTransparencyAppliedTo`, `cdrDistributeArea`, `cdrAlignDistributeH`,
+`cdrAlignShapesTo`, and the members TraceDraw defines of
+`cdrTextLanguage` and `cdrCursorShape`.
 
-- the export filters `cdrCDR`, `cdrPNG`, `cdrJPEG`, `cdrBMP`, `cdrTIFF`,
-  `cdrGIF`, `cdrPDF`, `cdrSVG`, `cdrEPS` and `cdrWEBP`;
-- `cdrColorMixed`;
-- the shape types from `cdrHTMLFormObjectShape` on.
+Checked against published type definitions rather than the reference:
+`cdrColorType`, `cdrTextType` and `cdrTriState`.
+
+Not yet checked, with the values macros commonly assume:
+`cdrFountainFillType`, `cdrOutlineLineJoin`, `cdrFlipAxes`,
+`cdrAlignType` (`cdrAlignLeft` 1, `cdrAlignRight` 2, `cdrAlignHCenter`
+3, `cdrAlignTop` 4, `cdrAlignBottom` 8, `cdrAlignVCenter` 12),
+`cdrAlignDistributeV` (taken to mirror `cdrAlignDistributeH`: 1 top, 2
+bottom, 3 centre, 4 to 6 spread those lines, 7 equal gaps),
+`cdrNodeType`, `cdrPageOrientation`, `cdrExportRange`,
+`cdrTransparencyType`, `cdrLensType`, `cdrViewType`,
+`cdrAntiAliasingType`, `cdrImportMode`, `cdrFileVersion`,
+`cdrCompressionType` and `cdrShapeLinkType`.
+
+Method parameters carry the reference names, so named arguments match;
+checked for `CreateRectangle`, `CreateRectangle2`, `CreateEllipse2`,
+`SetPosition`, `SetSize`, `SetSizeEx`, `Move`, `Rotate`, `Duplicate`,
+`ApplyUniformFill`, `ApplyFountainFill`, `RGBAssign`, `CMYKAssign`,
+`CopyAssign`, `ConvertToBitmapEx`, `Resample`, `FindShapes`, `Export`,
+`ExportEx` and `ExportBitmap`. Trailing parameters TraceDraw has no use
+for are accepted and ignored.
 
 ### Coverage from published macros
 

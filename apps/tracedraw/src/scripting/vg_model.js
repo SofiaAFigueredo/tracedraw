@@ -5,11 +5,13 @@
 
 // ----- Constants ----------------------------------------------------------
 
+// docs/behavior/vba.md lists which enumerations were checked against the
+// published reference.
 const __consts = {
   // cdrUnit
   cdrTenthMicron: 0, cdrInch: 1, cdrFoot: 2, cdrMillimeter: 3, cdrCentimeter: 4,
   cdrPixel: 5, cdrMile: 6, cdrMeter: 7, cdrKilometer: 8, cdrDidots: 9, cdrAgate: 10,
-  cdrYard: 11, cdrPica: 12, cdrCicero: 13, cdrPoint: 14, cdrUISUnit: 15,
+  cdrYard: 11, cdrPica: 12, cdrCicero: 13, cdrPoint: 14, cdrUnitQ: 15, cdrUnitH: 16,
   // cdrReferencePoint
   cdrTopRight: 1, cdrTopMiddle: 2, cdrTopLeft: 3, cdrMiddleLeft: 4, cdrBottomLeft: 5,
   cdrBottomMiddle: 6, cdrBottomRight: 7, cdrMiddleRight: 8, cdrCenter: 9,
@@ -25,64 +27,107 @@ const __consts = {
   cdrPerfectShape: 26, cdrEPSShape: 27,
   // cdrFillType
   cdrNoFill: 0, cdrUniformFill: 1, cdrFountainFill: 2, cdrPostscriptFill: 3,
-  cdrTextureFill: 4, cdrPatternFill: 5, cdrHatchFill: 6,
+  cdrTextureFill: 8, cdrPatternFill: 9, cdrHatchFill: 10,
   // cdrFountainFillType
   cdrLinearFountainFill: 1, cdrRadialFountainFill: 2, cdrConicalFountainFill: 3,
   cdrSquareFountainFill: 4,
   // cdrColorType
   cdrColorPantone: 1, cdrColorCMYK: 2, cdrColorCMY: 4, cdrColorRGB: 5, cdrColorHSB: 6,
   cdrColorHLS: 7, cdrColorBlackAndWhite: 8, cdrColorGray: 9, cdrColorYIQ: 11,
-  cdrColorLab: 12, cdrColorRegistration: 20, cdrColorSpot: 25, cdrColorMixed: 99,
+  cdrColorLab: 12, cdrColorPantoneHex: 14, cdrColorRegistration: 20, cdrColorUserInk: 22,
+  cdrColorSpot: 25, cdrColorMultiChannel: 26, cdrColorMixed: 99,
   // cdrOutlineType
-  cdrNoOutline: 0, cdrOutline: 1,
+  cdrNoOutline: 0, cdrOutline: 1, cdrEnhancedOutline: 2,
+  // cdrOutlineLineJoin
+  cdrOutlineMiterLineJoin: 0, cdrOutlineRoundLineJoin: 1, cdrOutlineBevelLineJoin: 2,
+  // cdrOutlineLineCaps
+  cdrOutlineUndefinedLineCaps: -1, cdrOutlineButtLineCaps: 0, cdrOutlineRoundLineCaps: 1,
+  cdrOutlineSquareLineCaps: 2,
   // cdrFlipAxes
   cdrFlipHorizontal: 1, cdrFlipVertical: 2, cdrFlipBoth: 3,
   // cdrAlignType
   cdrAlignLeft: 1, cdrAlignRight: 2, cdrAlignHCenter: 3, cdrAlignTop: 4,
   cdrAlignBottom: 8, cdrAlignVCenter: 12,
-  // cdrDistributeType
-  cdrDistributeToSelection: 0, cdrDistributeToPage: 1,
+  // cdrAlignDistributeH
+  cdrAlignDistributeHNone: 0, cdrAlignDistributeHAlignRight: 1, cdrAlignDistributeHAlignLeft: 2,
+  cdrAlignDistributeHAlignCenter: 3, cdrAlignDistributeHDistributeRight: 4,
+  cdrAlignDistributeHDistributeLeft: 5, cdrAlignDistributeHDistributeCenter: 6,
+  cdrAlignDistributeHDistributeSpacing: 7,
+  // cdrAlignDistributeV
+  cdrAlignDistributeVNone: 0, cdrAlignDistributeVAlignTop: 1, cdrAlignDistributeVAlignBottom: 2,
+  cdrAlignDistributeVAlignCenter: 3, cdrAlignDistributeVDistributeTop: 4,
+  cdrAlignDistributeVDistributeBottom: 5, cdrAlignDistributeVDistributeCenter: 6,
+  cdrAlignDistributeVDistributeSpacing: 7,
+  // cdrAlignShapesTo
+  cdrAlignShapesToLastSelected: 0, cdrAlignShapesToEdgeOfPage: 1,
+  cdrAlignShapesToCenterOfPage: 2, cdrAlignShapesToGrid: 3, cdrAlignShapesToPoint: 4,
+  // cdrDistributeArea
+  cdrDistributeToSelection: 0, cdrDistributeToPage: 1, cdrDistributeToRect: 2,
   // cdrAlignment (text)
   cdrNoAlignment: 0, cdrLeftAlignment: 1, cdrRightAlignment: 2, cdrCenterAlignment: 3,
-  cdrFullJustifyAlignment: 4, cdrForceJustifyAlignment: 5,
+  cdrFullJustifyAlignment: 4, cdrForceJustifyAlignment: 5, cdrMixedAlignment: 6,
   // cdrTextType
-  cdrArtisticText: 0, cdrParagraphText: 1,
+  cdrArtisticText: 0, cdrParagraphText: 1, cdrArtisticFittedText: 2, cdrParagraphFittedText: 3,
   // cdrFontLine
-  cdrNoFontLine: 0, cdrSingleThinFontLine: 1,
+  cdrNoFontLine: 0, cdrSingleThinFontLine: 1, cdrSingleThinWordFontLine: 2,
+  cdrSingleThickFontLine: 3, cdrSingleThickWordFontLine: 4, cdrDoubleThinFontLine: 5,
+  cdrDoubleThinWordFontLine: 6, cdrMixedFontLine: 7,
+  // cdrFontCase
+  cdrNormalFontCase: 0, cdrSmallCapsFontCase: 1, cdrAllCapsFontCase: 2, cdrMixedFontCase: 3,
   // cdrNodeType
   cdrCuspNode: 0, cdrSmoothNode: 1, cdrSymmetricalNode: 2,
   // cdrSegmentType
-  cdrLineSegment: 0, cdrCurveSegment: 1,
+  cdrLineSegment: 0, cdrCurveSegment: 1, cdrMixedSegments: 2,
   // cdrPageOrientation
   cdrPortrait: 0, cdrLandscape: 1,
   // cdrExportRange
   cdrCurrentPage: 0, cdrAllPages: 1, cdrSelection: 2, cdrPageRange: 3,
-  // cdrFilter (export formats)
-  cdrCDR: 1280, cdrPNG: 802, cdrJPEG: 774, cdrBMP: 769, cdrTIFF: 777, cdrGIF: 773,
-  cdrPDF: 1335, cdrSVG: 1345, cdrEPS: 1289, cdrWEBP: 834,
+  // cdrFilter
+  cdrAutoSense: 0, cdrBMP: 769, cdrPCX: 770, cdrTGA: 771, cdrTIFF: 772, cdrGIF: 773,
+  cdrJPEG: 774, cdrPCD: 775, cdrSCT: 776, cdrICO: 784, cdrCUR: 785, cdrEXE: 786,
+  cdrIMG: 787, cdrPSD: 788, cdrPP4: 789, cdrMAC: 791, cdrOS2BMP: 792, cdrWI: 793,
+  cdrWVL: 793, cdrCAL: 800, cdrDCS: 801, cdrPNG: 802, cdrPP5: 803, cdrEPSPhotoPaint: 804,
+  cdrFPX: 806, cdrRIFF: 807, cdrXPM: 809, cdrXCF: 816, cdrJPG2000Import: 818, cdrPPF: 819,
+  cdrJP2: 820, cdrJPC: 821, cdrPSP: 822, cdrRAW: 823, cdrWEBP: 825, cdrCGM: 1280,
+  cdrHPGL: 1281, cdrPLT: 1281, cdrGEM: 1284, cdrWPG: 1287, cdrPSEncapsulated: 1289,
+  cdrEPS: 1289, cdrPSInterpreted: 1290, cdrMET: 1291, cdrNAP: 1292, cdrPICT: 1293,
+  cdrWMF: 1294, cdrDXF: 1296, cdrEMF: 1300, cdrTTF: 1302, cdrAT1: 1303, cdrAI: 1305,
+  cdrVSD: 1315, cdrDWG: 1328, cdrFMV: 1329, cdrPDF: 1333, cdrAI9: 1333, cdrPIC: 1334,
+  cdrDRW: 1339, cdrDSF: 1339, cdrSWF: 1343, cdrFH: 1344, cdrSVG: 1345, cdrSVGZ: 1347,
+  cdrPUB: 1349, cdrAVI: 1536, cdrQTM: 1542, cdrPPT: 1548, cdrHTML: 1557,
+  cdrGIFAnimation: 1558, cdr3DMF: 1559, cdrQTVR: 1560, cdrCMX6: 1793, cdrCMX5: 1794,
+  cdrCDR: 1795, cdrCDX: 1796, cdrCPX: 1797, cdrCPT8: 1799, cdrCDT: 1800, cdrPAT: 1801,
+  cdrCLK: 1802, cdrDES: 1805, cdrSHW: 1806, cdrCPT: 1808, cdrCPT9: 1808, cdrCPT10: 1808,
+  cdrCPT11: 1808, cdrCSL: 1810, cdrCMX64: 1811, cdrTXT: 2048, cdrWord95: 2049,
+  cdrWord2: 2050, cdrWord55: 2051, cdrMacWord5: 2052, cdrRTF: 2053, cdrWP9: 2055,
+  cdrWPD: 2055, cdrWP51: 2056, cdrWP50: 2057, cdrWP4: 2058, cdrWSW: 2059, cdrWS7: 2060,
+  cdrWS2000: 2061, cdrWSD: 2061, cdrXY: 2062, cdrSAM: 2063, cdrXLS: 2064, cdrWKS: 2066,
+  cdrQuattroPro: 2067, cdrDOC: 2068, cdrWord2000: 2068, cdrWS6: 2163, cdrWS4: 2164,
+  cdrMIF: 2165, cdrWPM: 2166, cdrCGZ: 2315,
   // cdrImageType
   cdrBlackAndWhiteImage: 0, cdr16ColorsImage: 1, cdrGrayscaleImage: 2,
-  cdrPalettedImage: 3, cdrRGBColorImage: 4, cdrCMYKColorImage: 5,
-  // cdrTrueFalse
-  cdrTrue: -1, cdrFalse: 0,
-  // cdrColorType, more
-  cdrColorPantoneHex: 14, cdrColorUserInk: 21, cdrColorMultiChannel: 26,
+  cdrPalettedImage: 3, cdrRGBColorImage: 4, cdrCMYKColorImage: 5, cdrDuotoneImage: 6,
+  cdrLABImage: 7, cdrCMYKMultiChannelImage: 8, cdrRGBMultiChannelImage: 9,
+  cdrSpotMultiChannelImage: 10,
+  // cdrTriState
+  cdrTrue: -1, cdrFalse: 0, cdrUndefined: -2,
   // cdrTransparencyType
   cdrNoTransparency: 0, cdrUniformTransparency: 1, cdrFountainTransparency: 2,
   cdrPatternTransparency: 3, cdrTextureTransparency: 4,
+  // cdrTransparencyAppliedTo
+  cdrApplyToFill: 0, cdrApplyToOutline: 1, cdrApplyToFillAndOutline: 2,
   // cdrMergeMode
-  cdrMergeNormal: 0, cdrMergeAdd: 1, cdrMergeSubtract: 2, cdrMergeDifference: 3,
-  cdrMergeMultiply: 4, cdrMergeDivide: 5, cdrMergeIfLighter: 6, cdrMergeIfDarker: 7,
-  cdrMergeTexturize: 8, cdrMergeColor: 9, cdrMergeHue: 10, cdrMergeSaturation: 11,
-  cdrMergeLightness: 12, cdrMergeInvert: 13, cdrMergeAND: 14, cdrMergeOR: 15, cdrMergeXOR: 16,
-  cdrMergeRed: 17, cdrMergeGreen: 18, cdrMergeBlue: 19,
-  // cdrImageType, more
-  cdrDuotoneImage: 6, cdrLABImage: 7, cdrCMYKMultiChannelImage: 8,
-  cdrRGBMultiChannelImage: 9, cdrSpotMultiChannelImage: 10,
+  cdrMergeNormal: 0, cdrMergeAND: 1, cdrMergeOR: 2, cdrMergeXOR: 3, cdrMergeInvert: 6,
+  cdrMergeAdd: 7, cdrMergeSubtract: 8, cdrMergeMultiply: 9, cdrMergeDivide: 10,
+  cdrMergeIfLighter: 11, cdrMergeIfDarker: 12, cdrMergeTexturize: 13, cdrMergeColor: 14,
+  cdrMergeHue: 15, cdrMergeSaturation: 16, cdrMergeLightness: 17, cdrMergeRed: 18,
+  cdrMergeGreen: 19, cdrMergeBlue: 20, cdrMergeDifference: 24, cdrMergeBehind: 27,
+  cdrMergeScreen: 28, cdrMergeOverlay: 29, cdrMergeSoftlight: 30, cdrMergeHardlight: 31,
+  cdrMergeDodge: 33, cdrMergeBurn: 34, cdrMergeExclusion: 36,
   // cdrEffectType
-  cdrBlend: 1, cdrExtrude: 2, cdrEnvelope: 3, cdrTextOnPath: 4, cdrDistortion: 5,
-  cdrDropShadow: 6, cdrContour: 7, cdrCustomEffect: 8, cdrLens: 9, cdrPerspective: 10,
-  cdrBevel: 11, cdrControlPath: 12,
+  cdrBlend: 0, cdrExtrude: 1, cdrEnvelope: 2, cdrTextOnPath: 3, cdrControlPath: 4,
+  cdrDropShadow: 5, cdrContour: 6, cdrDistortion: 7, cdrPerspective: 8, cdrLens: 9,
+  cdrCustomEffect: 10, cdrInnerShadow: 11,
   // cdrLensType
   cdrLensBrighten: 0, cdrLensColorAdd: 1, cdrLensColorLimit: 2, cdrLensCustomColorMap: 3,
   cdrLensFishEye: 4, cdrLensHeatMap: 5, cdrLensInvert: 6, cdrLensMagnify: 7,
@@ -92,35 +137,29 @@ const __consts = {
   cdrEnhancedView: 4, cdrPixelView: 6,
   // cdrAntiAliasingType
   cdrNoAntiAliasing: 0, cdrNormalAntiAliasing: 1, cdrSupersampling: 2,
-  // cdrFontCase
-  cdrNormalFontCase: 0, cdrSmallCapsFontCase: 1, cdrAllCapsFontCase: 2,
   // cdrTextLanguage (Windows language ids)
-  cdrEnglishUS: 1033, cdrEnglishUK: 2057, cdrRussian: 1049, cdrGerman: 1031,
-  cdrFrench: 1036, cdrSpanish: 1034, cdrItalian: 1040, cdrPortuguese: 2070,
-  cdrBrazilianPortuguese: 1046,
-  // cdrOutlineLineJoin / caps / type
-  cdrOutlineMiterLineJoin: 0, cdrOutlineRoundLineJoin: 1, cdrOutlineBevelLineJoin: 2,
-  cdrOutlineButtLineCaps: 0, cdrOutlineRoundLineCaps: 1, cdrOutlineSquareLineCaps: 2,
-  cdrEnhancedOutline: 2,
+  cdrLanguageNone: 0, cdrEnglishUS: 1033, cdrEnglishUK: 2057, cdrRussian: 1049,
+  cdrGerman: 1031, cdrFrench: 1036, cdrSpanish: 1034, cdrItalian: 1040,
+  cdrPortuguese: 2070, cdrBrazilianPortuguese: 1046,
   // cdrImportMode
   cdrImportFull: 0,
   // cdrCursorShape
-  cdrCursorSmallcrosshair: 1, cdrCursorPick: 2, cdrCursorEyeDrop: 4,
+  cdrCursorWinAppStarting: 0, cdrCursorWinArrow: 1, cdrCursorWinCross: 2,
+  cdrCursorWinHelp: 3, cdrCursorWinIbeam: 4, cdrCursorSmallcrosshair: 301,
+  cdrCursorPick: 305, cdrCursorPickNone: 305, cdrCursorEyeDrop: 326,
+  cdrCursorExtPick: 351, cdrCursorPickOvertarget: 396,
   // cdrFileVersion
   cdrCurrentVersion: 0,
-  // cdrConnectorLinkType
+  // cdrShapeLinkType
   cdrLinkAllConnections: 0,
   // cdrCompressionType
   cdrCompressionNone: 0, cdrCompressionLZW: 1,
-  // cdrFilter, more
-  cdrCPT: 1281,
-  // cdrApplyTo
-  cdrApplyToFillAndOutline: 0, cdrApplyToFill: 1, cdrApplyToOutline: 2,
 };
 for (const k in __consts) globalThis[k] = __consts[k];
 
-const __filterExt = { 1280: 'cdr', 802: 'png', 774: 'jpg', 769: 'bmp', 777: 'tif', 773: 'gif',
-  1335: 'pdf', 1345: 'svg', 1289: 'eps', 834: 'webp' };
+const __filterExt = { [cdrCDR]: 'cdr', [cdrPNG]: 'png', [cdrJPEG]: 'jpg', [cdrBMP]: 'bmp',
+  [cdrTIFF]: 'tif', [cdrGIF]: 'gif', [cdrPDF]: 'pdf', [cdrSVG]: 'svg', [cdrEPS]: 'eps',
+  [cdrPSInterpreted]: 'ps', [cdrWEBP]: 'webp' };
 
 // ----- Units and geometry -------------------------------------------------
 
@@ -128,7 +167,7 @@ const __vg = { unit: cdrInch, ref: cdrCenter, rot: new Map(), optimization: fals
   events: true, groupDepth: 0 };
 const __mmPer = { 0: 0.0001, 1: 25.4, 2: 304.8, 3: 1, 4: 10, 5: 25.4 / 96, 6: 1609344,
   7: 1000, 8: 1000000, 9: 0.376065, 10: 25.4 / 14, 11: 914.4, 12: 25.4 / 6, 13: 4.51165,
-  14: 25.4 / 72, 15: 25.4 };
+  14: 25.4 / 72, 15: 0.25, 16: 0.25 };
 function __f() { return __mmPer[__vg.unit] || 25.4; }
 function __mm(v) { return Number(v) * __f(); }
 function __un(mm) { return mm / __f(); }
@@ -192,7 +231,7 @@ class Color {
   }
   LabAssign(L, A, B) { this._set({ model: 'lab', l: L, a: A, b: B }); }
   RegistrationAssign() { this._set({ model: 'registration' }); }
-  CopyAssign(SourceColor) { this._set(JSON.parse(JSON.stringify(SourceColor.v))); }
+  CopyAssign(Color) { this._set(JSON.parse(JSON.stringify(Color.v))); }
   StringAssign(ColorString) { this._set(__parseColor(ColorString).v); }
   ConvertToRGB() { this._set(this._conv('RGB').color); }
   ConvertToCMYK() { this._set(this._conv('CMYK').color); }
@@ -270,7 +309,7 @@ class Fill {
   set UniformColor(c) { this.ApplyUniformFill(c); }
   ApplyNoFill() { this._put({ fill: 'none' }); }
   ApplyUniformFill(Color) { this._put(Object.assign({ fill: 'solid' }, Color.v)); }
-  ApplyFountainFill(StartColor, EndColor, Type, Angle) {
+  ApplyFountainFill(StartColor, EndColor, Type, Angle, Steps, EdgePad, MidPoint, BlendType, CenterOffsetX, CenterOffsetY) {
     const from = (StartColor || new Color()).v;
     const to = (EndColor || new Color({ model: 'rgb', r: 1, g: 1, b: 1 })).v;
     for (const id of this.o._ids()) __call('set_fountain', { id: id, from: from, to: to, angle: Angle || 0 });
@@ -732,7 +771,7 @@ class __Story {
   set Italic(v) { this._spans(s => { s.italic = !!v; }); }
   get Underline() { const s = this.k.spans[0]; return s && s.underline ? cdrSingleThinFontLine : cdrNoFontLine; }
   set Underline(v) { this._spans(s => { s.underline = !!v; }); }
-  get Alignment() { return __align2cdr[this.k.align] || cdrLeftAlignment; }
+  get Alignment() { const a = __align2cdr[this.k.align]; return a === undefined ? cdrLeftAlignment : a; }
   set Alignment(v) { const k = this.k; k.align = __cdr2align[v] || 'left'; this.put(k); }
   get Length() { return this.Text.length; }
   get Characters() { const t = this.Text; return { Count: t.length }; }
@@ -853,30 +892,60 @@ class ShapeRange extends __Geo {
     const r = __find(this._ids(), Name, Type, Recursive === undefined ? true : Recursive, Query);
     return r.length ? new Shape(r[0]) : null;
   }
-  // Distribute: cdrAlignLeft / cdrAlignHCenter / cdrAlignRight spread
-  // horizontally, cdrAlignTop / cdrAlignVCenter / cdrAlignBottom vertically;
-  // a spacing method (any other non-zero value) spaces them evenly.
-  AlignAndDistribute(MethodH, MethodV) {
-    const items = this._ids().map(id => [id, __call('vg_bounds', { ids: [id] })]);
-    if (items.length < 3) return;
-    const spread = (axis, method) => {
-      if (!method) return;
-      const lo = axis === 'x' ? 'x0' : 'y0', hi = axis === 'x' ? 'x1' : 'y1';
-      const at = (b) => (method === 1 || method === 8 ? b[lo] : method === 2 || method === 4 ? b[hi] : (b[lo] + b[hi]) / 2);
-      items.sort((a, b) => at(a[1]) - at(b[1]));
-      const first = at(items[0][1]), last = at(items[items.length - 1][1]);
-      items.forEach((it, i) => {
-        const want = first + (last - first) * i / (items.length - 1);
-        const d = want - at(it[1]);
-        __xf([it[0]], axis === 'x' ? __M.move(d, 0) : __M.move(0, d));
-        it[1] = __call('vg_bounds', { ids: [it[0]] });
-      });
+  // MethodH and MethodV take cdrAlignDistributeH / cdrAlignDistributeV:
+  // 1 to 3 align (right or top, left or bottom, centre) to the last shape
+  // of the range, the page edge or centre, or a point (AlignTo); 4 to 6
+  // spread the same lines evenly and 7 makes the gaps equal, across the
+  // range or the page or DistributeRect (DistributeArea).
+  AlignAndDistribute(MethodH, MethodV, AlignTo, DistributeArea, UseOutline, TextAlignOrigin, PointX, PointY, DistributeRect) {
+    const ids = this._ids();
+    if (!ids.length) return;
+    const to = AlignTo === undefined ? cdrAlignShapesToLastSelected : AlignTo;
+    if ((MethodH || MethodV) && to === cdrAlignShapesToGrid) __no('ShapeRange.AlignAndDistribute', 'there is no grid to align to');
+    const box = (id) => __call('vg_bounds', { ids: [id] });
+    const pick = (b, m, lo, hi) => (m === 1 || m === 4 ? b[hi] : m === 2 || m === 5 ? b[lo] : (b[lo] + b[hi]) / 2);
+    let area = null;
+    if (DistributeArea === cdrDistributeToPage) area = __pageBox();
+    else if (DistributeArea === cdrDistributeToRect && DistributeRect) {
+      const r = DistributeRect;
+      area = { x0: __mm(r.x), y0: __mm(r.y), x1: __mm(r.x + r.Width), y1: __mm(r.y + r.Height) };
+    }
+    const axis = (m, isX) => {
+      if (!m) return;
+      const lo = isX ? 'x0' : 'y0', hi = isX ? 'x1' : 'y1';
+      const move = (id, d) => { if (d) __xf([id], isX ? __M.move(d, 0) : __M.move(0, d)); };
+      if (m <= 3) {
+        let target;
+        if (to === cdrAlignShapesToEdgeOfPage) target = pick(__pageBox(), m, lo, hi);
+        else if (to === cdrAlignShapesToCenterOfPage) { const p = __pageBox(); target = (p[lo] + p[hi]) / 2; }
+        else if (to === cdrAlignShapesToPoint) target = __mm(isX ? PointX : PointY);
+        else { if (ids.length < 2) return; target = pick(box(ids[ids.length - 1]), m, lo, hi); }
+        for (const id of ids) move(id, target - pick(box(id), m, lo, hi));
+        return;
+      }
+      if (ids.length < 2) return;
+      const items = ids.map(id => [id, box(id)]);
+      if (m === 7) {
+        items.sort((a, b) => a[1][lo] - b[1][lo]);
+        const total = items.reduce((t, it) => t + it[1][hi] - it[1][lo], 0);
+        const from = area ? area[lo] : items[0][1][lo];
+        const to2 = area ? area[hi] : Math.max(...items.map(it => it[1][hi]));
+        const gap = (to2 - from - total) / (items.length - 1);
+        let at = from;
+        for (const [id, b] of items) { move(id, at - b[lo]); at += b[hi] - b[lo] + gap; }
+        return;
+      }
+      items.sort((a, b) => pick(a[1], m, lo, hi) - pick(b[1], m, lo, hi));
+      const b0 = items[0][1], bn = items[items.length - 1][1];
+      const first = area ? area[lo] + pick(b0, m, lo, hi) - b0[lo] : pick(b0, m, lo, hi);
+      const last = area ? area[hi] - (bn[hi] - pick(bn, m, lo, hi)) : pick(bn, m, lo, hi);
+      items.forEach(([id, b], i) => move(id, first + (last - first) * i / (items.length - 1) - pick(b, m, lo, hi)));
     };
-    spread('x', MethodH);
-    spread('y', MethodV);
+    axis(MethodH, true);
+    axis(MethodV, false);
   }
-  DistributeHorizontally() { this.AlignAndDistribute(cdrAlignHCenter, 0); }
-  DistributeVertically() { this.AlignAndDistribute(0, cdrAlignVCenter); }
+  DistributeHorizontally() { this.AlignAndDistribute(cdrAlignDistributeHDistributeCenter, cdrAlignDistributeVNone); }
+  DistributeVertically() { this.AlignAndDistribute(cdrAlignDistributeHNone, cdrAlignDistributeVDistributeCenter); }
   [Symbol.iterator]() { return __iter(this.ids.map(id => new Shape(id))); }
   forEach(f) { this.ids.map(id => new Shape(id)).forEach(f); }
 }
@@ -1144,14 +1213,15 @@ class Document {
     if (Range === cdrAllPages) return d.pages;
     return [d.page];
   }
-  Export(FileName, Filter, Range, Options) {
+  Export(FileName, Filter, Range, Options, PaletteOptions) {
     const fmt = __filterExt[Filter] || '';
     __call('vg_export', { path: String(FileName), format: fmt, page: this._d.page });
   }
-  ExportEx(FileName, Filter, Range, Options) {
+  ExportEx(FileName, Filter, Range, Options, PaletteOptions) {
     return new ExportFilter({ path: String(FileName), format: __filterExt[Filter] || '', page: this._d.page });
   }
-  ExportBitmap(FileName, Filter, Range, ImageType, Width, Height, ResolutionX, ResolutionY) {
+  ExportBitmap(FileName, Filter, Range, ImageType, Width, Height, ResolutionX, ResolutionY,
+    AntiAliasingType, Dithered, Transparent, UseColorProfile, MaintainLayers, Compression, PaletteOptions, ExportArea) {
     return new ExportFilter({ path: String(FileName), format: __filterExt[Filter] || '', page: this._d.page,
       w: Width || 0, h: Height || 0, dpi: ResolutionX || 0 });
   }
@@ -1359,11 +1429,11 @@ for (const cls of [Shape, ShapeRange, SelectionShape]) {
   };
 }
 const __effectType = { blend: cdrBlend, extrude: cdrExtrude, envelope: cdrEnvelope, distort: cdrDistortion,
-  contour: cdrContour, lens: cdrLens, perspective: cdrPerspective, bevel: cdrBevel,
+  contour: cdrContour, lens: cdrLens, perspective: cdrPerspective, bevel: cdrCustomEffect,
   shadow: cdrDropShadow, textonpath: cdrTextOnPath };
 class __Effect {
   constructor(id, e) { this.id = id; this.e = e; }
-  get Type() { return __effectType[this.e.kind] || cdrCustomEffect; }
+  get Type() { const t = __effectType[this.e.kind]; return t === undefined ? cdrCustomEffect : t; }
   get DropShadow() {
     if (this.e.kind !== 'shadow') return null;
     const e = this.e;

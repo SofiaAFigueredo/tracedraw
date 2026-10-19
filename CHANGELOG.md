@@ -10,8 +10,10 @@ full, row-by-row status.
   Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
   Outline, Transparency, Curve, Text and its views, Color, the cdr*
   constants), with lengths in the document unit and the reference
-  point (docs/behavior/vba.md). Ids minted by scripts no longer collide
-  with the drawing's own after a run that groups or adds pages.
+  point (docs/behavior/vba.md); constant values and parameter names
+  checked against the published developer reference. Ids minted by
+  scripts no longer collide with the drawing's own after a run that
+  groups or adds pages.
 
 - Document Properties: language, title, subject, author, copyright,
   tags, notes and a rating list, applied on OK in one undo step, over a

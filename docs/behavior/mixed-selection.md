@@ -23,6 +23,8 @@ for everything else. A group stands for the objects inside it.
 A value typed or picked in a mixed control goes to every selected
 object, also when it equals the value the first object has.
 
+The status bar's fill and outline read "Mixed" (no swatch) the same way.
+
 ## What a change sends
 
 | Edited | Each object gets | Keeps |

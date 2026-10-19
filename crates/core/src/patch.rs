@@ -91,7 +91,7 @@ impl StrokeField {
             StrokeField::Stretch => to.stretch = from.stretch,
             StrokeField::NibAngle => to.nib_angle = from.nib_angle,
             StrokeField::Widths => to.widths = from.widths.clone(),
-            StrokeField::Painterly => to.painterly = from.painterly.clone(),
+            StrokeField::Painterly => to.painterly = from.painterly,
         }
     }
 }

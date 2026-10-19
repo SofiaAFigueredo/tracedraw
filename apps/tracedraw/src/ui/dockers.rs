@@ -2041,7 +2041,8 @@ mod tests {
             )),
             ..Default::default()
         };
-        let out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+        let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+        out.textures_delta.clear();
         let mut texts = Vec::new();
         for c in &out.shapes {
             walk(&c.shape, &mut texts);
@@ -2091,7 +2092,11 @@ mod tests {
             !texts
                 .iter()
                 .any(|t| t.contains("1.234") || t.contains("3.456")),
-            "no width shows"
+            "no width shows: {:?}",
+            texts
+                .iter()
+                .filter(|t| t.contains("1.234") || t.contains("3.456"))
+                .collect::<Vec<_>>()
         );
         let mix = app.selection_stroke_mix();
         assert!(mix.has(StrokeField::Width) && mix.has(StrokeField::Paint));

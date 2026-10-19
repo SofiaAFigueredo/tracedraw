@@ -15,6 +15,14 @@ full, row-by-row status.
   background.
 - Blends of text and of shapes with several parts (letters, holes)
   morph part by part, so the steps between two texts read as letters.
+- VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
+  and other compound files with a VBA project (modules, their kinds and
+  code in the project's code page, references, protection, modules saved
+  without source), exported `.bas`, `.cls` and `.frm`/`.frx` files, and
+  the forms with their controls (labels, text boxes, buttons, check and
+  option boxes, lists, frames, pages, images, spin buttons, scroll bars,
+  tab strips). Projects can be written back as module files or as a
+  compound file.
 
 - Moving objects with the Pick tool shows the arrow with a dotted box,
   and the box gets a plus after a right click (the move leaves the

@@ -5,7 +5,7 @@ use crate::app::{App, DockerTab};
 use crate::i18n::tr;
 use crate::tools::Tool;
 use crate::ui::dialogs::Dialog;
-use crate::ui::menus::{body, check, item, item_label, menu_popup_style, sep, sub};
+use crate::ui::menus::{body, check, item, item_label, menu_popup_style, radio, sep, sub};
 use egui::{Response, Ui};
 use tracedraw_core::{document::ShapeKind, Command};
 
@@ -120,7 +120,7 @@ fn guide_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
     }
 }
 
-fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
+pub(crate) fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
     let shapes = app.selected_shapes();
     let is_text = shapes
         .iter()
@@ -191,6 +191,26 @@ fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
         }
         sep(ui);
     }
+    // Clones and their masters.
+    let has_clone = app.selection_has_clone();
+    let has_clones = app.selection_has_clones();
+    if has_clone || has_clones {
+        if has_clone {
+            if ci(ui, close, "context.select_master", "", true) {
+                app.select_clone_masters();
+            }
+            if ci(ui, close, "context.revert_to_master", "", true) {
+                app.revert_clones_to_master();
+            }
+            if ci(ui, close, "context.unlink_clone", "", true) {
+                app.unlink_clones();
+            }
+        }
+        if has_clones && ci(ui, close, "context.select_clones", "", true) {
+            app.select_clones_of_selection();
+        }
+        sep(ui);
+    }
     // One object (a group most of all): edit it on its own.
     if ci(
         ui,
@@ -206,7 +226,7 @@ fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
         close,
         "menu.object.convert_to_curves",
         "Ctrl+Q",
-        !is_curve || many,
+        app.can_convert_to_curves(),
     ) {
         app.convert_to_curves();
     }
@@ -365,15 +385,28 @@ fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
         }
     });
     sep(ui);
-    let wrap = shapes.iter().any(|s| s.wrap_text);
-    if check(ui, "context.wrap_paragraph_text", "", wrap) {
-        let ids = app.selection.clone();
-        app.run(Command::SetWrapText {
-            shapes: ids,
-            wrap: !wrap,
-        });
-        *close = true;
-    }
+    // Wrap Paragraph Text: on or off, the seven styles and the offset.
+    let (wrap, current) = app.wrap_state();
+    sub(ui, "context.wrap_paragraph_text", |ui| {
+        if check(ui, "context.wrap_text_on", "", wrap) {
+            let ids = app.selection.clone();
+            app.run(Command::SetWrapText {
+                shapes: ids,
+                wrap: !wrap,
+            });
+            *close = true;
+        }
+        sep(ui);
+        for (mode, side) in tracedraw_core::TextWrap::STYLES {
+            let here = wrap && current.mode == mode && current.side == side;
+            if radio(ui, crate::ui::propbar::wrap_style_key(mode, side), "", here) {
+                app.set_wrap_style(mode, side);
+                *close = true;
+            }
+        }
+        sep(ui);
+        crate::ui::propbar::wrap_offset_field(app, ui, current.offset);
+    });
     sep(ui);
     let of = shapes.iter().any(|s| s.overprint_fill);
     let oo = shapes.iter().any(|s| s.overprint_outline);

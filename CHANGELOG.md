@@ -18,6 +18,220 @@ full, row-by-row status.
   docker's text settings; tables get margins per side and separated
   borders. Options > Tools > Table chooses the Tab order and whether
   Tab types a tab.
+- Outline widths are shown and typed in a unit of their own, points by
+  default (millimetres, centimetres, inches or pixels on request), and
+  the width list offers round values in it.
+- Outlines: position outside, centred or inside the path; a mitre limit
+  angle (5 degrees for new outlines); Align dashes fits a dash pattern
+  so corners and line ends fall on dashes; Edit Line Style makes custom
+  dash patterns on a grid, kept in the settings and listed with the
+  presets. SVG and PDF exports draw them the same.
+- Drop shadows: perspective shadows dragged from an edge (angle,
+  stretch, fade), merge modes (Multiply for new shadows), feather
+  direction and edges, presets, on-canvas handles (end with colour drop,
+  opacity bar, start) and Break Drop Shadow Apart (a bitmap behind the
+  object, one undo step). Shadows in older files look as before.
+- Ctrl+click selects an object inside a clip frame (where the frame
+  shows it), and Ctrl+Alt+click digs through a clip frame's contents,
+  as in groups; text over a rectangle in a `.cdr` drawing is hit first,
+  and an empty rectangle over text gives way to Alt+click (#190).
+- Fit Text to Path on a closed path centres the text where the path is
+  clicked (the bottom of an ellipse too), the mirrors keep the letters
+  in place along the path, and the Text placement list has Top centre
+  and Bottom centre on a closed path, the bottom one reading left to
+  right inside the curve; Tick snapping moves the text off the path in
+  steps of its spacing (#193).
+- Print > Prepress > Invert prints a true negative: the sheet's paper
+  turns black as well, so black text no longer comes out white on white
+  paper (#191).
+- The Properties docker keeps its width when an object is selected:
+  the Transparency section sits in three rows, the Rectangle section
+  lists the corner kinds one under the other with the radii two by two,
+  and no section can push the docker wider (#196).
+- Properties docker, Outline Pen and property bar with several objects
+  selected (#204): changing one value (such as the outline width) no
+  longer gives every object the first object's whole outline, fill or
+  transparency; only the value changed is set and each object keeps the
+  rest. Values that differ across the selection show as mixed (an empty
+  field, no colour, nothing highlighted); a value set there goes to all
+  (docs/behavior/mixed-selection.md). The property bar's width, line
+  style and arrowheads and a palette outline colour also keep each
+  object's other outline values, inside groups too.
+- Page tab menu: six rows with a picture each and no separators (Rename
+  Page..., Insert Page After, Insert Page Before, Duplicate Page...,
+  Delete Page, Switch Page Orientation); Page Size and Page Background
+  stay in the Layout menu. Duplicate Page... (also in the Layout menu and
+  the Pages panel) opens a dialog: insert the copy before or after the
+  selected page, and copy the layers only or with their contents. The
+  copy becomes the current page and one undo removes it.
+- Rectangles: new rectangles keep their corner size when resized
+  (Relative corner scaling is off by default on the property bar and in
+  Options > Toolbox > Rectangle tool), so a rounded rectangle stretched in
+  one direction keeps circular corners of the same radius. Turn the
+  setting on to have corners scale with the rectangle. Drawings saved
+  earlier open unchanged; preferences from older versions start with it
+  off once. Scaling a group evenly keeps such corners fixed (grown by the
+  factor) instead of turning a stretched rectangle into a curve, and
+  `.cdr` versions with rectangle objects save a stretched one as a
+  rectangle with its radius.
+- Pen: Preview mode (on by default, on the property bar and in Options >
+  Tools > Curve tools) shows the next segment dashed in blue from the last
+  node to the pointer before the click, curved by the node's handle. Auto
+  add/delete (on by default): a click on a segment of the curve being
+  drawn or of the selected curve adds a node, a click on a node deletes
+  it, with plus and minus pointers. While drawing with the Pen or Bezier
+  the placed segments show in the outline colour new curves get, the
+  last node filled blue and the others hollow. C held while pulling a
+  handle makes a cusp even when pressed before the drag, and no longer
+  aligns the selection. The snap screen tips also name the grid and
+  guidelines.
+
+- VBA macros: the object model they are written against (Application,
+  Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
+  Outline, Transparency, Curve, Text and its views, Color, the cdr*
+  constants), with lengths in the document unit and the reference
+  point (docs/behavior/vba.md); constant values and parameter names
+  checked against the published developer reference. Ids minted by
+  scripts no longer collide with the drawing's own after a run that
+  groups or adds pages.
+
+- VBA macros: a compiler from VBA modules, classes and form code to
+  scripts over the TraceDraw object model, with the VBA run-time library,
+  Collection and Scripting.Dictionary.
+- `.cdr` saving writes only the versions checked in other programs (14
+  to 27). Save on a drawing opened from an older version asks to choose a
+  version first ("Older file version", then Save As on version 14)
+  instead of writing the old version again. The command line writes
+  version 27 by default and the experimental 7 to 13 only with
+  `TRACEDRAW_CDR_EXPERIMENTAL=1`; the MCP `save` tool takes 14 to 27.
+- Help: a user guide of 120 pages (getting started, lines and shapes,
+  objects, color, effects, text, templates and styles, pages, bitmaps,
+  printing, web graphics, file formats, customizing, reference) with
+  screenshots of the dialogs and panels, published with the browser
+  version in every interface language, with contents, search, previous
+  and next, light and dark and right-to-left Arabic. Every "?" button
+  opens the page of its dialog or options page, F1 the page of the open
+  dialog, panel or tool, and Help > Help Topics the first page, in the
+  interface language.
+- Wrap Paragraph Text now works: paragraph text flows around the objects
+  marked to wrap it that lie over its frame, along their outline or
+  their bounding box, with the text on the left, the right, both sides
+  or above and below, and a text wrap offset (the arrow beside the
+  property bar button). Drawing, printing, exports, clicks and the caret
+  follow the wrapped lines.
+- Alignment, spacing, indents, bullets, drop caps, tabs and hyphenation
+  are kept per paragraph: while a text is edited they change the
+  paragraphs of the selection, with the whole object selected every
+  paragraph (only the settings changed). Older drawings open with their
+  object-wide formatting on every paragraph; `.cdr` files keep each
+  paragraph's alignment both ways.
+- The context menu's Wrap Paragraph Text is a submenu with the seven
+  wrap styles and the offset. The Shape tool's spacing arrows change
+  every paragraph, keeping their differences. `.cdr` files keep each
+  paragraph's line spacing from version 16, and paragraph spacing
+  before and after is read from version 16 style strings.
+- Align to Baseline Grid puts the baselines on the page's baseline grid
+  (from the page top and the grid's start offset), so frames line up
+  with one another.
+- Alignment guides (View > Alignment Guides, Alt+Shift+A) now work:
+  while moving, drawing or resizing, lines show where the selection or
+  the pointer lines up with other objects' edges and centres, the page
+  or margin lines, and the move snaps there; equal gaps between
+  neighbours snap and are marked, and a box being drawn or resized
+  takes another object's width or height, marked on both. In the
+  Multipage View the other pages' objects count too. Off by default (the code default was
+  on). Options > Alignment Guides sets the object (the selection or
+  each object), edges, centres, page, margins with offset and inset,
+  equal spacing, equal sizes, colour and line style.
+- Dynamic guides (View > Dynamic Guides, Alt+Shift+D) now work: guides
+  at chosen angles run from the snap points the pointer acquired and
+  from the line's start; points snap onto them and their crossings,
+  with the distance and angle beside the pointer and optional tick
+  marks. Options > Dynamic Guides sets the angles, tip, ticks, colour
+  and line style. Both also sit in the standard bar's Snap To list.
+- Text: Chinese, Japanese, Korean and other input methods work while
+  typing on the canvas and in table cells (the text being composed shows
+  at the caret). Break Apart (Ctrl+K) on artistic text splits it into
+  lines, words or letters, each a text object of its own.
+- A right click on a page tab opens the page menu: rename, insert a page
+  before or after, duplicate, delete, switch orientation, page size and
+  background.
+- Blends of text and of shapes with several parts (letters, holes)
+  morph part by part, so the steps between two texts read as letters.
+- Pen and Bezier: a plain click after a pulled node gives a straight
+  segment (the node becomes a cusp), clicking the last node again makes
+  it a cusp, C while pulling a handle makes the node a cusp and Alt
+  moves it, and dragging from the first node shapes only the closing
+  segment. With no curve being drawn they add a node on a segment of the
+  selected curve and drag its nodes. The pointer shows what a press
+  does: start, continue, add a node, close, edit a node.
+- Shape tool: nodes and handles are taken within a pick distance (6
+  pixels, Options > Nodes and Handles), and a near miss no longer
+  deselects the object. A rectangle, ellipse or polygon says what it is
+  on the property bar and the status bar, apart from a curve.
+- Linux: the window can be resized and maximized under every window
+  manager (Xfwm4 kept it at one size) and fits small screens: a smaller
+  minimum size, maximized at start when the kept size does not fit.
+  Bars longer than the window slide with "«" and "»" buttons (and the
+  mouse wheel), and dialogs taller than the window scroll (#168).
+- VBA macro files are read (new `tracedraw-vba-project` crate): `.gms`
+  and other compound files with a VBA project (modules, their kinds and
+  code in the project's code page, references, protection, modules saved
+  without source), exported `.bas`, `.cls` and `.frm`/`.frx` files, and
+  the forms with their controls (labels, text boxes, buttons, check and
+  option boxes, lists, frames, pages, images, spin buttons, scroll bars,
+  tab strips). Projects can be written back as module files or as a
+  compound file.
+- PDF files keep text as text: it can be searched, selected and copied.
+  The fonts go in as subsets (only the glyphs used), TrueType and CFF
+  outlines alike, with a map back to the characters. Publish to PDF >
+  Objects has Export all text as curves (off), Embed fonts in document,
+  Embed base 14 fonts and Subset fonts below a share of glyphs. Fonts
+  whose licence forbids embedding are written as curves, named on the
+  status line and noted by the preflight. Text written as curves (and
+  any curve in PDF and EPS files) keeps the font's exact curves:
+  quadratic segments become the matching cubic instead of a misshapen
+  one.
+
+- Convert to Curves turns a table into a group of curves (cell fills,
+  borders and text) and a symbol instance into its symbol's objects as
+  curves, instead of a plain rectangle; a clip frame keeps its contents
+  (frame and contents become curves and stay clipped); bitmaps are left
+  as they are
+  (the command is greyed for them, with a note in the status bar).
+- Trim, Weld, Intersect and Join Curves take the bottom-most object as
+  the target when the selection was made with a marquee; objects picked
+  one by one keep the one selected last as the target.
+- Colour Management: the Assign and Convert choices described each
+  other. Assign keeps the colour values (the look may change), Convert
+  keeps the look (the values change), in all 18 languages.
+- Imported bitmaps come in at the resolution their file records (PNG,
+  JPEG, TIFF, BMP), 96 dpi when it records none.
+- Space finishes a curve drawn with the Bezier tool (and then switches
+  to the Pick tool, as Space does).
+- Edit > Clone makes a linked clone that follows its master's fill,
+  outline and shape until the clone's own is edited, with Select
+  Master, Select Clones, Revert to Master and Break Clone Link in the
+  context menu (it used to make a plain duplicate).
+- The feature list and guides no longer claim live colour styles or
+  Find and Replace by properties; File > Open does not open bitmaps (File > Import does).
+- VBA macros: a compiler from VBA modules, classes and form code to
+  scripts over the TraceDraw object model, with the VBA run-time library,
+  Collection and Scripting.Dictionary.
+- VBA macros: the object model they are written against (Application,
+  Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
+  Outline, Transparency, Curve, Text and its views, Color, the cdr*
+  constants), with lengths in the document unit and the reference
+  point (docs/behavior/vba.md). Ids minted by scripts no longer collide
+  with the drawing's own after a run that groups or adds pages.
+- VBA macros in the app (desktop): Tools > Macros with the Macro
+  Manager docker, Run Macro (Alt+Shift+F8), Load Macro Project and the Macro
+  Editor (Alt+F11). Projects are kept in the settings folder and load at
+  start-up; macros run on their own thread with MsgBox and InputBox
+  dialogs, their user forms on screen with events, Stop and Esc, an
+  error box with the VBA line and one undo step per run. Each macro can
+  get a shortcut, and the Scripts panel runs VBA snippets too.
+
 - Moving objects with the Pick tool shows the arrow with a dotted box,
   and the box gets a plus after a right click (the move leaves the
   original and a copy lands where the left button goes up). The pointer
@@ -27,6 +241,17 @@ full, row-by-row status.
   report of the file, the document, its colour settings, objects and
   points, text, bitmaps, styles, effects, fills, outlines, colour models
   and symbols. PDF files carry the language.
+- Characters selected in an artistic or paragraph text being edited take
+  a colour picked from a palette, the document palette, the Properties
+  docker's fill or the Color docker as their own fill (right click: their
+  own outline), each its own undo step; the rest of the text keeps the
+  object's colours. Characters with their own colours are now drawn in
+  them on screen and in bitmap, SVG and PDF exports, so the per-character
+  colours of opened `.cdr` files show too (#187). The property bar's
+  font, size and style change only what they change on a selection.
+- Dragging in the Properties fill colour picker is one undo step and
+  adds only the final colour to the document palette, when the button
+  is let go (#188).
 
 ## 0.9.4 (2026-10-19)
 
@@ -260,7 +485,7 @@ full, row-by-row status.
 - Tracing a black and white logo keeps white shapes white: the colour
   quantising no longer averages black and white to grey.
 
-- The Transformations panel is laid out as in the reference program:
+- The Transformations panel has a new layout:
   spin boxes with the unit after them, the reference point under the
   check box with the direction picture beside it, a line before Copies.
 

@@ -75,6 +75,15 @@ pub enum CurveMark {
     Join,
     /// Close the curve being drawn on its first node.
     Close,
+    /// A click adds a node on a segment: of the selected curve (Pen,
+    /// Bezier) or of the curve being drawn (Pen).
+    AddNode,
+    /// Pen: a click deletes the node (of the selected curve or of the
+    /// curve being drawn).
+    DeleteNode,
+    /// A node a press edits: a node of the selected curve to drag, or the
+    /// last node of the curve being drawn, which a click makes a cusp.
+    EditNode,
 }
 
 /// What the Shape tool's arrow points at.
@@ -336,15 +345,37 @@ pub fn for_tool(
 fn curve_mark(app: &App, pos: Option<Pos2>) -> Option<CurveMark> {
     let pos = pos?;
     let p = app.view.to_page(pos);
+    let pen = matches!(app.tool, Tool::Bezier | Tool::Pen);
+    if app.pen_editing {
+        return Some(CurveMark::EditNode);
+    }
     if let Some(c) = &app.curve {
-        let near_first = c.nodes.first().is_some_and(|(f, _)| {
-            app.view.to_screen(*f).distance(pos) as f64 <= app.settings.curves.join_px()
-        });
-        if near_first && c.nodes.len() >= 3 {
+        let near = |q: &tracedraw_core::geometry::Point| {
+            app.view.to_screen(*q).distance(pos) as f64 <= app.settings.curves.join_px()
+        };
+        if c.nodes.len() >= 3 && c.nodes.first().is_some_and(|(f, _)| near(f)) {
             return Some(CurveMark::Close);
         }
+        if pen && c.nodes.len() >= 2 && c.nodes.last().is_some_and(|(l, _)| near(l)) {
+            return Some(CurveMark::EditNode);
+        }
+        return match app.pen_auto_at(p) {
+            Some(crate::pen_look::PenAuto::Delete(_)) => Some(CurveMark::DeleteNode),
+            Some(crate::pen_look::PenAuto::Add(..)) => Some(CurveMark::AddNode),
+            None => None,
+        };
     }
-    app.on_join_end(p).then_some(CurveMark::Join)
+    if app.on_join_end(p) {
+        return Some(CurveMark::Join);
+    }
+    match app.pen_edit_at(p) {
+        Some(crate::interaction::PenEdit::Node(..)) if app.pen_deletes_nodes() => {
+            Some(CurveMark::DeleteNode)
+        }
+        Some(crate::interaction::PenEdit::Node(..)) => Some(CurveMark::EditNode),
+        Some(crate::interaction::PenEdit::Segment(..)) => Some(CurveMark::AddNode),
+        None => None,
+    }
 }
 
 /// The pointer at `pos` is over a text object (or the text being
@@ -502,6 +533,39 @@ fn curve_mark_sign(painter: &Painter, p: Pos2, mark: CurveMark) {
         CurveMark::Close => {
             painter.circle_stroke(c, 4.0, Stroke::new(3.4, HALO));
             painter.circle_stroke(c, 4.0, Stroke::new(1.4, INK));
+        }
+        CurveMark::AddNode => {
+            haloed(
+                painter,
+                &[
+                    vec![c + Vec2::new(-4.0, 0.0), c + Vec2::new(4.0, 0.0)],
+                    vec![c + Vec2::new(0.0, -4.0), c + Vec2::new(0.0, 4.0)],
+                ],
+                1.4,
+            );
+        }
+        CurveMark::DeleteNode => {
+            haloed(
+                painter,
+                &[vec![c + Vec2::new(-4.0, 0.0), c + Vec2::new(4.0, 0.0)]],
+                1.4,
+            );
+        }
+        CurveMark::EditNode => {
+            // A hollow node with a small arrow head beside it.
+            let r = Rect::from_center_size(c, Vec2::splat(6.0));
+            painter.rect(
+                r,
+                CornerRadius::ZERO,
+                HALO,
+                Stroke::new(1.2, INK),
+                egui::StrokeKind::Inside,
+            );
+            haloed(
+                painter,
+                &[vec![c + Vec2::new(-7.0, 3.0), c + Vec2::new(-4.5, 0.5)]],
+                1.2,
+            );
         }
     }
 }
@@ -874,6 +938,7 @@ mod tests {
             smooth: true,
             dragging_handle: false,
             bspline: false,
+            ..Default::default()
         });
         let first = app
             .view

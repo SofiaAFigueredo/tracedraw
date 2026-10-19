@@ -63,6 +63,7 @@ impl Engine {
             uid_state: fresh_seed(),
         };
         e.doc.assign_uids(&mut e.uid_state);
+        e.doc.refresh_text_flow();
         e
     }
 
@@ -92,6 +93,7 @@ impl Engine {
     pub fn replace(&mut self, doc: Document) {
         self.doc = doc;
         self.doc.assign_uids(&mut self.uid_state);
+        self.doc.refresh_text_flow();
         self.undo.clear();
         self.redo.clear();
         self.revision += 1;
@@ -115,6 +117,7 @@ impl Engine {
         let before = self.doc.clone();
         cmd.apply(&mut self.doc)?;
         self.doc.assign_uids(&mut self.uid_state);
+        self.doc.refresh_text_flow();
         self.undo.push(HistoryEntry {
             label,
             before,
@@ -141,6 +144,7 @@ impl Engine {
             c.apply(&mut doc)?;
         }
         doc.assign_uids(&mut self.uid_state);
+        doc.refresh_text_flow();
         self.doc = doc;
         self.undo.push(HistoryEntry {
             label,
@@ -168,8 +172,41 @@ impl Engine {
         let mut doc = self.doc.clone();
         cmd.apply(&mut doc)?;
         doc.assign_uids(&mut self.uid_state);
+        doc.refresh_text_flow();
         self.doc = doc;
         last.after = self.doc.clone();
+        self.revision += 1;
+        self.step_revision = self.revision;
+        Ok(())
+    }
+
+    /// The drawing is as the step just recorded left it: no undo, redo or
+    /// change outside the history since. A side effect added now with
+    /// [`amend`](Self::amend) joins that step.
+    pub fn at_recorded_step(&self) -> bool {
+        self.revision == self.step_revision && !self.undo.is_empty()
+    }
+
+    /// [`Engine::amend`] for several commands: they join the step just
+    /// recorded, or make a step of their own named `label` when anything
+    /// else happened since. A failing command leaves the drawing as it was.
+    pub fn amend_batch(&mut self, label: &'static str, cmds: &[Command]) -> Result<()> {
+        if cmds.is_empty() {
+            return Ok(());
+        }
+        if self.revision != self.step_revision || self.undo.is_empty() {
+            return self.run_batch(label, cmds);
+        }
+        let mut doc = self.doc.clone();
+        for c in cmds {
+            c.apply(&mut doc)?;
+        }
+        doc.assign_uids(&mut self.uid_state);
+        self.doc = doc;
+        if let Some(last) = self.undo.last_mut() {
+            last.after = self.doc.clone();
+        }
+        self.redo.clear();
         self.revision += 1;
         self.step_revision = self.revision;
         Ok(())

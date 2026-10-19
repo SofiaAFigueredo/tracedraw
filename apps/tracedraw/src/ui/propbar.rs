@@ -74,6 +74,11 @@ pub enum Pic {
     ExtendToClose,
     ExtractSubpath,
     CloseCurve,
+    /// The Pen's preview mode: a node, a dashed segment to a pointer.
+    PenPreview,
+    /// The Pen's automatic adding and deleting of nodes: a curve with a
+    /// node, a plus and a minus.
+    AutoAddDelete,
     StretchNodes,
     RotateNodes,
     AlignNodes,
@@ -840,6 +845,21 @@ fn draw_node_pic(painter: &Painter, r: Rect, pic: Pic, color: Color32) {
             node(p0.0, p0.1, true);
             node(p1.0, p1.1, true);
         }
+        Pic::PenPreview => {
+            arch(1.5, 9.0, 12.0, 6.0, s);
+            node(9.0, 12.0, true);
+            dashed((9.0, 12.0), (13.0, 4.0));
+            // The pointer's cross hair.
+            line((13.0, 1.0), (13.0, 7.0), thin);
+            line((10.0, 4.0), (16.0, 4.0), thin);
+        }
+        Pic::AutoAddDelete => {
+            arch(1.5, 14.5, 13.0, 7.0, s);
+            node(8.0, 8.5, true);
+            line((1.0, 3.0), (5.0, 3.0), s);
+            line((3.0, 1.0), (3.0, 5.0), s);
+            line((11.0, 3.0), (15.0, 3.0), s);
+        }
         Pic::StretchNodes | Pic::RotateNodes => {
             let rr = Rect::from_min_max(q(r, 3.5, 3.5), q(r, 12.5, 12.5));
             let pts = [(3.5, 3.5), (12.5, 3.5), (12.5, 12.5), (3.5, 12.5)];
@@ -1269,6 +1289,24 @@ fn distance_in(
     step: Option<f64>,
     unit_mm: f64,
 ) -> Option<f64> {
+    distance_in_mixed(ui, app, mm, width, step, unit_mm, false)
+}
+
+/// [`distance`] for a value the selected objects do not share: the field
+/// is empty, a typed value goes to all of them.
+fn distance_mixed(ui: &mut Ui, app: &App, mm: f64, width: f32, mixed: bool) -> Option<f64> {
+    distance_in_mixed(ui, app, mm, width, Some(1.0), app.units.world_mm(), mixed)
+}
+
+fn distance_in_mixed(
+    ui: &mut Ui,
+    app: &App,
+    mm: f64,
+    width: f32,
+    step: Option<f64>,
+    unit_mm: f64,
+    mixed: bool,
+) -> Option<f64> {
     let u = app.units;
     let d = app.settings.precision.min(6) as usize;
     let unit_mm = if unit_mm.is_finite() && unit_mm > 0.0 {
@@ -1283,11 +1321,12 @@ fn distance_in(
             .fixed_decimals(d.min(3))
             .max_decimals(d)
             .suffix(format!(" {}", u.short()))
-            .unit_mm(u.mm()),
+            .unit_mm(u.mm())
+            .mixed(mixed),
     );
     let mut out = None;
     // Typed values apply with Enter or when the field is left.
-    if r.changed() && (v * unit_mm - mm).abs() > 1e-12 {
+    if r.changed() && (mixed || (v * unit_mm - mm).abs() > 1e-12) {
         out = Some(v * unit_mm);
     }
     if let Some(step) = step {
@@ -1722,21 +1761,80 @@ pub fn object_bar(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Outline widths the list offers.
+/// Outline widths the list offers in millimetres.
 pub(crate) const OUTLINE_WIDTHS_MM: [f64; 10] =
     [0.1, 0.2, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0];
+/// ... in points.
+const OUTLINE_WIDTHS_PT: [f64; 13] = [
+    0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0, 12.0, 16.0,
+];
+/// ... in inches.
+const OUTLINE_WIDTHS_IN: [f64; 9] = [0.003, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08, 0.1];
+/// ... in pixels.
+const OUTLINE_WIDTHS_PX: [f64; 10] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 16.0];
 
-/// Text for an outline width in the ruler unit ("Hairline", "None").
+/// The units an outline width can be shown and typed in.
+pub const OUTLINE_UNITS: [Units; 5] = [
+    Units::Points,
+    Units::Millimeters,
+    Units::Centimeters,
+    Units::Inches,
+    Units::Pixels,
+];
+
+/// The widths the outline width list offers in unit `u`: round values in
+/// that unit, given back in millimetres (the model's unit).
+pub fn outline_width_presets(u: Units) -> Vec<f64> {
+    let list: &[f64] = match u {
+        Units::Points => &OUTLINE_WIDTHS_PT,
+        Units::Inches => &OUTLINE_WIDTHS_IN,
+        Units::Pixels => &OUTLINE_WIDTHS_PX,
+        _ => return OUTLINE_WIDTHS_MM.to_vec(),
+    };
+    list.iter().map(|v| u.to_mm(*v)).collect()
+}
+
+/// Decimals an outline width shows in unit `u`.
+fn outline_decimals(u: Units) -> usize {
+    match u {
+        Units::Pixels => 1,
+        Units::Points => 2,
+        Units::Inches => 4,
+        _ => 3,
+    }
+}
+
+/// An outline width (mm) in unit `u`, as the lists show it ("0.75 pt").
+pub fn outline_width_label(w: f64, u: Units) -> String {
+    let v = crate::ui::field::format_number(u.from_mm(w), false, 0, Some(outline_decimals(u)));
+    format!("{v} {}", u.short())
+}
+
+/// Text for an outline width in the outline unit ("Hairline", "None").
 pub fn outline_text(app: &App, width: Option<f64>) -> String {
     match width {
         None => tr("toolbar.none"),
         Some(w) if w <= tracedraw_core::Stroke::HAIRLINE + 1e-9 => tr("toolbar.hairline"),
-        Some(w) => {
-            let u = app.units;
-            let d = if u == Units::Pixels { 2 } else { 3 };
-            format!("{:.*} {}", d, u.from_mm(w), u.short())
-        }
+        Some(w) => outline_width_label(w, app.outline_units()),
     }
+}
+
+/// The outline unit picker (points, millimetres, ...), next to a width.
+pub(crate) fn outline_unit_combo(ui: &mut Ui, salt: &str, current: Units) -> Option<Units> {
+    let mut picked = None;
+    egui::ComboBox::from_id_salt(salt)
+        .selected_text(current.short())
+        .width(44.0)
+        .show_ui(ui, |ui| {
+            for u in OUTLINE_UNITS {
+                if ui.selectable_label(u == current, u.short()).clicked() {
+                    picked = Some(u);
+                }
+            }
+        })
+        .response
+        .on_hover_text(tr("toolbar.outline_units"));
+    picked
 }
 
 /// What an outline width box's text asks for: no outline (`Some(None)`),
@@ -1780,11 +1878,21 @@ fn set_no_outline(app: &mut App) {
 /// The outline width: a box typed into (Enter or leaving it applies, Esc
 /// puts it back) and an arrow dropping the usual widths. Returns the
 /// width picked or typed.
-fn outline_width_box(app: &mut App, ui: &mut Ui, width: Option<f64>) -> Option<Option<f64>> {
+fn outline_width_box(
+    app: &mut App,
+    ui: &mut Ui,
+    width: Option<f64>,
+    mixed: bool,
+) -> Option<Option<f64>> {
     let ctx = ui.ctx().clone();
     let popup_id = ui.make_persistent_id("outline_width_list");
     let id = ui.make_persistent_id("outline_width_box");
-    let shown = outline_text(app, width);
+    // Objects with different widths: the box is empty until one is typed.
+    let shown = if mixed {
+        String::new()
+    } else {
+        outline_text(app, width)
+    };
     let mut picked: Option<Option<f64>> = None;
     let inner = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -1805,7 +1913,7 @@ fn outline_width_box(app: &mut App, ui: &mut Ui, width: Option<f64>) -> Option<O
             ui.data_mut(|d| d.remove::<String>(id));
             let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
             if !escaped && buf != shown {
-                picked = parse_outline_width(&buf, app.units);
+                picked = parse_outline_width(&buf, app.outline_units());
             }
         }
         let (arrow_rect, arrow) =
@@ -1841,7 +1949,7 @@ fn outline_width_box(app: &mut App, ui: &mut Ui, width: Option<f64>) -> Option<O
                 .max_height(400.0)
                 .show(ui, |ui| {
                     if ui
-                        .selectable_label(width.is_none(), tr("toolbar.none"))
+                        .selectable_label(!mixed && width.is_none(), tr("toolbar.none"))
                         .clicked()
                     {
                         picked = Some(None);
@@ -1849,7 +1957,7 @@ fn outline_width_box(app: &mut App, ui: &mut Ui, width: Option<f64>) -> Option<O
                     if ui.selectable_label(false, tr("toolbar.hairline")).clicked() {
                         picked = Some(Some(tracedraw_core::Stroke::HAIRLINE));
                     }
-                    for w in OUTLINE_WIDTHS_MM {
+                    for w in outline_width_presets(app.outline_units()) {
                         if ui
                             .selectable_label(false, outline_text(app, Some(w)))
                             .clicked()
@@ -1868,28 +1976,48 @@ fn outline_width_box(app: &mut App, ui: &mut Ui, width: Option<f64>) -> Option<O
 /// Outline width and the line style and arrowheads of the selection's
 /// outline.
 pub fn outline_part(app: &mut App, ui: &mut Ui) {
-    let first = app.selected_shapes().into_iter().next();
+    use tracedraw_core::patch::StrokeField;
+    // The first object's outline; values that differ across the selection
+    // show empty. Each control changes only its own value on each object.
+    let first = app.paint_targets().into_iter().next();
     let stroke = first.as_ref().and_then(|s| s.stroke.clone());
+    let mix = app.selection_stroke_mix();
     label_pic(ui, Pic::Pen, &tr("toolbar.outline_width"));
     let width = stroke.as_ref().map(|s| s.width);
-    match outline_width_box(app, ui, width) {
+    match outline_width_box(app, ui, width, mix.presence || mix.has(StrokeField::Width)) {
         Some(None) => set_no_outline(app),
         Some(Some(w)) => app.apply_outline_width(w),
         None => {}
     }
+    if let Some(u) = outline_unit_combo(ui, "outline_units_bar", app.outline_units()) {
+        app.set_outline_units(u);
+    }
     // Line style: solid or one of the dash presets.
     let dash = stroke.as_ref().map(|s| s.dash.clone()).unwrap_or_default();
+    let dash_shown = !mix.has(StrokeField::Dash);
     egui::ComboBox::from_id_salt("line_style_bar")
-        .selected_text(dash_label(&dash))
+        .selected_text(if dash_shown {
+            dash_label(&dash)
+        } else {
+            String::new()
+        })
         .width(96.0)
         .show_ui(ui, |ui| {
-            for d in DASHES {
+            let custom = app.settings.custom_dashes.clone();
+            let all: Vec<&[f64]> = DASHES
+                .iter()
+                .copied()
+                .chain(custom.iter().map(|d| d.as_slice()))
+                .collect();
+            for d in all {
                 if ui
-                    .selectable_label(dash.as_slice() == *d, dash_label(d))
+                    .selectable_label(dash_shown && dash.as_slice() == d, dash_label(d))
                     .clicked()
                 {
+                    // Each object (each one in a group too) keeps the
+                    // rest of its own outline.
                     let cmds: Vec<Command> = app
-                        .selected_shapes()
+                        .paint_targets()
                         .iter()
                         .filter_map(|s| {
                             let mut st = s.stroke.clone()?;
@@ -1905,6 +2033,10 @@ pub fn outline_part(app: &mut App, ui: &mut Ui) {
                     }
                 }
             }
+            ui.separator();
+            if ui.button(tr("docker.edit_line_style")).clicked() {
+                crate::ui::line_style::request(ui);
+            }
         });
     // Arrowheads at the start and the end.
     for start in [true, false] {
@@ -1918,18 +2050,32 @@ pub fn outline_part(app: &mut App, ui: &mut Ui) {
                 }
             })
             .unwrap_or_default();
+        let shown = !mix.has(if start {
+            StrokeField::StartArrow
+        } else {
+            StrokeField::EndArrow
+        });
         egui::ComboBox::from_id_salt(if start {
             "arrow_start_bar"
         } else {
             "arrow_end_bar"
         })
-        .selected_text(arrow_label(&current))
+        .selected_text(if shown {
+            arrow_label(&current)
+        } else {
+            String::new()
+        })
         .width(56.0)
         .show_ui(ui, |ui| {
             for a in tracedraw_core::Arrowhead::ALL {
-                if ui.selectable_label(current == a, arrow_label(&a)).clicked() {
+                if ui
+                    .selectable_label(shown && current == a, arrow_label(&a))
+                    .clicked()
+                {
+                    // Each object (each one in a group too) keeps the
+                    // rest of its own outline.
                     let cmds: Vec<Command> = app
-                        .selected_shapes()
+                        .paint_targets()
                         .iter()
                         .filter_map(|s| {
                             let mut st = s.stroke.clone()?;
@@ -2368,6 +2514,8 @@ pub fn rectangle_part(app: &mut App, ui: &mut Ui) {
         .iter()
         .find_map(|s| s.page_corners())
         .unwrap_or(app.rect_corners);
+    // Values that differ across the selected rectangles show as mixed.
+    let mix = app.selection_corner_mix().map_or([false; 6], |(_, m)| m);
     let mut edit = None;
     for (kind, pic, tip) in [
         (CornerKind::Round, Pic::CornerRound, "toolbar.corner_round"),
@@ -2382,7 +2530,7 @@ pub fn rectangle_part(app: &mut App, ui: &mut Ui) {
             "toolbar.corner_chamfer",
         ),
     ] {
-        if pic_button(ui, pic, &tr(tip), true, current.kind == kind).clicked() {
+        if pic_button(ui, pic, &tr(tip), true, !mix[0] && current.kind == kind).clicked() {
             edit = Some(CornerEdit::Kind(kind));
         }
     }
@@ -2394,7 +2542,8 @@ pub fn rectangle_part(app: &mut App, ui: &mut Ui) {
         stacked(ui, |ui| {
             for i in column {
                 row(ui, |ui| {
-                    if let Some(v) = distance(ui, app, current.radii[i], 66.0, Some(1.0)) {
+                    let mixed = mix.get(i + 1).copied().unwrap_or(false);
+                    if let Some(v) = distance_mixed(ui, app, current.radii[i], 66.0, mixed) {
                         edit = Some(CornerEdit::Size(i, v));
                     }
                 });
@@ -2420,7 +2569,7 @@ pub fn rectangle_part(app: &mut App, ui: &mut Ui) {
         Pic::CornerScaling,
         &tr("toolbar.relative_corners"),
         true,
-        relative,
+        relative && !mix[5],
     )
     .clicked()
     {
@@ -2684,6 +2833,68 @@ pub fn arrange_part(app: &mut App, ui: &mut Ui) -> bool {
     true
 }
 
+/// The key of a wrap style's name.
+pub fn wrap_style_key(
+    mode: tracedraw_core::WrapMode,
+    side: tracedraw_core::WrapSide,
+) -> &'static str {
+    use tracedraw_core::{WrapMode as M, WrapSide as S};
+    match (mode, side) {
+        (M::Contour, S::Left) => "context.wrap_contour_left",
+        (M::Contour, S::Right) => "context.wrap_contour_right",
+        (M::Contour, S::Straddle) => "context.wrap_contour_straddle",
+        (_, S::Left) => "context.wrap_square_left",
+        (_, S::Right) => "context.wrap_square_right",
+        (_, S::Straddle) => "context.wrap_square_straddle",
+        (_, S::AboveBelow) => "context.wrap_square_above_below",
+    }
+}
+
+/// The arrow beside Wrap Paragraph Text: the wrap styles and the text wrap
+/// offset of the selected objects; picking one turns wrapping on.
+fn wrap_style_list(app: &mut App, ui: &mut Ui) {
+    let ctx = ui.ctx().clone();
+    let popup_id = ui.make_persistent_id("wrap_style_list");
+    let (on, current) = app.wrap_state();
+    let button = ui
+        .add_enabled(
+            !app.selection.is_empty(),
+            egui::Button::new("\u{25BE}").small(),
+        )
+        .on_hover_text(tr("context.wrap_style"));
+    if button.clicked() {
+        egui::Popup::toggle_id(&ctx, popup_id);
+    }
+    egui::Popup::new(popup_id, ctx.clone(), button.rect, ui.layer_id())
+        .open_memory(None)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(260.0)
+        .show(|ui| {
+            for (mode, side) in tracedraw_core::TextWrap::STYLES {
+                let here = on && current.mode == mode && current.side == side;
+                if ui
+                    .selectable_label(here, tr(wrap_style_key(mode, side)))
+                    .clicked()
+                {
+                    app.set_wrap_style(mode, side);
+                }
+            }
+            ui.separator();
+            wrap_offset_field(app, ui, current.offset);
+        });
+}
+
+/// The text wrap offset field (property bar list and context menu).
+pub fn wrap_offset_field(app: &mut App, ui: &mut Ui, offset: f64) {
+    ui.horizontal(|ui| {
+        ui.label(tr("context.wrap_offset"));
+        let mut v = offset;
+        if crate::ui::text_docker::length(ui, app, &mut v) {
+            app.set_wrap_offset(v);
+        }
+    });
+}
+
 /// Wrap Paragraph Text, To Front and To Back of the layer and Convert to
 /// Curves, for the selected objects.
 pub fn order_part(app: &mut App, ui: &mut Ui) {
@@ -2703,16 +2914,14 @@ pub fn order_part(app: &mut App, ui: &mut Ui) {
             wrap: !wrap,
         });
     }
+    wrap_style_list(app, ui);
     if pic_button(ui, Pic::ToFront, &tr("toolbar.to_front"), true, false).clicked() {
         app.order(0);
     }
     if pic_button(ui, Pic::ToBack, &tr("toolbar.to_back"), true, false).clicked() {
         app.order(3);
     }
-    let curves_ok = app
-        .selected_shapes()
-        .iter()
-        .any(|s| !matches!(s.kind, ShapeKind::Bitmap { .. } | ShapeKind::Path { .. }));
+    let curves_ok = app.can_convert_to_curves();
     if pic_button(
         ui,
         Pic::ToCurves,
@@ -2816,13 +3025,50 @@ mod tests {
         );
         assert_eq!(parse_outline_width("thick", mm), None);
         assert_eq!(parse_outline_width("-1", mm), None);
+        // Points: the number is points, stored in millimetres.
+        let pt = parse_outline_width("2", Units::Points)
+            .flatten()
+            .expect("width");
+        assert!((pt - 2.0 * 25.4 / 72.0).abs() < 1e-12);
     }
 
     #[test]
-    fn outline_widths_read_in_the_ruler_unit() {
+    fn the_width_presets_follow_the_outline_unit() {
+        let pts = outline_width_presets(Units::Points);
+        // Round point values, given in millimetres.
+        assert!(pts.iter().any(|w| (w - 25.4 / 72.0).abs() < 1e-12));
+        for w in &pts {
+            let v = Units::Points.from_mm(*w);
+            assert!((v * 4.0 - (v * 4.0).round()).abs() < 1e-9, "{v}");
+        }
+        assert_eq!(outline_width_label(pts[2], Units::Points), "0.75 pt");
+        assert_eq!(
+            outline_width_presets(Units::Millimeters),
+            OUTLINE_WIDTHS_MM.to_vec()
+        );
+        let inches = outline_width_presets(Units::Inches);
+        assert!((inches[2] - 0.254).abs() < 1e-12);
+        assert_ne!(pts, outline_width_presets(Units::Pixels));
+        for u in OUTLINE_UNITS {
+            assert!(outline_width_presets(u)
+                .iter()
+                .all(|w| *w > 0.0 && w.is_finite()));
+        }
+    }
+
+    #[test]
+    fn outline_widths_read_in_the_outline_unit() {
         let mut app = App::headless();
         app.units = Units::Millimeters;
-        assert_eq!(outline_text(&app, Some(0.2)), "0.200 mm");
+        // Points by default, whatever the ruler unit.
+        assert_eq!(app.outline_units(), Units::Points);
+        assert_eq!(outline_text(&app, Some(25.4 / 72.0)), "1 pt");
+        assert_eq!(outline_text(&app, Some(0.2)), "0.57 pt");
+        app.set_outline_units(Units::Millimeters);
+        assert_eq!(app.settings.outline_units, "mm");
+        assert_eq!(outline_text(&app, Some(0.2)), "0.2 mm");
+        app.set_outline_units(Units::Inches);
+        assert_eq!(outline_text(&app, Some(2.54)), "0.1 \"");
         assert_eq!(outline_text(&app, None), tr("toolbar.none"));
         assert_eq!(
             outline_text(&app, Some(tracedraw_core::Stroke::HAIRLINE)),

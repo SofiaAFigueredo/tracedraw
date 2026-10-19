@@ -322,7 +322,7 @@ fn label(ui: &mut Ui, key: &str) {
 }
 
 /// A distance field in the ruler unit, 90 points wide; true when changed.
-fn length(ui: &mut Ui, app: &App, mm: &mut f64) -> bool {
+pub(crate) fn length(ui: &mut Ui, app: &App, mm: &mut f64) -> bool {
     let u = app.units;
     let unit = u.mm();
     let mut v = *mm / unit;
@@ -454,29 +454,24 @@ pub(crate) fn edit_spans(app: &mut App, f: impl Fn(&mut TextSpan) + Clone) {
     }
 }
 
-/// Edit the paragraph style of every selected text object (one undo step).
+/// Edit the paragraph style of every selected text object with `f`: the
+/// paragraphs of the selection while a text is edited, else every
+/// paragraph (only the settings `f` changes).
 pub(crate) fn edit_paragraphs(app: &mut App, f: impl Fn(&mut ParagraphStyle)) {
     let ids: Vec<_> = app
         .selected_shapes()
         .iter()
-        .filter_map(|s| match &s.kind {
-            ShapeKind::Text { para, .. } => {
-                let mut p = para.clone();
-                f(&mut p);
-                Some((s.id, p))
-            }
-            _ => None,
-        })
+        .filter(|s| matches!(s.kind, ShapeKind::Text { .. }))
+        .map(|s| s.id)
         .collect();
-    for (id, p) in ids {
-        app.set_paragraph_style(id, p);
+    for id in ids {
+        app.edit_paragraph_style(id, &f);
     }
 }
 
 /// Set the alignment of the selected text, and of new text.
 fn set_align(app: &mut App, a: TextAlign) {
-    app.text_align = a;
-    app.apply_text_style();
+    app.apply_text_align(a);
 }
 
 /// "Apply to default text": new text takes the selected text's font,
@@ -491,12 +486,16 @@ pub(crate) fn apply_to_default(app: &mut App) {
     else {
         return;
     };
-    let ShapeKind::Text { spans, align, .. } = &t.kind else {
+    let ShapeKind::Text { spans, .. } = &t.kind else {
         return;
     };
     let Some(sp) = spans.first() else {
         return;
     };
+    let align = app
+        .paragraph_style_of(&t)
+        .map(|(a, _)| a)
+        .unwrap_or_default();
     let all = !app.settings.text_docker_checks;
     let take = |key: &str| all || app.settings.text_docker_ticked.iter().any(|k| k == key);
     let (font, style, size, underline, alignment, fill, outline) = (
@@ -522,7 +521,7 @@ pub(crate) fn apply_to_default(app: &mut App) {
         app.text_underline = sp.underline;
     }
     if alignment {
-        app.text_align = *align;
+        app.text_align = align;
     }
     app.status = tr("docker.text_defaults_applied");
     if fill {
@@ -841,9 +840,8 @@ fn set_text_fill(app: &mut App, fill: Option<Fill>) {
         app.cells_apply_style(move |sp| sp.fill = f.clone());
         return;
     }
-    if app.text_edit.as_ref().is_some_and(|te| te.has_selection()) {
-        let f = Some(fill.unwrap_or(Fill::None));
-        app.text_apply_style(move |sp| sp.fill = f.clone());
+    if app.text_selection_active() {
+        app.apply_fill(fill.unwrap_or(Fill::None));
         return;
     }
     let has_span_fills = app.selected_shapes().iter().any(|s| match &s.kind {
@@ -880,11 +878,8 @@ fn paragraph(app: &mut App, ui: &mut Ui, first: Option<&tracedraw_core::Shape>) 
             ),
         ] {
             let current = first
-                .and_then(|t| match &t.kind {
-                    ShapeKind::Text { align, .. } => Some(*align),
-                    _ => None,
-                })
-                .unwrap_or(app.text_align);
+                .and_then(|t| app.paragraph_style_of(t))
+                .map_or(app.text_align, |(a, _)| a);
             if pic_button(ui, pic, &tr(key), true, current == a).clicked() {
                 set_align(app, a);
             }
@@ -894,10 +889,11 @@ fn paragraph(app: &mut App, ui: &mut Ui, first: Option<&tracedraw_core::Shape>) 
     let Some(t) = first else {
         return;
     };
-    let ShapeKind::Text { para, .. } = &t.kind else {
+    // The paragraph at the caret while editing, else the first one.
+    let Some((_, mut p)) = app.paragraph_style_of(t) else {
         return;
     };
-    let mut p: ParagraphStyle = para.clone();
+    let before = p.clone();
     let mut pc = false;
     let line_icon = |ui: &mut Ui, text: &str, key: &str| {
         ui.add_sized(
@@ -972,8 +968,14 @@ fn paragraph(app: &mut App, ui: &mut Ui, first: Option<&tracedraw_core::Shape>) 
             });
     }
     if pc {
-        let p2 = p.clone();
-        edit_paragraphs(app, move |q| *q = p2.clone());
+        // Only what changed reaches the paragraphs, each keeping the rest.
+        let before = tracedraw_core::ParagraphFormat::of(TextAlign::Left, &before);
+        let after = tracedraw_core::ParagraphFormat::of(TextAlign::Left, &p);
+        edit_paragraphs(app, move |q| {
+            let mut f = tracedraw_core::ParagraphFormat::of(TextAlign::Left, q);
+            f.take_changes(&before, &after);
+            f.apply_to(q);
+        });
     }
 }
 
@@ -1005,11 +1007,7 @@ pub(crate) fn convert_leading(v: f64, from: LeadingUnit, to: LeadingUnit, size_p
 
 fn frame(app: &mut App, ui: &mut Ui, first: Option<&tracedraw_core::Shape>) {
     let para_text = first.and_then(|t| match &t.kind {
-        ShapeKind::Text {
-            para,
-            frame: Some(_),
-            ..
-        } => Some((t.id, para.clone())),
+        ShapeKind::Text { frame: Some(_), .. } => app.paragraph_style_of(t).map(|(_, p)| (t.id, p)),
         _ => None,
     });
     let Some((id, mut p)) = para_text else {

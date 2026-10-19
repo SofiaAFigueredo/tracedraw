@@ -289,6 +289,84 @@ mod tests {
     }
 
     #[test]
+    fn outline_position_mitre_limit_dashes_and_shadows_round_trip() {
+        use tracedraw_core::shadow::{FeatherDirection, FeatherEdges, Perspective, ShadowEdge};
+        let mut doc = Document::default();
+        let layer = doc.pages[0].layers[0].id;
+        let id = doc.ids_mut().shape();
+        let mut s = Shape::new(
+            id,
+            ShapeKind::Rect {
+                rect: tracedraw_core::Rect::new(10.0, 10.0, 40.0, 30.0),
+                radius: 0.0,
+                corners: None,
+            },
+        );
+        s.stroke = Some(Stroke {
+            position: tracedraw_core::OutlinePosition::Outside,
+            miter_limit: 17.5,
+            align_dashes: true,
+            dash: vec![5.0, 1.0, 1.0, 1.0],
+            ..Stroke::new(Color::BLACK, 1.0)
+        });
+        s.shadow = Some(tracedraw_core::Shadow {
+            merge: tracedraw_core::live::MergeMode::IfDarker,
+            feather_direction: FeatherDirection::Outside,
+            feather_edges: FeatherEdges::InvertedSquared,
+            perspective: Some(Perspective {
+                edge: ShadowEdge::Top,
+                angle: 75.0,
+                stretch: 0.4,
+                fade: 0.3,
+            }),
+            ..Default::default()
+        });
+        doc.layer_mut(layer).unwrap().shapes.push(s);
+        let json = doc.to_json().unwrap();
+        let back = Document::from_json(&json).unwrap();
+        assert_eq!(back, doc);
+    }
+
+    #[test]
+    fn corners_that_keep_their_size_survive_native_svg_and_pdf() {
+        use tracedraw_core::geometry::{Affine, Shape as _};
+        use tracedraw_core::{CornerKind, Corners};
+        let mut doc = Document::default();
+        let layer = doc.pages[0].layers[0].id;
+        let mut c = Corners::uniform(5.0, CornerKind::Round);
+        c.fixed = true;
+        let id = doc.ids_mut().shape();
+        let mut s = Shape::new(
+            id,
+            ShapeKind::rect_with_corners(Rect::new(0.0, 0.0, 50.0, 30.0), c),
+        );
+        // Stretched to 100 x 30 mm: the corners stay 5 mm circles.
+        s.transform = Affine::translate((20.0, 20.0)) * Affine::scale_non_uniform(2.0, 1.0);
+        s.fill = Fill::Solid(Color::rgb8(255, 0, 0));
+        s.stroke = None;
+        let area = s.page_path().area().abs();
+        let circles = 100.0 * 30.0 - (4.0 - std::f64::consts::PI) * 25.0;
+        assert!((area - circles).abs() < 0.05, "{area}");
+        doc.layer_mut(layer).unwrap().shapes.push(s);
+        // Native: the flag is written and read back.
+        let json = doc.to_json().unwrap();
+        assert!(json.contains("\"fixed\": true"), "{json}");
+        assert_eq!(Document::from_json(&json).unwrap(), doc);
+        // SVG and PDF draw the outline the rectangle shows.
+        let mut ids = tracedraw_core::id::IdSource::default();
+        let svg = svg_import::parse(&svg::page_to_svg(&doc, 0), &mut ids).expect("svg");
+        let pdf = pdf_import::to_document(
+            pdf_import::parse(&pdf::document_to_pdf(&doc), &mut ids).expect("pdf"),
+            "t",
+        );
+        let pdf_shapes: Vec<Shape> = pdf.all_layers().flat_map(|l| l.shapes.clone()).collect();
+        for (what, shapes) in [("svg", svg.shapes), ("pdf", pdf_shapes)] {
+            let got: f64 = shapes.iter().map(|s| s.page_path().area().abs()).sum();
+            assert!((got - area).abs() < 1.0, "{what}: {got} vs {area}");
+        }
+    }
+
+    #[test]
     fn custom_arrowhead_round_trips_through_the_native_format() {
         let mut doc = Document::default();
         let layer = doc.pages[0].layers[0].id;

@@ -376,6 +376,8 @@ fn poster(dir: &Path) -> Document {
         opacity: 0.35,
         blur: 2.0,
         color: hex("#140F2E"),
+        merge: tracedraw_core::live::MergeMode::Normal,
+        ..Default::default()
     });
     b.add(title, "Title");
     let mut sub_span = span("an evening drawn in vectors", SERIF, 16.0);
@@ -574,6 +576,8 @@ fn effects(dir: &Path) {
         opacity: 0.35,
         blur: 3.0,
         color: hex("#1F2437"),
+        merge: tracedraw_core::live::MergeMode::Normal,
+        ..Default::default()
     });
     b.add(card, "Card");
     let mut avatar = b.shape(ellipse(c.x - 15.0, c.y + 3.0, 6.0, 6.0));
@@ -1146,14 +1150,14 @@ fn room(dir: &Path) {
         [toward(lb), toward(rb), toward(rt), toward(lt)],
     ];
     let mut b = Build::new("Room", Size::new(w, h));
-    let mut laid = |b: &mut Build,
-                    plane: usize,
-                    u0: f64,
-                    w0: f64,
-                    u1: f64,
-                    w1: f64,
-                    fill: Fill,
-                    name: &str| {
+    let laid = |b: &mut Build,
+                plane: usize,
+                u0: f64,
+                w0: f64,
+                u1: f64,
+                w1: f64,
+                fill: Fill,
+                name: &str| {
         let q = planes[plane];
         let Some(hm) = tracedraw_core::live::homography(&unit, &q) else {
             return;

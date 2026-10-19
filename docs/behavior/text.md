@@ -31,9 +31,10 @@ Full justify), Bullets and Drop Cap (for paragraph text; they open their
 dialogs), Text Properties (the Text docker, Ctrl+T) and Edit Text
 (Ctrl+Shift+T). Each change applies to the
 selected text objects at once (every span takes the font, size and
-style; the object takes the alignment) as one "Text Style" undo step,
-and becomes the default for the next text. Double-clicking text with the
-Pick tool edits it in place.
+style) as one "Text Style" undo step, and becomes the default for the
+next text. The alignment goes to the paragraphs (see Paragraph
+formatting below) as one "Text Alignment" step. Double-clicking text
+with the Pick tool edits it in place.
 
 ## Font list
 
@@ -94,8 +95,60 @@ concatenated spans; the layout's line boxes give its place on the page.
 | Esc | finish editing and return to the Pick tool; an empty text is removed |
 
 The property bar's font, size and style buttons act on the selected
-characters while a selection exists, and show the style at the caret. All
-the keystrokes of one editing session are one "Edit Text" undo step.
+characters while a selection exists, and show the style at the caret
+(the character before it). On a selection a button changes only what it
+changes from the style shown: a new size keeps the selected characters'
+fonts and styles, a new font keeps their sizes. All the keystrokes of
+one editing session are one "Edit Text" undo step.
+
+### Character colours
+
+- With characters selected while editing (artistic or paragraph text),
+  a colour picked anywhere goes to them only: a palette or document
+  palette swatch (click: their fill; right click: their outline), the
+  Properties docker's fill, the Text docker's fill and the Color
+  docker. Without a selection the colour goes to the whole object as
+  usual.
+- Each such change is its own undo step ("Character Fill", "Character
+  Outline"), not part of the typing, and the colour joins the document
+  palette in that step.
+- A character outline starts from the characters' own outline, else
+  the object's, else the default pen, in the new colour; No Color (an
+  outline of width 0) takes the outline off those characters only.
+- Characters without their own fill or outline take the object's. The
+  text is drawn (on the canvas, in exports to bitmaps, SVG and PDF) in
+  one part per look: each part lays out the whole text and draws only
+  its own characters, so letters keep their places. Character
+  backgrounds are drawn once under all parts; the drop shadow comes
+  with the first part.
+- Colours of characters read from `.cdr` files (the fill of each run of
+  characters) are drawn the same way.
+
+**Input methods** (Chinese, Japanese, Korean and the others): while text
+or a table cell is edited on the canvas, the system's input method is
+switched on at the caret (its candidate window opens there). The text it
+composes shows underlined at the caret, keys go to it while it composes,
+and what it commits is inserted like typed text. A focused field of a
+docker or bar keeps its own input method. Letters the text's font lacks
+are drawn from an installed font that has them (Noto CJK and the
+system's CJK fonts), for each character
+(`text_effect_tests::an_input_method_composes_then_commits_cjk_text`,
+`text_effect_tests::the_canvas_asks_for_the_input_method_while_text_is_typed`).
+
+**Break Apart** (Ctrl+K) on artistic text makes separate text objects of
+its lines when it has more than one line, else of its words, else of its
+letters (a text without spaces, like CJK text, breaks into its
+characters). Each piece keeps the text's look (font, size, styles, fill,
+outline, transformation) and sits where its letters were; the first
+piece keeps the object, the others go just above it, all selected, in one
+"Break Apart" undo step. A single letter, paragraph text and text on a
+path stay as they are
+(`text_effect_tests::break_apart_splits_text_into_lines_words_then_letters`).
+
+Text takes blends (with another text or any object) and extrusions like
+any other object; the steps and sides follow the letters' outlines
+(`text_effect_tests::the_blend_tool_blends_two_texts_and_a_text_with_a_shape`,
+`text_effect_tests::text_can_be_extruded`).
 
 ## Paragraph text frames
 
@@ -119,6 +172,43 @@ the keystrokes of one editing session are one "Edit Text" undo step.
   slanting, mirroring and moving act on the whole text, and a turned
   text scales as a whole. With other objects in the selection each is
   scaled as usual, all in one undo step.
+
+## Paragraph formatting
+
+- Alignment, line spacing, character and word spacing, space before and
+  after, the first-line, left and right indents, bullets, the drop cap,
+  tab stops and hyphenation belong to each paragraph. Columns, vertical
+  alignment, Fit Text to Frame, the baseline grid and the frame
+  background belong to the frame.
+- A text object keeps one alignment and paragraph style of its own,
+  which every paragraph has unless it was given its own. A paragraph with
+  its own formatting carries it on its characters
+  (`TextSpan::paragraph`, `crates/core/src/paragraphs.rs`); the format of
+  its first character rules it, and an empty last paragraph follows the
+  one before it. Typing at the start of a paragraph keeps its format;
+  Enter splits a paragraph into two with the same format; joining two
+  paragraphs keeps the first one's.
+- While a text is edited, the property bar's alignment, the Text
+  docker's Paragraph and Frame fields and the Tabs, Bullets and Drop Cap
+  dialogs act on the paragraphs the selection touches (the one holding
+  the caret without a selection) and show the values of the first of
+  them. With the whole object selected they act on every paragraph and
+  show the first paragraph's values. Only the settings changed reach
+  the paragraphs: changing the left indent of a whole text keeps each
+  paragraph's alignment and spacing. Each change is one undo step.
+- A paragraph set back to the object's formatting stops carrying its
+  own. `.tdraw` files write `paragraph` only on characters whose
+  paragraph has its own formatting; files without it give every
+  paragraph the object's formatting.
+- `.cdr`: artistic text is written with each paragraph's alignment
+  and, from version 16, its line spacing. Paragraph text goes out as one
+  artistic text a line, each placed where its paragraph's spacing and
+  indents put it, so the look is kept but the spacing values are not
+  (the frame records of paragraph text are not known well enough to
+  write; see `docs/cdr-format.md`). Reading, paragraphs whose alignment,
+  line spacing, space before and after (version 16+ style strings) or
+  indents differ from one another keep their own; text whose paragraphs
+  agree keeps one object-level format as before.
 
 ## Text docker
 
@@ -163,7 +253,9 @@ the preferences, `text_sections_closed`).
   Hyphenate. With artistic text the section says it is for paragraph
   text.
 - Every field edits the selected text: the characters selected while
-  editing, otherwise every selected text object, one undo step each.
+  editing (the paragraphs they touch for the Paragraph and Frame fields,
+  see Paragraph formatting), otherwise every selected text object, one
+  undo step each.
   With no text selected the font, style, size, underline and alignment
   become those of new text.
 - Labels show without a trailing colon.
@@ -224,6 +316,11 @@ Window > Panels > Glyphs. From the top:
   space. The Interactive vertical spacing arrow, below the lower left
   corner, changes line spacing so the last baseline follows the pointer:
   `leading' = leading * (pitch - dy / (lines - 1)) / pitch`.
+- The arrows act on every paragraph of the text, those with spacing of
+  their own too, so they keep their differences: the character or word
+  spacing change (in percent) is added to each paragraph's, and each
+  paragraph's line spacing is multiplied by the same factor. One undo
+  step per drag.
 - Text fitted to a path shows no character nodes.
 
 ## Placeholder text
@@ -362,6 +459,13 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
 
 ## Checks
 
+- Character colours: `text_editing::tests::a_colour_picked_with_characters_selected_colours_only_them`,
+  `text_editing::tests::without_a_character_selection_the_colour_goes_to_the_object`,
+  `text_editing::tests::the_bar_changes_only_what_it_changed_on_the_selection`,
+  `tracedraw_core` `document::tests::characters_with_their_own_colours_are_drawn_in_one_part_per_look`,
+  `document::tests::character_outlines_are_saved_and_layout_only_is_not`,
+  `tracedraw_render` `tests::characters_are_drawn_in_their_own_colours`,
+  `tests::spans_only_laid_out_keep_their_room_but_are_not_drawn` (text crate).
 - The Text docker: `ui::text_docker::tests::the_sections_open_close_and_draw_for_any_text`,
   `ui::text_docker::tests::vertical_alignment_is_kept_with_the_text`,
   `ui::text_docker::tests::section_buttons_boxes_and_apply_to_default`,
@@ -451,19 +555,44 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
 - The text itself goes on the path (no copy is left behind) and stays
   selected as one object, drawn in its fill. On an open path the letters
   follow the path from its start with the text's alignment. On a closed
-  path the path is followed clockwise from its highest point, so the
-  letters stand on its outside, upright to the curve, and the text is
-  centred on that highest point (its alignment becomes centred and the
-  offset half the path's length); Mirror puts it inside, reading the
-  other way.
+  path the path is followed clockwise, so the letters stand on its
+  outside, upright to the curve, from the point clicked (the point of
+  the path nearest to the click; its highest point when the text and
+  the path were selected together), and the text is centred on that
+  point (its alignment becomes centred and the offset half the path's
+  length). The Text tool clicked on a path's outline starts a new text
+  that begins at the point clicked (on a closed path too) and runs on
+  from there as it is typed
+  (`ops2::tests::the_text_tool_on_a_paths_outline_starts_text_on_it`).
+  A pick on the bottom of an ellipse puts the text there,
+  outside and upside down; both mirrors then turn it round onto the
+  inside, reading left to right, on the same spot.
 - With the Pick tool, a text fitted to a path shows its own property
   bar after the object fields: Text orientation (Rotated letters,
   Vertical skew, Horizontal skew, Upright letters), Vertical placement
   (Baseline, Ascender, Descender on path, Centred on path), Text
-  placement (start, centre or end of the path, the text's alignment),
+  placement (start, centre or end of the path, the text's alignment; on
+  a closed path also Top centre and Bottom centre: the text centred on
+  the path's highest point, outside and upright, both mirrors off, or
+  on its lowest point, inside and reading left to right, both mirrors
+  on; the list shows these while the text is so placed,
+  `text_path::tests::top_and_bottom_placement_on_a_closed_path`),
   Distance from path and Offset along path in the document's units,
+  Tick snapping and its spacing (1 mm by default, kept in the
+  preferences: a drag off the path then moves the text away from it in
+  whole steps,
+  `text_path::tests::tick_snapping_moves_the_text_off_the_path_in_steps`),
   Mirror horizontally and Mirror vertically (pressed while on) and
-  Straighten Text. Each change is one undo step and is stored with the
+  Straighten Text. Mirror horizontally flips the letters left to right
+  (the text reads the other way along the path), Mirror vertically
+  turns them upside down onto the path's other side, and both together
+  turn the text round by 180 degrees. The mirrors keep the letters where they are along
+  the path: mirrored horizontally the text is measured from the path's
+  other end, so its offset turns round and the start placement becomes
+  the end one (and back), the centre one staying
+  (`ops2::tests::text_goes_where_the_path_is_clicked_and_mirrors_keep_it_there`,
+  `ops2::tests::the_horizontal_mirror_keeps_text_on_a_line_in_place`).
+  Each change is one undo step and is stored with the
   text, so the bar shows it again when the text is selected again
   (`text_path::tests::the_bar_settings_edit_the_text_with_undo_and_come_back_on_reselect`).
 - A selected fitted text draws as usual, in its fill, with the selection

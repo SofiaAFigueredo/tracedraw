@@ -6,6 +6,17 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Rectangles: new rectangles keep their corner size when resized
+  (Relative corner scaling is off by default on the property bar and in
+  Options > Toolbox > Rectangle tool), so a rounded rectangle stretched in
+  one direction keeps circular corners of the same radius. Turn the
+  setting on to have corners scale with the rectangle. Drawings saved
+  earlier open unchanged; preferences from older versions start with it
+  off once. Scaling a group evenly keeps such corners fixed (grown by the
+  factor) instead of turning a stretched rectangle into a curve, and
+  `.cdr` versions with rectangle objects save a stretched one as a
+  rectangle with its radius.
+
 - VBA macros: the object model they are written against (Application,
   Document, Page, Layer, Shapes and ShapeRange, Shape with Fill,
   Outline, Transparency, Curve, Text and its views, Color, the cdr*

@@ -1782,6 +1782,11 @@ impl App {
     /// Apply the property bar text style (font, size, bold, italic, align)
     /// to every selected text object.
     pub fn apply_text_style(&mut self) {
+        // With table cells selected, their text takes the style.
+        if self.table_edit.is_some() {
+            self.cells_apply_text_style();
+            return;
+        }
         // While editing with a selection, only the selected characters change.
         if self.text_edit.as_ref().is_some_and(|te| te.has_selection()) {
             let (font, size, bold, italic, underline) = (

@@ -1005,7 +1005,16 @@ pub struct Table {
     pub border: Option<Stroke>,
     /// Fill of cells without their own fill.
     pub cell_fill: Fill,
+    /// Margin between a cell's edges and its text on every side, mm
+    /// (used when `margins` is not set).
     pub padding: f64,
+    /// Margins per side; `None` = `padding` on every side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margins: Option<crate::table::CellMargins>,
+    /// Separated borders: horizontal and vertical space between the cells'
+    /// boxes, mm; `None` = cells share their borders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spacing: Option<[f64; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1022,6 +1031,9 @@ pub struct TableCell {
     pub fill: Option<Fill>,
     #[serde(default)]
     pub align: TextAlign,
+    /// Border of each side; the table's border where unset.
+    #[serde(default, skip_serializing_if = "crate::table::CellBorders::is_default")]
+    pub borders: crate::table::CellBorders,
 }
 
 fn one_u32() -> u32 {
@@ -1036,15 +1048,7 @@ impl Table {
         let mut cells = Vec::new();
         for r in 0..rows {
             for c in 0..cols {
-                cells.push(TableCell {
-                    row: r,
-                    col: c,
-                    row_span: 1,
-                    col_span: 1,
-                    text: Vec::new(),
-                    fill: None,
-                    align: TextAlign::Left,
-                });
+                cells.push(crate::table::blank_cell(r, c));
             }
         }
         Table {
@@ -1055,6 +1059,8 @@ impl Table {
             border,
             cell_fill: Fill::None,
             padding: 1.0,
+            margins: None,
+            spacing: None,
         }
     }
 
@@ -2102,7 +2108,7 @@ impl Shape {
                     if t.covered(cell.row, cell.col) {
                         continue;
                     }
-                    let r = t.cell_rect(cell);
+                    let r = t.cell_box(cell);
                     let fill = cell.fill.clone().unwrap_or_else(|| t.cell_fill.clone());
                     if !matches!(fill, Fill::None) {
                         let mut bg = Shape::new(
@@ -2118,7 +2124,7 @@ impl Shape {
                         out.push(bg);
                     }
                     if !cell.text.is_empty() {
-                        let inner = r.inset(-t.padding);
+                        let inner = t.cell_inner(cell);
                         let mut tx = Shape::new(
                             placeholder,
                             ShapeKind::Text {
@@ -2142,17 +2148,16 @@ impl Shape {
                         out.push(tx);
                     }
                 }
-                if let Some(border) = &t.border {
-                    let mut path = BezPath::new();
-                    for cell in &t.cells {
-                        if t.covered(cell.row, cell.col) {
-                            continue;
-                        }
-                        path.extend(t.cell_rect(cell).to_path(0.01));
-                    }
-                    let mut b = Shape::new(placeholder, ShapeKind::Path { path, closed: true });
+                for (border, path) in t.border_paths() {
+                    let mut b = Shape::new(
+                        placeholder,
+                        ShapeKind::Path {
+                            path,
+                            closed: false,
+                        },
+                    );
                     b.fill = Fill::None;
-                    b.stroke = Some(border.clone());
+                    b.stroke = Some(border);
                     out.push(b);
                 }
                 out

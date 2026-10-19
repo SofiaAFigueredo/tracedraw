@@ -28,6 +28,7 @@ pub mod painterly;
 mod press;
 pub mod shaping;
 pub mod style;
+pub mod table;
 
 pub use color::Color;
 pub use command::Command;
@@ -48,6 +49,7 @@ pub use style::{
     arrowhead_paths, Arrowhead, Fill, Fountain, FountainKind, FountainRepeat, LineCap, LineJoin,
     Mesh, MeshNode, Pattern, PatternTile, Stop, Stroke, Texture, TextureKind, WidthNode,
 };
+pub use table::{BorderSet, CellBorders, CellMargins, CellSide, EdgeBorder, TableHit};
 
 /// Convenience result type for the core crate.
 pub type Result<T> = std::result::Result<T, Error>;

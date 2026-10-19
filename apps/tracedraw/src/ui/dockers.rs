@@ -556,7 +556,13 @@ fn properties(app: &mut App, ui: &mut Ui) {
             "fill" => {
                 let mut fill = first.fill.clone();
                 if fill_editor(ui, &mut fill) {
-                    app.apply_fill(fill);
+                    // Dragging in the picker: one step, and the colour
+                    // joins the document palette on release.
+                    if app.live_fill.is_some() || ui.input(|i| i.pointer.any_down()) {
+                        app.apply_fill_live(fill);
+                    } else {
+                        app.apply_fill(fill);
+                    }
                 }
                 extra_fills(app, ui, first);
             }
@@ -1862,6 +1868,65 @@ mod tests {
         };
         let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
         out.textures_delta.clear();
+    }
+
+    /// Dragging in the fill colour picker: every colour passed over shows
+    /// on the object, but the drag is one undo step and only the colour
+    /// it ends on joins the document palette, when the button is let go.
+    #[test]
+    fn a_fill_dragged_in_the_picker_is_one_step_and_one_palette_colour() {
+        use tracedraw_core::Color;
+        let mut app = App::headless();
+        app.settings.palette.auto_update_document = true;
+        let id = app
+            .new_shape(tracedraw_core::ShapeKind::Rect {
+                rect: tracedraw_core::Rect::new(0.0, 0.0, 10.0, 10.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("shape");
+        app.select(vec![id]);
+        let before_fill = app.doc().find_shape(id).expect("shape").fill.clone();
+        let steps = |app: &App| app.engine.history_labels().0.len();
+        let n = steps(&app);
+        let palette = app.doc().palette.clone();
+        let colours = [
+            Color::rgb8(250, 10, 10),
+            Color::rgb8(10, 250, 10),
+            Color::rgb8(10, 10, 250),
+        ];
+        for c in colours {
+            app.apply_fill_live(Fill::Solid(c));
+            assert_eq!(
+                app.doc().find_shape(id).expect("shape").fill,
+                Fill::Solid(c)
+            );
+            assert_eq!(steps(&app), n + 1, "one step for the drag");
+            assert_eq!(app.doc().palette, palette, "nothing added while dragging");
+        }
+        // A frame with the button up ends the drag: the last colour only.
+        let ctx = crate::theme::ui_context();
+        draw(&ctx, &mut app);
+        assert!(app.live_fill.is_none());
+        let added: Vec<Color> = app
+            .doc()
+            .palette
+            .iter()
+            .filter(|c| !palette.contains(c))
+            .copied()
+            .collect();
+        assert_eq!(added, vec![colours[2]]);
+        assert_eq!(steps(&app), n + 1);
+        // One undo takes the whole drag back, palette colour included.
+        app.undo();
+        assert_eq!(app.doc().find_shape(id).expect("shape").fill, before_fill);
+        assert_eq!(app.doc().palette, palette);
+        // A new drag after other work starts its own step.
+        app.apply_fill_live(Fill::Solid(colours[0]));
+        app.end_live_fill();
+        app.apply_fill_live(Fill::Solid(colours[1]));
+        app.end_live_fill();
+        assert_eq!(steps(&app), n + 2);
     }
 
     /// The outline's paint editor works on the outline: uniform is its

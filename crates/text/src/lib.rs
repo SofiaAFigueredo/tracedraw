@@ -1459,7 +1459,8 @@ impl FontSystem {
             req.spans
                 .iter()
                 .map(|s| format!(
-                    "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}",
+                    "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}|{}",
+                    s.layout_only,
                     s.font_family,
                     s.size_pt,
                     s.bold,
@@ -2015,6 +2016,9 @@ impl FontSystem {
         }
 
         // 3. Place lines: columns, leading, spacing, indents, alignment.
+        // Characters of a span that is only laid out take their room but
+        // are not drawn (a text drawn in parts, one per character colour).
+        let drawn = |span: usize| spans.get(span).is_none_or(|s| !s.layout_only);
         let mut path = BezPath::new();
         let mut glyph_count = 0usize;
         let mut overflow = false;
@@ -2128,7 +2132,9 @@ impl FontSystem {
                 let gp = Affine::translate((x0, baseline))
                     * Affine::scale(scale)
                     * g.path.as_ref().clone();
-                line_path.extend(gp.elements().iter().copied());
+                if drawn(g.span) {
+                    line_path.extend(gp.elements().iter().copied());
+                }
                 drop_cap_indent = (g.advance * scale + 1.0, para.drop_cap_lines as usize);
                 glyphs = &glyphs[1..];
                 glyph_count += 1;
@@ -2139,7 +2145,8 @@ impl FontSystem {
             }
             // Bullet.
             if para.bullets && line.first_in_para && !artistic {
-                if let Some(span) = spans.get(glyphs.first().map(|g| g.span).unwrap_or(0)) {
+                let first_span = glyphs.first().map(|g| g.span).unwrap_or(0);
+                if let Some(span) = spans.get(first_span).filter(|_| drawn(first_span)) {
                     let b = self.shape_run(span, 0, &para.bullet_char, size_scale, 0, para);
                     for g in &b {
                         let gp = Affine::translate((col_x + para.left_indent, y))
@@ -2220,12 +2227,14 @@ impl FontSystem {
                     record(g.char_idx, next_idx, before, pen);
                     continue;
                 }
-                let gp =
-                    Affine::translate((pen + g.x_offset, y + g.y_offset)) * g.path.as_ref().clone();
-                line_path.extend(gp.elements().iter().copied());
+                if drawn(g.span) {
+                    let gp = Affine::translate((pen + g.x_offset, y + g.y_offset))
+                        * g.path.as_ref().clone();
+                    line_path.extend(gp.elements().iter().copied());
+                }
                 let adv = g.advance + if g.ch == ' ' { space_extra } else { 0.0 };
                 let span = &spans[g.span];
-                if span.underline || span.strikethrough {
+                if (span.underline || span.strikethrough) && !span.layout_only {
                     match underline_runs.last_mut() {
                         Some((s, _, end)) if *s == g.span && (*end - pen).abs() < 1e-6 => {
                             *end = pen + adv
@@ -2246,8 +2255,10 @@ impl FontSystem {
                 edges,
             });
             if let Some(h) = &line.hyphen {
-                let gp = Affine::translate((pen, y)) * h.path.clone();
-                line_path.extend(gp.elements().iter().copied());
+                if line.glyphs.last().is_none_or(|g| drawn(g.span)) {
+                    let gp = Affine::translate((pen, y)) * h.path.clone();
+                    line_path.extend(gp.elements().iter().copied());
+                }
                 pen += h.advance;
             }
             for (si, a, b) in underline_runs {
@@ -2607,12 +2618,7 @@ fn break_lines(
 /// Place artistic text along a path: each glyph is centred on its arc
 /// length position along the baseline (see [`TextOnPath::baseline`]) and
 /// turned to its direction there. Positions wrap around closed paths.
-fn place_on_path(
-    lines: &[Line],
-    tp: &TextOnPath,
-    align: TextAlign,
-    _spans: &[TextSpan],
-) -> BezPath {
+fn place_on_path(lines: &[Line], tp: &TextOnPath, align: TextAlign, spans: &[TextSpan]) -> BezPath {
     let mut out = BezPath::new();
     let Some(line) = lines.first() else {
         return out;
@@ -2656,6 +2662,9 @@ fn place_on_path(
             * along
             * flip
             * Affine::translate((-g.advance / 2.0 + g.x_offset, g.y_offset + lift));
+        if spans.get(g.span).is_some_and(|s| s.layout_only) {
+            continue;
+        }
         let gp = place * g.path.as_ref().clone();
         out.extend(gp.elements().iter().copied());
     }
@@ -2737,6 +2746,8 @@ mod tests {
             strikethrough: false,
             fill: None,
             background: None,
+            outline: None,
+            layout_only: false,
             features: Vec::new(),
         }
     }
@@ -3099,6 +3110,35 @@ mod tests {
             ..ParagraphStyle::default()
         });
         assert!((pct - 1.5 * size).abs() < 1e-6, "{pct}");
+    }
+
+    #[test]
+    fn spans_only_laid_out_keep_their_room_but_are_not_drawn() {
+        if !has_fonts() {
+            return;
+        }
+        let f = fonts();
+        let whole = f.outline(&[span("ab"), span("cd")]);
+        let mut hidden = span("ab");
+        hidden.layout_only = true;
+        let mut ul = span("cd");
+        ul.underline = true;
+        ul.layout_only = true;
+        let part = f.outline(&[hidden, span("cd")]);
+        let none = f.outline(&[span("ab"), ul]);
+        // The visible letters stay where they are in the whole text.
+        let wb = whole.path.bounding_box();
+        let pb = part.path.bounding_box();
+        assert!(pb.x0 > wb.x0 + 0.5, "{pb:?} {wb:?}");
+        assert!((pb.x1 - wb.x1).abs() < 1e-6, "{pb:?} {wb:?}");
+        assert_eq!(part.lines, whole.lines);
+        // A hidden span draws neither its letters nor its underline.
+        let nb = none.path.bounding_box();
+        assert!(nb.x1 < wb.x1 - 0.5, "{nb:?} {wb:?}");
+        assert_eq!(
+            part.path.elements().len() + none.path.elements().len(),
+            whole.path.elements().len()
+        );
     }
 
     #[test]

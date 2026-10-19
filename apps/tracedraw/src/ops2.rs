@@ -1782,8 +1782,11 @@ impl App {
     /// Apply the property bar text style (font, size, bold, italic, align)
     /// to every selected text object.
     pub fn apply_text_style(&mut self) {
-        // While editing with a selection, only the selected characters change.
+        // While editing with a selection, only the selected characters
+        // change, and only in what the bar changed from the character it
+        // shows (a new size keeps the selection's fonts).
         if self.text_edit.as_ref().is_some_and(|te| te.has_selection()) {
+            let shown = self.text_span_at_caret();
             let (font, size, bold, italic, underline) = (
                 self.text_font.clone(),
                 self.text_size_pt,
@@ -1791,12 +1794,28 @@ impl App {
                 self.text_italic,
                 self.text_underline,
             );
+            let differs = |f: &dyn Fn(&TextSpan) -> bool| shown.as_ref().is_none_or(f);
+            let set_font = differs(&|s| s.font_family != font);
+            let set_size = differs(&|s| (s.size_pt - size).abs() > 1e-9);
+            let set_bold = differs(&|s| s.bold != bold);
+            let set_italic = differs(&|s| s.italic != italic);
+            let set_underline = differs(&|s| s.underline != underline);
             self.text_apply_style(move |sp| {
-                sp.font_family = font.clone();
-                sp.size_pt = size;
-                sp.bold = bold;
-                sp.italic = italic;
-                sp.underline = underline;
+                if set_font {
+                    sp.font_family = font.clone();
+                }
+                if set_size {
+                    sp.size_pt = size;
+                }
+                if set_bold {
+                    sp.bold = bold;
+                }
+                if set_italic {
+                    sp.italic = italic;
+                }
+                if set_underline {
+                    sp.underline = underline;
+                }
             });
             return;
         }

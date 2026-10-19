@@ -685,6 +685,9 @@ pub struct App {
     /// palette's left and right clicks): the "current colours" the first
     /// built-in gradient runs between.
     pub current_colors: (Color, Color),
+    /// A fill being dragged in a colour picker: the revision of the step it
+    /// made and its colour (see `App::apply_fill_live`).
+    pub live_fill: Option<(u64, Option<Color>)>,
     pub file: Option<PathBuf>,
     /// The drawing's file in a GitHub repository, when it came from one.
     pub remote: Option<crate::github::Remote>,
@@ -1604,6 +1607,7 @@ impl App {
             curve: None,
             text_edit: None,
             current_colors: (Color::BLACK, Color::WHITE),
+            live_fill: None,
             file: None,
             remote: None,
             vector_fx_base: Default::default(),
@@ -3567,8 +3571,66 @@ impl App {
     }
 
     pub fn apply_fill(&mut self, fill: Fill) {
+        self.apply_fill_as(fill, true);
+    }
+
+    /// A fill picked by dragging in a colour picker (Properties > Fill):
+    /// while the button is held every change replaces the step the drag
+    /// made before (one undo step for the whole drag), and the colour joins
+    /// the document palette only when the button is let go
+    /// (`end_live_fill`).
+    pub fn apply_fill_live(&mut self, fill: Fill) {
+        let mut color = match &fill {
+            Fill::Solid(c) => Some(*c),
+            _ => None,
+        };
+        if let Some((rev, c)) = self.live_fill {
+            if rev == self.engine.revision() {
+                let _ = self.engine.undo();
+                // A non-uniform fill keeps the colour from before.
+                color = color.or(c);
+            }
+        }
+        let before = self.engine.revision();
+        self.apply_fill_as(fill, false);
+        let after = self.engine.revision();
+        self.live_fill = (after != before).then_some((after, color));
+    }
+
+    /// The button is up: a fill dragged in a colour picker is done, and
+    /// its colour joins the document palette as part of its step.
+    pub fn end_live_fill(&mut self) {
+        let Some((rev, color)) = self.live_fill.take() else {
+            return;
+        };
+        if rev != self.engine.revision() {
+            return;
+        }
+        if let Some(c) = color {
+            self.add_ink_for(c);
+            self.remember_color(c);
+        }
+    }
+
+    /// Apply a fill; `remember`: its colour joins the document palette
+    /// (and its ink the drawing) now.
+    fn apply_fill_as(&mut self, fill: Fill, remember: bool) {
         if let Fill::Solid(c) = &fill {
             self.current_colors.0 = *c;
+        }
+        // Characters selected in the text being edited take the colour.
+        if self.text_selection_active() {
+            let used = match &fill {
+                Fill::Solid(c) => Some(*c),
+                _ => None,
+            };
+            if self.text_apply_fill(fill) && remember {
+                if let Some(c) = used {
+                    self.add_ink_for(c);
+                    self.remember_color(c);
+                }
+            }
+            return;
         }
         // With the Mesh Fill or Shape tool, a colour goes to the selected
         // mesh node.
@@ -3593,7 +3655,7 @@ impl App {
             };
             let before = self.engine.revision();
             self.run(Command::SetFill { shapes, fill });
-            if let Some(c) = used.filter(|_| self.engine.revision() != before) {
+            if let Some(c) = used.filter(|_| remember && self.engine.revision() != before) {
                 self.add_ink_for(c);
                 self.remember_color(c);
             }
@@ -3663,6 +3725,16 @@ impl App {
     pub fn apply_outline_color(&mut self, color: Option<Color>) {
         if let Some(c) = color {
             self.current_colors.1 = c;
+        }
+        // Characters selected in the text being edited take the outline.
+        if self.text_selection_active() {
+            if self.text_apply_outline_color(color) {
+                if let Some(c) = color {
+                    self.add_ink_for(c);
+                    self.remember_color(c);
+                }
+            }
+            return;
         }
         // Monochrome bitmaps take the colour as their foreground.
         if let Some(c) = color {

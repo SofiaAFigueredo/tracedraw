@@ -180,6 +180,13 @@ impl Engine {
         Ok(())
     }
 
+    /// The drawing is as the step just recorded left it: no undo, redo or
+    /// change outside the history since. A side effect added now with
+    /// [`amend`](Self::amend) joins that step.
+    pub fn at_recorded_step(&self) -> bool {
+        self.revision == self.step_revision && !self.undo.is_empty()
+    }
+
     /// Mint a fresh shape id. Ids never rewind on undo.
     pub fn new_shape_id(&mut self) -> ShapeId {
         self.doc.ids_mut().shape()

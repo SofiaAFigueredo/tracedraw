@@ -126,36 +126,38 @@ impl SourceSub {
         self.segs.len() as f64
     }
 
-    /// The places of `p` on this subpath (two coincide where it lies on
-    /// a segment end; the second is dropped).
-    fn places(&self, sub: usize, p: Point, out: &mut Vec<Place>) {
+    /// The place of `p` on segment `i` of this subpath, added to `out`
+    /// when it lies on it (two places coincide where it lies on a
+    /// segment end; the second is dropped).
+    fn place_on(&self, sub: usize, i: usize, p: Point, out: &mut Vec<Place>) {
         use kurbo::ParamCurveNearest as _;
-        let n = self.len();
-        for (i, (seg, bx)) in self.segs.iter().zip(&self.boxes).enumerate() {
-            if !bx.contains(p) {
-                continue;
-            }
-            let near = seg.nearest(p, 1e-9);
-            if near.distance_sq > ON_SOURCE * ON_SOURCE {
-                continue;
-            }
-            let mut u = i as f64 + near.t.clamp(0.0, 1.0);
-            // On a segment end: that end exactly, so no sliver of the
-            // segment is left over.
-            if (u - u.round()).abs() < 1e-6 {
-                u = u.round();
-            }
-            if self.closed && u >= n - 1e-9 {
-                u = 0.0;
-            }
-            if out
-                .iter()
-                .any(|q| q.sub == sub && self.delta(q.u, u).abs() < 1e-6)
-            {
-                continue;
-            }
-            out.push(Place { sub, u });
+        let (Some(seg), Some(bx)) = (self.segs.get(i), self.boxes.get(i)) else {
+            return;
+        };
+        if !bx.contains(p) {
+            return;
         }
+        let near = seg.nearest(p, 1e-9);
+        if near.distance_sq > ON_SOURCE * ON_SOURCE {
+            return;
+        }
+        let n = self.len();
+        let mut u = i as f64 + near.t.clamp(0.0, 1.0);
+        // On a segment end: that end exactly, so no sliver of the
+        // segment is left over.
+        if (u - u.round()).abs() < 1e-6 {
+            u = u.round();
+        }
+        if self.closed && u >= n - 1e-9 {
+            u = 0.0;
+        }
+        if out
+            .iter()
+            .any(|q| q.sub == sub && self.delta(q.u, u).abs() < 1e-6)
+        {
+            return;
+        }
+        out.push(Place { sub, u });
     }
 
     /// From `a` to `b` along the subpath: the signed parameter distance,
@@ -248,6 +250,77 @@ struct Run {
     du: f64,
 }
 
+/// A grid over the sources' segments, so the segments near a point are
+/// found without a look at every one (a block shadow welds thousands).
+struct SegmentGrid {
+    x0: f64,
+    y0: f64,
+    cell: f64,
+    nx: usize,
+    ny: usize,
+    /// Per cell: the (subpath, segment) pairs whose boxes cover it.
+    cells: Vec<Vec<(usize, usize)>>,
+}
+
+impl SegmentGrid {
+    fn new(subs: &[SourceSub]) -> Self {
+        let mut bounds: Option<kurbo::Rect> = None;
+        let mut count = 0usize;
+        for sub in subs {
+            for bx in &sub.boxes {
+                bounds = Some(bounds.map_or(*bx, |b| b.union(*bx)));
+                count += 1;
+            }
+        }
+        let bounds = bounds.unwrap_or(kurbo::Rect::ZERO);
+        // About one segment per cell, within reason.
+        let side = ((count as f64).sqrt().ceil() as usize).clamp(1, 512);
+        let cell = (bounds.width().max(bounds.height()) / side as f64).max(1e-6);
+        let nx = ((bounds.width() / cell).ceil() as usize).max(1);
+        let ny = ((bounds.height() / cell).ceil() as usize).max(1);
+        let mut grid = SegmentGrid {
+            x0: bounds.x0,
+            y0: bounds.y0,
+            cell,
+            nx,
+            ny,
+            cells: vec![Vec::new(); nx * ny],
+        };
+        for (k, sub) in subs.iter().enumerate() {
+            for (i, bx) in sub.boxes.iter().enumerate() {
+                let (cx0, cy0) = grid.cell_of(Point::new(bx.x0, bx.y0));
+                let (cx1, cy1) = grid.cell_of(Point::new(bx.x1, bx.y1));
+                for cy in cy0..=cy1 {
+                    for cx in cx0..=cx1 {
+                        grid.cells[cy * nx + cx].push((k, i));
+                    }
+                }
+            }
+        }
+        grid
+    }
+
+    fn cell_of(&self, p: Point) -> (usize, usize) {
+        let cx = ((p.x - self.x0) / self.cell).floor().max(0.0) as usize;
+        let cy = ((p.y - self.y0) / self.cell).floor().max(0.0) as usize;
+        (cx.min(self.nx - 1), cy.min(self.ny - 1))
+    }
+
+    /// The segments whose boxes may hold `p`.
+    fn near(&self, p: Point) -> &[(usize, usize)] {
+        if p.x < self.x0 || p.y < self.y0 {
+            return &[];
+        }
+        let (cx, cy) = self.cell_of(p);
+        if (p.x - self.x0) / self.cell >= self.nx as f64
+            || (p.y - self.y0) / self.cell >= self.ny as f64
+        {
+            return &[];
+        }
+        &self.cells[cy * self.nx + cx]
+    }
+}
+
 /// `result`, a polygon path made from the flattened `sources`, with the
 /// sources' curves put back: a vertex lying on a source outline is placed
 /// on it, and a stretch of consecutive vertices along one source subpath
@@ -257,11 +330,13 @@ struct Run {
 /// edge the result leaves early) stay straight lines, so the result is
 /// never worse than the polygon.
 fn recover_curves(result: &BezPath, sources: &[&BezPath]) -> BezPath {
-    if result
-        .elements()
-        .iter()
-        .any(|e| matches!(e, PathEl::QuadTo(..) | PathEl::CurveTo(..)))
-    {
+    let curved = |p: &BezPath| {
+        p.elements()
+            .iter()
+            .any(|e| matches!(e, PathEl::QuadTo(..) | PathEl::CurveTo(..)))
+    };
+    // Nothing to put back when the sources are polygons themselves.
+    if curved(result) || !sources.iter().any(|p| curved(p)) {
         return result.clone();
     }
     let subs: Vec<SourceSub> = sources
@@ -284,6 +359,7 @@ fn recover_curves(result: &BezPath, sources: &[&BezPath]) -> BezPath {
     if subs.is_empty() {
         return result.clone();
     }
+    let grid = SegmentGrid::new(&subs);
     // The contours of the result.
     let mut contours: Vec<Vec<Point>> = Vec::new();
     for el in result.elements() {
@@ -310,8 +386,8 @@ fn recover_curves(result: &BezPath, sources: &[&BezPath]) -> BezPath {
             .iter()
             .map(|p| {
                 let mut v = Vec::new();
-                for (k, sub) in subs.iter().enumerate() {
-                    sub.places(k, *p, &mut v);
+                for (k, i) in grid.near(*p) {
+                    subs[*k].place_on(*k, *i, *p, &mut v);
                 }
                 v
             })
@@ -1599,6 +1675,48 @@ mod tests {
         // Simplify keeps curves too.
         let s = simplify(&c);
         assert_eq!(count(&s, false), 0, "{s:?}");
+    }
+
+    /// Polygon sources skip the curve recovery (a block shadow welds
+    /// thousands of them), and a curved source of thousands of segments
+    /// is looked up through the grid, not segment by segment: both are
+    /// quick.
+    #[test]
+    fn recovery_is_quick_on_big_inputs() {
+        let t = std::time::Instant::now();
+        // Many thin quads welded one by one, as a block shadow is made.
+        let mut solid = square(0.0);
+        for k in 0..300 {
+            let x = k as f64 * 0.1;
+            let mut quad = BezPath::new();
+            quad.move_to((x, 0.0));
+            quad.line_to((x + 0.3, 0.0));
+            quad.line_to((x + 0.3 + 20.0, 30.0));
+            quad.line_to((x + 20.0, 30.0));
+            quad.close_path();
+            solid = overlay(&solid, &quad, Op::Weld);
+        }
+        assert!(count(&solid, true) == 0);
+        // A curve of 4,000 segments against a circle.
+        let n = 4000;
+        let mut wavy = BezPath::new();
+        for k in 0..n {
+            let a = k as f64 / n as f64 * std::f64::consts::TAU;
+            let r = 50.0 + 3.0 * (a * 40.0).sin();
+            let q = Point::new(r * a.cos(), r * a.sin());
+            if k == 0 {
+                wavy.move_to(q);
+            } else {
+                let b = (k as f64 - 0.5) / n as f64 * std::f64::consts::TAU;
+                let rb = 50.0 + 3.0 * (b * 40.0).sin();
+                let m = Point::new(rb * b.cos(), rb * b.sin());
+                wavy.curve_to(m, m, q);
+            }
+        }
+        wavy.close_path();
+        let w = overlay(&wavy, &circle(30.0, 0.0, 40.0), Op::Weld);
+        assert!(count(&w, true) > 100, "{}", count(&w, true));
+        assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
     }
 
     #[test]

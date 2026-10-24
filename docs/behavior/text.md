@@ -92,12 +92,20 @@ Text and Glyphs dockers and Options (default font):
   itself first, then names starting with them, then the rest. Down and Up
   move through the list, Enter takes the highlighted family, Escape
   closes the list and puts the name back.
+- The mouse wheel over the closed list (the field or its arrow) takes
+  the family after (wheel down) or before (wheel up) the one in use, in
+  the list's order, stopping at the ends; the families used last stay as
+  they were. In the property bar and the Text docker it acts only on text
+  being edited or selected: with nothing to change it does nothing
+  rather than ask for the font of new text (#665,
+  `ui::font_list::live_tests::the_wheel_over_the_font_list_steps_the_font`).
 - At the top of the list, the number of families shown and what to show:
   all fonts, installed fonts, the fonts in this drawing, or (in the
   browser) the fonts to download.
 - "Used last": the last five families picked in any font list, newest
   first (kept in the preferences, `recent_fonts`), while nothing is typed.
-- Every family, its name drawn in its own font (in the interface font for
+- Every family, its name drawn in its own font in the theme's text
+  colour, light on the dark themes (#660; in the interface font for
   a symbol font and for a family not here yet), with an icon of how it is
   built: T TrueType, O OpenType (PostScript outlines), V variable, D came
   with the drawing, a downward arrow downloaded the first time it is used
@@ -175,6 +183,13 @@ concatenated spans; the layout's line boxes give its place on the page.
 | Ctrl+Space | finish editing and switch to the Pick tool (Space alone types a space) |
 | Undo of typing | the typing of one editing session of one text is one step ("Edit Text"); a session folds keystrokes only into its own step, while it is the last one, so editing another text never touches it (#373, `text_editing::tests::editing_a_second_text_keeps_the_edit_of_the_first`) |
 | Typing while a field has the keyboard (the font search field, a docker's box) | goes to the field only; the text waits until the field lets the keyboard go (#342, `pick_drag_tests::typing_in_a_focused_field_leaves_the_edited_text_alone`) |
+
+The caret is a black bar on a white edge, so it shows on the white page
+and on dark fills whatever the interface theme; selected characters are
+shaded a see-through mid grey, coloured letters keeping their colour
+under it. Table cells being edited show the same caret and shade (#632,
+`pick_drag_tests::the_text_caret_is_black_on_a_white_edge`,
+`text_frames::tests` checks the shade).
 
 The property bar's font, size and style buttons act on the selected
 characters while a selection exists, and show the style at the caret
@@ -670,7 +685,8 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
   the fonts used last keep the newest five
   (`ui::font_list::tests::the_fonts_used_last_keep_the_newest_first`);
   names are drawn in their own font, and a family not installed or no
-  text draws nothing (`ui::font_list::tests::names_are_drawn_in_their_own_font`);
+  text draws nothing (`ui::font_list::tests::names_are_drawn_in_their_own_font`),
+  in the theme's text colour (`ui::font_list::tests::names_take_the_theme_text_colour`);
   the list draws with every filter, a family's styles shown and typed text
   (`ui::font_list::tests::the_list_draws_in_every_state`); families tell
   how they are built, their style names, whether they came with a drawing

@@ -2368,6 +2368,49 @@ fn typing_in_a_focused_field_leaves_the_edited_text_alone() {
     assert_eq!(app.edit_text(), "abe");
 }
 
+/// The caret of text being edited is black on a white edge, whatever the
+/// interface theme (its text colour is light in the dark themes and the
+/// caret was lost on the white page, #632).
+#[test]
+fn the_text_caret_is_black_on_a_white_edge() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.settings.autocorrect.enabled = false;
+    app.start_text(Point::new(30.0, 50.0), None);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::Text("ab".into())],
+        Modifiers::NONE,
+    );
+    let (top, bottom, _) = app.text_caret_geometry().expect("caret");
+    let ends = [app.view.to_screen(top), app.view.to_screen(bottom)];
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(input, |ui| crate::ui::root(&mut app, ui));
+    out.textures_delta.clear();
+    let strokes: Vec<egui::Stroke> = out
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::LineSegment { points, stroke }
+                if points[0].distance(ends[0]) < 0.01 && points[1].distance(ends[1]) < 0.01 =>
+            {
+                Some(*stroke)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(strokes, crate::canvas::TEXT_CARET.to_vec());
+    assert_eq!(strokes[1].color, egui::Color32::BLACK);
+    assert!(strokes[0].width > strokes[1].width);
+}
+
 /// With alignment guides on (and every other snapping off), a move of the
 /// rectangle near another one lands its top edge on the other's top and
 /// shows the line while the button is down; a scale handle lines up the
@@ -2528,7 +2571,9 @@ fn a_pen_click_after_a_pulled_node_follows_its_handle() {
     let s1 = cubic(segs[1]);
     assert!(near(s1.p1, Point::new(150.0, 170.0)), "{s1:?}");
     assert!(near(s1.p2, c) && near(s1.p3, c), "{s1:?}");
-    // The next segment leaves the clicked node straight.
+    // The next segment leaves the clicked node straight. (The first
+    // curve goes, or a click on its end node would continue it, #630.)
+    app.delete_selection();
     app.set_tool(Tool::Pen);
     app.select(Vec::new());
     click_page(&ctx, &mut app, a);
@@ -5988,4 +6033,201 @@ fn ctrl_q_bakes_an_envelope() {
     assert!(matches!(s.kind, ShapeKind::Path { .. }), "{:?}", s.kind);
     assert!(s.effects.is_empty(), "{:?}", s.effects);
     assert!(s.bounds().y1 > 41.0, "{:?}", s.bounds());
+}
+
+#[test]
+fn save_as_starts_at_the_cdr_type_and_version_the_options_set() {
+    let (ctx, mut app, _) = setup();
+    let save_as = |ctx: &egui::Context, app: &mut App| {
+        frame(
+            ctx,
+            app,
+            vec![key(egui::Key::S, Modifiers::COMMAND | Modifiers::SHIFT)],
+            Modifiers::COMMAND | Modifiers::SHIFT,
+        );
+        frame(ctx, app, Vec::new(), Modifiers::NONE);
+        match &app.dialog {
+            crate::ui::dialogs::Dialog::SaveAs(st) => (st.cdr, st.version),
+            other => panic!("no Save Drawing dialog: {other:?}"),
+        }
+    };
+    // By default a new drawing is offered as TraceDraw, version 27 for .cdr.
+    assert_eq!(
+        save_as(&ctx, &mut app),
+        (false, tracedraw_cdr::write::NEWEST_VERSION)
+    );
+    app.dialog = crate::ui::dialogs::Dialog::None;
+    // Options > Global > File Formats: version 15 and .cdr for new drawings.
+    app.settings.formats.cdr_version = 15;
+    app.settings.formats.save_new_as_cdr = true;
+    assert_eq!(save_as(&ctx, &mut app), (true, 15));
+}
+
+#[test]
+fn the_options_dialogs_are_tabs_of_one_window() {
+    use crate::ui::dialogs::{Dialog, OptionsPage};
+    use crate::ui::options::{tab_rect_id, OptionsSet};
+    let (ctx, mut app, _) = setup();
+    app.dialog = Dialog::Options;
+    app.options_page = OptionsPage::Display;
+    // The window takes its place over the first frames.
+    for _ in 0..4 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let tab = |ctx: &egui::Context, s: OptionsSet| {
+        ctx.data(|d| d.get_temp::<egui::Rect>(tab_rect_id(s)))
+            .unwrap_or_else(|| panic!("no tab for {s:?}"))
+            .center()
+    };
+    // Every set has its tab, Document Options too while a drawing is open.
+    for s in OptionsSet::ALL {
+        tab(&ctx, s);
+    }
+    click_at(
+        &ctx,
+        &mut app,
+        tab(&ctx, OptionsSet::Global),
+        Modifiers::NONE,
+    );
+    assert_eq!(app.options_page, OptionsPage::GlobalGeneral);
+    assert!(matches!(app.dialog, Dialog::Options));
+    click_at(
+        &ctx,
+        &mut app,
+        tab(&ctx, OptionsSet::Document),
+        Modifiers::NONE,
+    );
+    assert_eq!(app.options_page, OptionsPage::DocumentGeneral);
+    // Back on the first tab, the page shown there last.
+    click_at(&ctx, &mut app, tab(&ctx, OptionsSet::App), Modifiers::NONE);
+    assert_eq!(app.options_page, OptionsPage::Display);
+    // Cancel still closes the one window.
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::Escape, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    assert!(matches!(app.dialog, Dialog::None), "{:?}", app.dialog);
+}
+
+/// The page radius of each corner of rectangle `id`.
+fn corner_radii(app: &App, id: ShapeId) -> [f64; 4] {
+    app.doc()
+        .find_shape(id)
+        .and_then(|s| s.page_corners())
+        .map(|c| c.radii)
+        .expect("a rectangle")
+}
+
+/// Shape tool on a rectangle: a marquee over two corners chooses both,
+/// Shift adds a corner to a click's, and dragging a chosen corner then
+/// rounds the chosen corners only (#671).
+#[test]
+fn chosen_rectangle_corners_round_together() {
+    let (ctx, mut app, id) = setup();
+    app.set_tool(Tool::Shape);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let screen = |app: &App, x: f64, y: f64| app.view.to_screen(Point::new(x, y));
+    // A marquee round the two corners at y = 40.
+    let (from, to) = (screen(&app, 0.0, 45.0), screen(&app, 70.0, 35.0));
+    drag(&ctx, &mut app, from, to, Modifiers::NONE, Vec::new());
+    assert_eq!(
+        app.rect_corners_selected.len(),
+        2,
+        "{:?}",
+        app.rect_corners_selected
+    );
+    let (from, to) = (screen(&app, 60.0, 40.0), screen(&app, 54.0, 40.0));
+    drag(&ctx, &mut app, from, to, Modifiers::NONE, Vec::new());
+    let r = corner_radii(&app, id);
+    let rounded: Vec<bool> = r.iter().map(|v| *v > 1.0).collect();
+    assert_eq!(rounded.iter().filter(|b| **b).count(), 2, "{r:?}");
+    for v in r.iter().filter(|v| **v > 1.0) {
+        assert!((v - 6.0).abs() < 0.2, "{r:?}");
+    }
+    let before = r;
+    // A click on one corner at y = 10 and Shift on the other: those two.
+    let at = screen(&app, 10.0, 10.0);
+    click_at(&ctx, &mut app, at, Modifiers::NONE);
+    let at = screen(&app, 60.0, 10.0);
+    click_at(&ctx, &mut app, at, Modifiers::SHIFT);
+    assert_eq!(
+        app.rect_corners_selected.len(),
+        2,
+        "{:?}",
+        app.rect_corners_selected
+    );
+    let (from, to) = (screen(&app, 60.0, 10.0), screen(&app, 60.0, 14.0));
+    drag(&ctx, &mut app, from, to, Modifiers::NONE, Vec::new());
+    let r = corner_radii(&app, id);
+    for i in 0..4 {
+        if before[i] > 1.0 {
+            assert!((r[i] - before[i]).abs() < 1e-6, "the top ones stay: {r:?}");
+        } else {
+            assert!((r[i] - 4.0).abs() < 0.2, "the bottom ones round: {r:?}");
+        }
+    }
+    // Shift on a chosen corner takes it out again.
+    let at = screen(&app, 60.0, 14.0);
+    click_at(&ctx, &mut app, at, Modifiers::SHIFT);
+    assert_eq!(
+        app.rect_corners_selected.len(),
+        1,
+        "{:?}",
+        app.rect_corners_selected
+    );
+}
+
+/// Pen: a click on the end node of an open curve that is not selected
+/// goes on from it as if drawing had never stopped: the next segment
+/// leaves along the mirror of the end's handle, the preview is curved,
+/// and the new nodes join that curve smoothly (#630).
+#[test]
+fn the_pen_continues_an_unselected_curve_with_the_mirrored_handle() {
+    let (ctx, mut app, first) = setup();
+    app.select(vec![first]);
+    app.delete_selection();
+    app.set_tool(Tool::Pen);
+    let a = Point::new(100.0, 150.0);
+    let b = Point::new(140.0, 150.0);
+    pull(&ctx, &mut app, a, Point::new(110.0, 140.0));
+    pull(&ctx, &mut app, b, Point::new(150.0, 160.0));
+    app.finish_curve();
+    let id = app.selection[0];
+    let before = shape_count(&app);
+    // Unselected, then the Pen again on its end node.
+    app.select(Vec::new());
+    app.set_tool(Tool::Pen);
+    click_page(&ctx, &mut app, b);
+    assert_eq!(app.selection, vec![id], "the curve is taken up");
+    let c = app.curve.clone().expect("a curve going on");
+    assert_eq!(c.nodes.len(), 1);
+    assert!(near(c.nodes[0].0, b), "{c:?}");
+    // The curve arrived at b along the mirror of the pulled handle, at
+    // (130, 140); the next segment leaves along (150, 160).
+    let out = c.nodes[0].1.expect("a handle to leave along");
+    assert!(near(out, Point::new(150.0, 160.0)), "{out:?}");
+    let pointer = Point::new(180.0, 150.0);
+    let look = crate::pen_look::curve_look(&c, Some(pointer), true, None);
+    let preview = look.preview.expect("a preview");
+    assert!(
+        preview
+            .elements()
+            .iter()
+            .any(|e| matches!(e, tracedraw_core::geometry::PathEl::CurveTo(..))),
+        "curved: {preview:?}"
+    );
+    click_page(&ctx, &mut app, pointer);
+    app.finish_curve();
+    assert_eq!(shape_count(&app), before, "no new object");
+    let segs: Vec<_> = last_path(&app).segments().collect();
+    assert_eq!(segs.len(), 2, "{segs:?}");
+    // Smooth through b: the handles on either side are in line.
+    let (s0, s1) = (cubic(segs[0]), cubic(segs[1]));
+    let (i, o) = (s0.p2 - b, s1.p1 - b);
+    assert!(
+        (i.x * o.y - i.y * o.x).abs() < 1e-6 && i.dot(o) < 0.0,
+        "{s0:?} {s1:?}"
+    );
 }

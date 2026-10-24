@@ -466,6 +466,9 @@ pub enum Drag {
         node: crate::kind_nodes::KindNode,
         start: Box<tracedraw_core::Shape>,
         single: bool,
+        /// The rectangle corners the drag changes along with the one
+        /// dragged (the chosen ones, when it is among them).
+        chosen: [bool; 4],
         begun: bool,
         /// Degrees an ellipse's node has turned through.
         turn: f64,
@@ -931,9 +934,10 @@ pub struct App {
     pub rect_corners: tracedraw_core::Corners,
     /// The property bar's lock: one corner size edits them all.
     pub corners_together: bool,
-    /// The Shape tool's chosen rectangle corner: dragging it changes that
-    /// corner only.
-    pub rect_corner_selected: Option<(tracedraw_core::ShapeId, usize)>,
+    /// The Shape tool's chosen rectangle corners (a click, Shift or Ctrl
+    /// click, or a marquee): dragging one of them changes those corners
+    /// only.
+    pub rect_corners_selected: Vec<(tracedraw_core::ShapeId, usize)>,
     /// The selection as a marquee (or freehand region) left it. While the
     /// selection still equals it, shaping and joining take the bottom-most
     /// object as their target instead of the one selected last.
@@ -2040,7 +2044,7 @@ impl App {
             complex_sharpness: 2,
             rect_corners: tracedraw_core::Corners::tool_default(),
             corners_together: true,
-            rect_corner_selected: None,
+            rect_corners_selected: Vec::new(),
             marquee_selection: None,
             clone_sync_revision: 0,
             ellipse_arc: None,
@@ -3969,7 +3973,7 @@ impl App {
         self.rotate_mode = false;
         self.node_selection.clear();
         self.segment_spot = None;
-        self.rect_corner_selected = None;
+        self.rect_corners_selected.clear();
     }
 
     // ----- object creation ---------------------------------------------------
@@ -4639,7 +4643,8 @@ impl App {
     }
 
     /// Convert to Curves: shapes and text become curves; a table becomes a
-    /// group of curves (cell fills, borders, text) and a symbol instance
+    /// group of curves (cell fills, borders, text), a dimension a group of
+    /// its lines, arrowheads and label as curves, and a symbol instance
     /// a group of its symbol's objects as curves. An envelope, perspective
     /// or distortion becomes part of the curves (#647). Bitmaps are left as
     /// they are, with a note in the status bar.
@@ -4659,6 +4664,13 @@ impl App {
         let symbols = self.doc().symbols.clone();
         let mut cmds = Vec::new();
         for s in &shapes {
+            // A dimension becomes a group of plain curves (#640).
+            if bake {
+                if let Some(mut c) = self.dimension_curves_commands(s) {
+                    cmds.append(&mut c);
+                    continue;
+                }
+            }
             let engine = &mut self.engine;
             let mut next_id = || engine.new_shape_id();
             let c = if bake {
@@ -4697,9 +4709,9 @@ impl App {
 
     /// Something selected that Convert to Curves would change.
     pub fn can_convert_to_curves(&self) -> bool {
-        self.selected_shapes()
-            .iter()
-            .any(|s| s.converts_to_curves() || s.has_outline_warp())
+        self.selected_shapes().iter().any(|s| {
+            s.converts_to_curves() || s.has_outline_warp() || crate::dimensions::is_dimension(s)
+        })
     }
 
     /// Order: 0 = to front, 1 = forward one, 2 = back one, 3 = to back.

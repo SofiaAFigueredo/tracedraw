@@ -506,6 +506,14 @@ fn seg_touches(seg: &PathSeg, r: Rect) -> bool {
     }
     let (a, c) = (Point::new(r.x0, r.y0), Point::new(r.x1, r.y1));
     let (b2, d) = (Point::new(r.x1, r.y0), Point::new(r.x0, r.y1));
+    // A curve through a corner, or lying along a side of a box of no
+    // height or width, which the crossing test misses (parallel lines).
+    if [a, b2, c, d]
+        .iter()
+        .any(|k| seg.nearest(*k, 1e-9).distance_sq <= 1e-12)
+    {
+        return true;
+    }
     [
         Line::new(a, b2),
         Line::new(b2, c),
@@ -776,6 +784,7 @@ impl App {
         }
         if let Err(e) = self.engine.run_batch("Delete Segment", &cmds) {
             self.status = e.to_string();
+            return false;
         }
         self.selection
             .retain(|id| self.engine.document().find_shape(*id).is_some());
@@ -1042,10 +1051,16 @@ mod tests {
             (b.x0 - 100.0).abs() < 1e-6 && (b.x1 - 130.0).abs() < 1e-6,
             "{b:?}"
         );
-        // A drag round the right end of the line: that stretch goes.
+        // A drag round the right end of the line: that stretch goes, and
+        // the vertical through it, both of whose halves the box touches.
         app.delete_virtual_segments_in(Rect::new(119.0, 48.0, 131.0, 52.0));
         let b = page(&app).bounding_box();
         assert!((b.x1 - 110.0).abs() < 1e-6, "{b:?}");
+        assert!(
+            app.doc().find_shape(v2).is_none(),
+            "the vertical it touched"
+        );
+        assert!(app.doc().find_shape(v1).is_some());
         assert!(matches!(
             app.doc().find_shape(g).map(|s| &s.kind),
             Some(ShapeKind::Group { .. })
@@ -1247,16 +1262,88 @@ mod tests {
         line(&mut app, (10.0, -5.0), (10.0, 5.0));
         app.tool = crate::tools::Tool::SegmentDelete;
         let px = 1.0 / app.view.zoom as f64;
-        // Pressed 3 px above the line, slipped 4 px away from it.
-        let start = Point::new(20.0, 3.0 * px);
-        assert!(app.finish_tools2_box(start, start + (4.0 * px, 4.0 * px)));
-        let b = path_of(&app, h).bounding_box();
-        assert!((b.x1 - 10.0).abs() < 1e-6, "{b:?}");
+        // Pressed 3 px off the line, slipped 7 px away from it (past the
+        // distance that makes a drag) and sideways: the press is what
+        // counts, whichever way the pointer went (y goes up on the page).
+        for (press, slip) in [((20.0, -3.0), (7.0, -7.0)), ((5.0, 3.0), (-7.0, 7.0))] {
+            let start = Point::new(press.0, press.1 * px);
+            let before = app.engine.history_labels().0.len();
+            app.drag = crate::app::Drag::Box {
+                start,
+                current: start + (slip.0 * px, slip.1 * px),
+                from_center: false,
+            };
+            app.end_drag();
+            assert_eq!(app.engine.history_labels().0.len(), before + 1, "{press:?}");
+        }
+        // The stretch right of the crossing went, then the one left of it.
+        assert!(app.doc().find_shape(h).is_none());
         // A real drag that reaches nothing removes nothing.
         let before = app.engine.history_labels().0.len();
         let start = Point::new(40.0, 10.0);
         app.finish_tools2_box(start, start + (60.0 * px, 60.0 * px));
         assert_eq!(app.engine.history_labels().0.len(), before);
+    }
+
+    /// What a drag's box touches: an end inside, a curve dipping in with
+    /// both ends outside, a curve through a corner, a line along a box of
+    /// no height; and a stretch wrapping over a closed outline's start.
+    #[test]
+    fn what_a_box_touches() {
+        let r = Rect::new(10.0, 10.0, 20.0, 20.0);
+        let line = |a: (f64, f64), b: (f64, f64)| PathSeg::Line(Line::new(a, b));
+        assert!(
+            seg_touches(&line((15.0, 15.0), (40.0, 40.0)), r),
+            "an end inside"
+        );
+        assert!(seg_touches(&line((0.0, 15.0), (30.0, 15.0)), r), "across");
+        assert!(!seg_touches(&line((0.0, 25.0), (30.0, 25.0)), r), "above");
+        assert!(
+            seg_touches(&line((0.0, 0.0), (30.0, 30.0)), r),
+            "through two corners"
+        );
+        assert!(
+            seg_touches(&line((0.0, 30.0), (30.0, 0.0)), r),
+            "the other diagonal"
+        );
+        assert!(
+            seg_touches(&line((0.0, 20.0), (40.0, 0.0)), r),
+            "through a corner"
+        );
+        // A cubic dipping 2 mm into the box from below, both ends outside.
+        let dip = PathSeg::Cubic(tracedraw_core::geometry::CubicBez::new(
+            (0.0, 0.0),
+            (10.0, 16.0),
+            (20.0, 16.0),
+            (30.0, 0.0),
+        ));
+        assert!(seg_touches(&dip, r));
+        assert!(
+            !seg_touches(&dip, Rect::new(10.0, 13.0, 20.0, 20.0)),
+            "it stops at 12"
+        );
+        // A box of no height along a level line.
+        let level = line((0.0, 0.0), (30.0, 0.0));
+        assert!(seg_touches(&level, Rect::new(10.0, 0.0, 20.0, 0.0)));
+        assert!(!seg_touches(&level, Rect::new(10.0, 1.0, 20.0, 1.0)));
+        // A square with two crossings on its bottom side: the stretch
+        // over the start (the bottom's ends, left and right sides, top)
+        // is touched by a box on the top side only.
+        let sub = Sub {
+            segs: vec![
+                line((0.0, 0.0), (10.0, 0.0)),
+                line((10.0, 0.0), (10.0, 10.0)),
+                line((10.0, 10.0), (0.0, 10.0)),
+                line((0.0, 10.0), (0.0, 0.0)),
+            ],
+            closed: true,
+        };
+        let top = Rect::new(4.0, 9.0, 6.0, 11.0);
+        assert!(
+            stretch_touches(&sub, 0.6, 0.4, top),
+            "wrapping over the start"
+        );
+        assert!(!stretch_touches(&sub, 0.4, 0.6, top), "the bottom's middle");
     }
 
     #[test]

@@ -29,6 +29,34 @@ struct Job {
     rx: std::sync::mpsc::Receiver<Option<(ColorImage, f64)>>,
 }
 
+/// A turn to render on a thread: one page job runs at a time in the whole
+/// program (each holds a copy of the drawing and decodes on band threads
+/// of its own; Multipage view used to start one per slow page at once,
+/// and a job made stale kept running beside the next one).
+#[cfg(not(target_arch = "wasm32"))]
+struct Turn(&'static std::sync::atomic::AtomicBool);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Turn {
+    /// The turn, unless a job holds it.
+    fn take(of: &'static std::sync::atomic::AtomicBool) -> Option<Turn> {
+        use std::sync::atomic::Ordering;
+        of.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()
+            .map(|_| Turn(of))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Turn {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static RENDER_TURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Default)]
 pub struct Raster {
     texture: Option<TextureHandle>,
@@ -353,6 +381,12 @@ impl Raster {
         // thread of its own, the window answering all along.
         #[cfg(not(target_arch = "wasm32"))]
         if window.is_none() && self.last_seconds > SLOW_RENDER && self.texture.is_some() {
+            // Another page's job (or a stale one) is running: the last
+            // picture shows until it is done, which repaints.
+            let Some(turn) = Turn::take(&RENDER_TURN) else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return self.shown_meanwhile(view, screen);
+            };
             let doc = doc.clone();
             let (tx, rx) = std::sync::mpsc::channel();
             let wake = ctx.clone();
@@ -360,6 +394,8 @@ impl Raster {
                 let t = web_time::Instant::now();
                 let image = render_page(&doc, page, &opts).map(|pm| to_image(&pm, lut.as_deref()));
                 let _ = tx.send(image.map(|i| (i, t.elapsed().as_secs_f64())));
+                drop(doc);
+                drop(turn);
                 wake.request_repaint();
             });
             self.job = Some(Job { key, page_rect, rx });
@@ -448,6 +484,18 @@ impl Key {
 
 #[cfg(test)]
 mod tests {
+    /// One page job at a time: the turn is free again once its job ends.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn one_render_job_runs_at_a_time() {
+        static TURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let first = super::Turn::take(&TURN).expect("free");
+        assert!(super::Turn::take(&TURN).is_none());
+        let job = std::thread::spawn(move || drop(first));
+        job.join().unwrap();
+        assert!(super::Turn::take(&TURN).is_some());
+    }
+
     use super::*;
     use tracedraw_core::geometry::Size;
 
@@ -593,7 +641,17 @@ mod tests {
         zoomed.zoom *= 2.0;
         let t = SETTLE_SECONDS + 0.01;
         pass(&ctx, &mut raster, &doc, &zoomed, rect, 0.0);
-        let (tex, screen) = pass(&ctx, &mut raster, &doc, &zoomed, rect, t);
+        let (mut tex, mut screen) = pass(&ctx, &mut raster, &doc, &zoomed, rect, t);
+        // One page job runs at a time in the whole program: another
+        // test's job may hold the turn for a moment.
+        for _ in 0..500 {
+            if raster.job.is_some() {
+                break;
+            }
+            assert_eq!(tex, first, "the old picture shows while waiting");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            (tex, screen) = pass(&ctx, &mut raster, &doc, &zoomed, rect, t);
+        }
         assert_eq!(tex, first);
         assert!(raster.job.is_some(), "drawn on its thread");
         assert_eq!(raster.key, key, "the old picture shows meanwhile");

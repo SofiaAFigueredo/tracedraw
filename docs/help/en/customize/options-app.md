@@ -14,6 +14,7 @@ sets how the program works. Choose a page from the list on the left.
 - [[options.show_splash]] (on).
 - [[options.hardware_acceleration]] (on): draw the window with the graphics card chosen beside it ([[options.gpu_automatic]] at first); off, with the computer's software renderer. It takes effect at the next start. If the window cannot open that way, TraceDraw starts again with the software renderer, then with OpenGL, and keeps the one that worked.
 - [[options.undo_levels]]: how many steps you can undo (150 at first).
+- [[options.undo_memory]]: the most memory those steps may take (1024 MB at first, 0 for no limit); past it the oldest steps go, the newest always stays.
 
 ## Display {#display}
 

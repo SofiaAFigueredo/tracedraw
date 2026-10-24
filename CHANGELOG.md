@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Undo now keeps to a memory limit as well as to its number of steps: Tools > Options > TraceDraw > General > Undo levels > Memory (MB), 1024 by default, 0 for no limit. Past it the oldest steps of the drawing go; the newest always stays. Slow pages are drawn in the background one at a time: Multipage view started one render, each with its own copy of the drawing, for every slow page at once (2.7 GB for four pages of photos), and a render made stale kept running beside the next one.
+
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.
 
 ## 0.17.0 (2026-10-24)

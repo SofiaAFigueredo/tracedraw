@@ -14,6 +14,7 @@ określa sposób działania programu. Wybierz stronę z listy po lewej stronie.
 - [[options.show_splash]] (włączone).
 - [[options.hardware_acceleration]] (włączone): okno jest rysowane kartą graficzną wybraną obok (na początku [[options.gpu_automatic]]); wyłączone, programowym rendererem komputera. Działa od następnego uruchomienia. Jeśli okno nie może się tak otworzyć, TraceDraw uruchamia się ponownie z rendererem programowym, potem z OpenGL, i zapamiętuje ten, który zadziałał.
 - [[options.undo_levels]]: ile kroków można cofnąć (domyślnie 150).
+- [[options.undo_memory]]: ile pamięci mogą najwyżej zajmować te kroki (domyślnie 1024 MB, 0 bez limitu); powyżej najstarsze są usuwane, najnowszy zostaje zawsze.
 
 ## Wyświetlanie {#display}
 

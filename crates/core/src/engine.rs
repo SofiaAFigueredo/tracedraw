@@ -21,6 +21,9 @@ struct HistoryEntry {
     /// The drawing on the other side of the step: before it on the undo
     /// stack, after it on the redo stack.
     other: Document,
+    /// About how much memory `other` holds of its own (see
+    /// [`snapshot_bytes`]), for the history's memory limit.
+    bytes: usize,
 }
 
 #[derive(Debug)]
@@ -36,6 +39,9 @@ pub struct Engine {
     /// join that step only while nothing happened since.
     step_revision: u64,
     max_history: usize,
+    /// Memory the undo steps may hold together before the oldest go
+    /// (`usize::MAX`: no limit); the newest step always stays.
+    max_history_bytes: usize,
     /// Generator of object identities ([`crate::document::Uid`]).
     uid_state: u64,
     /// The id the next recorded step gets.
@@ -87,6 +93,7 @@ impl Engine {
             saved_revision: 0,
             step_revision: u64::MAX,
             max_history: 200,
+            max_history_bytes: usize::MAX,
             uid_state: fresh_seed(),
             next_step: 1,
             instance: fresh_seed(),
@@ -160,19 +167,19 @@ impl Engine {
         self.doc.refresh_text_flow();
         let id = self.next_step;
         self.next_step += 1;
+        let bytes = self.bytes_of(&before);
         self.undo.push(HistoryEntry {
             label,
             id,
             other: before,
+            bytes,
         });
         self.finish_step();
         Ok(())
     }
 
     fn finish_step(&mut self) {
-        while self.undo.len() > self.max_history {
-            self.undo.remove(0);
-        }
+        self.trim_history();
         self.clear_redo();
         self.revision += 1;
         self.step_revision = self.revision;
@@ -191,10 +198,12 @@ impl Engine {
         self.doc.refresh_text_flow();
         let id = self.next_step;
         self.next_step += 1;
+        let bytes = self.bytes_of(&before);
         self.undo.push(HistoryEntry {
             label,
             id,
             other: before,
+            bytes,
         });
         self.finish_step();
         Ok(())
@@ -415,9 +424,45 @@ impl Engine {
     /// steps are dropped at once when the limit shrinks.
     pub fn set_max_history(&mut self, n: usize) {
         self.max_history = n.max(1);
-        while self.undo.len() > self.max_history {
-            self.undo.remove(0);
+        self.trim_history();
+    }
+
+    /// How much memory the undo steps may hold together (Options, General,
+    /// Undo memory; `usize::MAX` for no limit). Past it the oldest steps
+    /// go, at once when the limit shrinks; the newest step always stays.
+    pub fn set_max_history_bytes(&mut self, bytes: usize) {
+        self.max_history_bytes = bytes;
+        self.trim_history();
+    }
+
+    pub fn max_history_bytes(&self) -> usize {
+        self.max_history_bytes
+    }
+
+    /// About how much memory the undo and redo steps hold.
+    pub fn history_bytes(&self) -> usize {
+        self.undo.iter().chain(&self.redo).map(|e| e.bytes).sum()
+    }
+
+    /// Drop the oldest undo steps past the step count or the memory limit.
+    fn trim_history(&mut self) {
+        let over = self.undo.len().saturating_sub(self.max_history);
+        let mut drop = over;
+        if self.max_history_bytes != usize::MAX {
+            let mut total: usize = self.undo[over..].iter().map(|e| e.bytes).sum();
+            while total > self.max_history_bytes && drop + 1 < self.undo.len() {
+                total -= self.undo[drop].bytes;
+                drop += 1;
+            }
         }
+        if drop > 0 {
+            self.undo.drain(..drop);
+        }
+    }
+
+    /// The memory `snapshot` holds that the drawing does not share with it.
+    fn bytes_of(&self, snapshot: &Document) -> usize {
+        snapshot_bytes(snapshot, &self.doc)
     }
 
     pub fn max_history(&self) -> usize {
@@ -443,6 +488,83 @@ impl Engine {
             _ => &[],
         }
     }
+}
+
+/// About how much memory `snapshot` holds of its own, next to `current`:
+/// each object and its path points, and the pictures that `current` does
+/// not share with it (pictures are shared between copies of a drawing
+/// until one is changed). Text, tables and effect settings are left out;
+/// they are small next to paths and pictures. One walk, without
+/// allocating anything per object.
+fn snapshot_bytes(snapshot: &Document, current: &Document) -> usize {
+    use crate::document::{Shape, ShapeKind};
+    use crate::style::{Fill, Pattern};
+    fn pictures<'a>(s: &'a Shape, f: &mut dyn FnMut(&'a crate::SharedBytes)) {
+        match &s.kind {
+            ShapeKind::Bitmap { png, fx, .. } => {
+                f(png);
+                if let Some(fx) = fx {
+                    f(&fx.png);
+                }
+            }
+            ShapeKind::Group { children } => children.iter().for_each(|c| pictures(c, f)),
+            ShapeKind::ClipFrame { frame, contents } => {
+                pictures(frame, f);
+                contents.iter().for_each(|c| pictures(c, f));
+            }
+            _ => {}
+        }
+        if let Some(r) = &s.raster_fx {
+            f(&r.png);
+        }
+        match &s.fill {
+            Fill::Pattern(Pattern::Bitmap { png, .. }) => f(png),
+            Fill::Pattern(Pattern::Vector { shapes, .. }) => {
+                shapes.iter().for_each(|c| pictures(c, f))
+            }
+            _ => {}
+        }
+    }
+    fn objects(s: &Shape) -> usize {
+        let own = std::mem::size_of::<Shape>();
+        let kids = match &s.kind {
+            ShapeKind::Path { path, .. } => std::mem::size_of_val(path.elements()),
+            ShapeKind::Group { children } => children.iter().map(objects).sum(),
+            ShapeKind::ClipFrame { frame, contents } => {
+                objects(frame) + contents.iter().map(objects).sum::<usize>()
+            }
+            _ => 0,
+        };
+        let fill = match &s.fill {
+            Fill::Pattern(Pattern::Vector { shapes, .. }) => shapes.iter().map(objects).sum(),
+            _ => 0,
+        };
+        own + kids + fill
+    }
+    fn every(d: &Document) -> impl Iterator<Item = &Shape> {
+        d.pages
+            .iter()
+            .flat_map(|p| &p.layers)
+            .chain(&d.master)
+            .flat_map(|l| &l.shapes)
+            .chain(d.symbols.iter().map(|s| &s.shape))
+    }
+    let mut shared = std::collections::HashSet::new();
+    for s in every(current) {
+        pictures(s, &mut |b| {
+            shared.insert(b.addr());
+        });
+    }
+    let mut total = 0usize;
+    for s in every(snapshot) {
+        total += objects(s);
+        pictures(s, &mut |b| {
+            if shared.insert(b.addr()) {
+                total += b.len();
+            }
+        });
+    }
+    total
 }
 
 #[cfg(test)]
@@ -787,6 +909,68 @@ mod tests {
         assert!(SharedBytes::ptr_eq(&now_a, &png));
         assert!(SharedBytes::ptr_eq(&now_a, &was_a));
         assert!(SharedBytes::ptr_eq(&now_b, &was_b));
+    }
+
+    /// Past the memory limit the oldest steps go; the newest one stays
+    /// however large it is, and pictures shared with the drawing do not
+    /// count.
+    #[test]
+    fn the_history_keeps_to_its_memory_limit() {
+        use crate::document::{Shape, ShapeKind};
+        use crate::geometry::Rect;
+        let mut e = Engine::default();
+        let layer = e.document().pages[0].layers[0].id;
+        let picture = crate::SharedBytes::from(vec![1u8; 1 << 20]);
+        let id = e.new_shape_id();
+        let shape = Shape::new(
+            id,
+            ShapeKind::Bitmap {
+                rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                width_px: 8,
+                height_px: 8,
+                png: picture.clone(),
+                fx: None,
+            },
+        );
+        e.run(&Command::AddShape { layer, shape }).unwrap();
+        let mv = |e: &mut Engine| {
+            e.run(&Command::TransformShapes {
+                shapes: vec![id],
+                transform: crate::Affine::translate((1.0, 0.0)),
+            })
+            .unwrap()
+        };
+        for _ in 0..10 {
+            mv(&mut e);
+        }
+        // The picture is shared by every step: none counts it.
+        assert!(e.history_bytes() < 64 << 10, "{}", e.history_bytes());
+        assert_eq!(e.history_labels().0.len(), 11);
+        // A limit of two steps' worth keeps two.
+        let step = e.undo[5].bytes;
+        e.set_max_history_bytes(step * 2);
+        assert_eq!(e.history_labels().0.len(), 2);
+        mv(&mut e);
+        assert_eq!(e.history_labels().0.len(), 2);
+        // Smaller than one step: the newest still stays, so Undo works.
+        e.set_max_history_bytes(1);
+        assert_eq!(e.history_labels().0.len(), 1);
+        e.undo().unwrap();
+        // A step that replaced the picture holds the old one of its own.
+        let mut e = Engine::default();
+        let shape = Shape::new(
+            id,
+            ShapeKind::Bitmap {
+                rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                width_px: 8,
+                height_px: 8,
+                png: picture.clone(),
+                fx: None,
+            },
+        );
+        e.run(&Command::AddShape { layer, shape }).unwrap();
+        e.run(&Command::DeleteShapes { shapes: vec![id] }).unwrap();
+        assert!(e.history_bytes() >= 1 << 20);
     }
 
     /// A preview moves the redo stack aside instead of copying it, and

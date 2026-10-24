@@ -2447,9 +2447,12 @@ impl App {
         }
         self.raster.borrow_mut().invalidate();
         let levels = self.settings.undo_levels.max(1);
+        let bytes = self.settings.undo_memory_bytes();
         self.engine.set_max_history(levels);
+        self.engine.set_max_history_bytes(bytes);
         for slot in &mut self.docs {
             slot.engine.set_max_history(levels);
+            slot.engine.set_max_history_bytes(bytes);
         }
     }
 

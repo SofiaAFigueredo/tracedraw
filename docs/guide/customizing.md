@@ -20,7 +20,8 @@ everything back. Highlights:
 
 - **General**: what to show at start-up (the Welcome Screen, a new
   document, or the last edited document), the New Document dialog, the
-  splash screen, and the undo levels (150).
+  splash screen, and the undo levels (150) with the memory they may
+  take (1024 MB; older steps go past it).
 - **Display**: proof colours, tooltips, node tracking, the mouse wheel
   (zoom or scroll) and **Ruler calibration**, so that zoom 100 % matches
   a real ruler held to the screen.

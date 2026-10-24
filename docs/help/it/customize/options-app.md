@@ -15,6 +15,7 @@ sinistra.
 - [[options.show_splash]] (attivo).
 - [[options.hardware_acceleration]] (attivo): disegna la finestra con la scheda grafica scelta accanto ([[options.gpu_automatic]] all'inizio); se disattivato, con il renderer software del computer. Vale dal prossimo avvio. Se la finestra non si apre così, TraceDraw si riavvia con il renderer software, poi con OpenGL, e tiene quello che ha funzionato.
 - [[options.undo_levels]]: quanti passaggi puoi annullare (150 in partenza).
+- [[options.undo_memory]]: quanta memoria possono occupare al massimo quei passaggi (1024 MB in partenza, 0 nessun limite); oltre, i più vecchi vengono eliminati, il più recente resta sempre.
 
 ## Visualizzazione {#display}
 

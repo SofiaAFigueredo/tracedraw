@@ -15,6 +15,7 @@ mengatur cara kerja program. Pilih halaman dari daftar di sebelah kiri.
 - [[options.hardware_acceleration]] (aktif): jendela digambar dengan kartu grafis yang dipilih di sebelahnya ([[options.gpu_automatic]] pada awalnya); nonaktif, dengan perender perangkat lunak komputer. Berlaku pada mulai berikutnya. Jika jendela tidak bisa terbuka dengan cara itu, TraceDraw mulai lagi dengan perender perangkat lunak, lalu dengan OpenGL, dan mengingat yang berhasil.
 - [[options.undo_levels]]: berapa langkah yang dapat Anda urungkan (awalnya
   150).
+- [[options.undo_memory]]: memori terbesar yang boleh dipakai langkah-langkah itu (awalnya 1024 MB, 0 tanpa batas); lebih dari itu langkah tertua dibuang, yang terbaru selalu tetap.
 
 ## Tampilan {#display}
 

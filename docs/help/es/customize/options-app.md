@@ -16,6 +16,7 @@ izquierda.
 - [[options.hardware_acceleration]] (activado): dibuja la ventana con la tarjeta gráfica elegida al lado ([[options.gpu_automatic]] al principio); desactivado, con el renderizador por software del equipo. Se aplica en el siguiente inicio. Si la ventana no se abre así, TraceDraw vuelve a iniciarse con el renderizador por software y luego con OpenGL, y conserva el que funcionó.
 - [[options.undo_levels]]: cuántos pasos puede deshacer (150 de forma
   predeterminada).
+- [[options.undo_memory]]: cuánta memoria pueden ocupar como máximo esos pasos (1024 MB de forma predeterminada, 0 sin límite); por encima se descartan los más antiguos y el más reciente siempre se queda.
 
 ## Visualización {#display}
 

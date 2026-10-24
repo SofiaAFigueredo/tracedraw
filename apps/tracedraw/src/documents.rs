@@ -282,6 +282,8 @@ impl App {
         self.engine = Engine::new(doc);
         self.engine
             .set_max_history(self.settings.undo_levels.max(1));
+        self.engine
+            .set_max_history_bytes(self.settings.undo_memory_bytes());
         self.selection.clear();
         self.file = file;
         self.opened_from = None;

@@ -633,6 +633,14 @@ fn general_page(app: &mut App, ui: &mut Ui) {
                 crate::ui::field::NumField::new(&mut app.settings.undo_levels).range(1..=99_999),
             );
             ui.end_row();
+            row_label(ui, &tr("options.undo_memory"));
+            ui.add_sized(
+                [70.0, 22.0],
+                crate::ui::field::NumField::new(&mut app.settings.undo_memory_mb)
+                    .range(0..=1_048_576),
+            )
+            .on_hover_text(tr("options.undo_memory_tip"));
+            ui.end_row();
         });
     });
 }

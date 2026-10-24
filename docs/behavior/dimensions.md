@@ -76,7 +76,7 @@ is kept in the preferences (`tools.dimension_style`).
 | Round ends | off | round caps and joins on the lines |
 | Options > Extension line gap | 0 | 0 to 100 mm between the measured points and the extension lines (at most the lines' length) |
 | Options > Extension past the line | 2 mm | 0 to 100 mm |
-| Options > Arrowhead size | 3 mm | 0 to 50 mm, the arrowheads' length (width two thirds of it; a dot's radius a third) |
+| Options > Arrowhead size | 3 mm | 0 to 50 mm, the arrowheads' length (width two thirds of it; a dot's radius a third); 0 draws none |
 | Options > Horizontal text | off | a linear dimension's label stays horizontal |
 | Measured value | shown for a label typed without the value | the label shows the measured value again |
 
@@ -94,22 +94,34 @@ drawing, in the same undo step, the dimension reads what was done to its
 label back and draws itself again:
 
 - typed text that still holds the measured value as it was drawn (as a
-  whole number: no digit or decimal sign right before it, no digit right
-  after) keeps it live: the text before it becomes the prefix, the text
+  whole number: no digit or decimal sign right before it, no digit or
+  decimal part right after, so `40.5` where the value was `40` is
+  another number) keeps it live: the text before it becomes the prefix, the text
   after it the suffix, and a new size changes the number;
 - typed text without it (`140.00 mm` where the value was `40.00 mm`
   counts as without) shows as typed whatever the size, until Measured
   value on the bar brings the measured value back;
-- the label's font, size and colour become the style's; an empty or
-  deleted label brings the measured one back (a part of the group deleted
-  is drawn again too).
+- the label's font, size and colour become the style's (the first
+  span's font and size: bold, italic and the looks of other characters
+  are not kept); a fill picked for a selected dimension (a palette
+  swatch) so colours its label only, the lines and arrowheads keeping
+  the line colour;
+- a label emptied while it is typed stays empty; when its editing ends
+  it is deleted, which brings the measured one back in that step (a part
+  of the group deleted is drawn again too).
+
+The follow-up joins the step just recorded and is never made after an
+undo, a redo or opening a drawing, so undo and redo go through every
+step (`dimensions::tests::undo_after_an_emptied_label_goes_all_the_way_back`).
 
 Edits are compared with how the label was last drawn (noted in the
 object data), so new drawing units or a new font for new text do not
 make a measured label a typed one. A dimension saved before labels were
 noted reads its label as drawn until it is drawn again (moved, scaled or
-restyled), so opening an older file changes nothing
-(`dimensions::tests::a_label_edited_in_place_stays_linked`,
+restyled), so opening an older file changes nothing; an edit of its
+label begun in place is read back against the label as it was then
+(`dimensions::tests::decimals_older_dimensions_and_fills_read_back`,
+`dimensions::tests::a_label_edited_in_place_stays_linked`,
 `dimensions::tests::new_units_or_default_font_keep_labels_measured`,
 `pick_drag_tests::a_double_click_edits_a_dimension_label_in_place`).
 
@@ -211,6 +223,8 @@ ones made next; the style is kept in the preferences
 - `dimensions::tests::a_label_edited_in_place_stays_linked`
 - `dimensions::tests::new_units_or_default_font_keep_labels_measured`
 - `dimensions::tests::more_options_shape_the_dimension`
+- `dimensions::tests::undo_after_an_emptied_label_goes_all_the_way_back`
+- `dimensions::tests::decimals_older_dimensions_and_fills_read_back`
 - `pick_drag_tests::a_double_click_edits_a_dimension_label_in_place`
 - `ui::dimension_bar::tests::the_bar_and_the_preview_draw`
 - `callouts::tests::a_callout_ends_at_its_text_and_follows_it`

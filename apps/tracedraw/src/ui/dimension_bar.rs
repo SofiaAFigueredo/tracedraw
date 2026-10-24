@@ -154,7 +154,7 @@ fn length_field(
 /// More options (#644): the extension lines' gap from the object and how
 /// far they run past the dimension line, the arrowheads' size, a
 /// horizontal label; and the measured value back for a typed label.
-fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
+fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle, typed: bool) {
     ui.menu_button(tr("dimension.options"), |ui| {
         length_field(
             app,
@@ -190,7 +190,7 @@ fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
     })
     .response
     .rich_tip(tr("dimension.options"));
-    if app.dimension_label_typed()
+    if typed
         && ui
             .button(tr("dimension.measured_value"))
             .rich_tip(tr("dimension.measured_value"))
@@ -202,7 +202,12 @@ fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
 
 /// The bar.
 pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
-    let style = app.dimension_style_shown();
+    // The first selected dimension, read once a frame.
+    let first = app.first_selected_dimension();
+    let typed = first.as_ref().is_some_and(|d| d.text.is_some());
+    let style = first
+        .map(|d| d.style)
+        .unwrap_or_else(|| app.dimension_style.clone());
     dim(ui, tr("dimension.precision"));
     let mut precision = style.precision.min(6);
     egui::ComboBox::from_id_salt("dimension_precision")
@@ -275,7 +280,7 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
         app.set_dimension_style(|s| s.text_size = size);
     }
     style_part(app, ui, &style);
-    options_part(app, ui, &style);
+    options_part(app, ui, &style, typed);
     if matches!(
         app.tool,
         Tool::ParallelDimension

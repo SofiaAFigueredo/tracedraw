@@ -448,7 +448,7 @@ fn replacement(
                     },
                     width_px: pic.px.0,
                     height_px: pic.px.1,
-                    png: pic.png,
+                    png: pic.png.into(),
                     fx: None,
                 },
                 Fill::None,
@@ -662,7 +662,7 @@ fn named_placeholder(
                     rect,
                     width_px: pic.px.0,
                     height_px: pic.px.1,
-                    png: pic.png,
+                    png: pic.png.into(),
                     fx: None,
                 },
             );
@@ -725,7 +725,7 @@ fn nested_picture_frame(
                 rect,
                 width_px: pic.px.0,
                 height_px: pic.px.1,
-                png: pic.png,
+                png: pic.png.into(),
                 fx: None,
             },
         );

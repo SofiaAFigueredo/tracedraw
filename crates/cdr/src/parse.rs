@@ -1202,7 +1202,7 @@ impl<'a> Ctx<'a> {
             ));
         }
         Some(Fill::Pattern(Pattern::Bitmap {
-            png: bm.png.clone(),
+            png: bm.png.clone().into(),
             width_px: bm.width_px,
             height_px: bm.height_px,
             size_mm,
@@ -1250,7 +1250,7 @@ impl<'a> Ctx<'a> {
                 rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
             }
             return Some(Fill::Pattern(Pattern::Bitmap {
-                png: encode_png(tile.width, tile.height, &rgba),
+                png: encode_png(tile.width, tile.height, &rgba).into(),
                 width_px: tile.width,
                 height_px: tile.height,
                 size_mm,
@@ -2113,7 +2113,7 @@ impl<'a> Ctx<'a> {
             rect,
             width_px: w,
             height_px: h,
-            png,
+            png: png.into(),
             fx: None,
         })
     }
@@ -2394,7 +2394,7 @@ impl<'a> Ctx<'a> {
                 rgba.extend_from_slice(&[c[0], c[1], c[2], 255]);
             }
             return Fill::Pattern(Pattern::Bitmap {
-                png: encode_png(tile.width, tile.height, &rgba),
+                png: encode_png(tile.width, tile.height, &rgba).into(),
                 width_px: tile.width,
                 height_px: tile.height,
                 size_mm,
@@ -3309,7 +3309,7 @@ impl<'a> Ctx<'a> {
                     rect,
                     width_px: bm.width_px,
                     height_px: bm.height_px,
-                    png: bm.png.clone(),
+                    png: bm.png.clone().into(),
                     fx: None,
                 })
             }
@@ -3361,7 +3361,7 @@ impl<'a> Ctx<'a> {
                     rect,
                     width_px: bm.width_px,
                     height_px: bm.height_px,
-                    png: bm.png.clone(),
+                    png: bm.png.clone().into(),
                     fx: None,
                 })
             }

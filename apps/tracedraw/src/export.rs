@@ -733,7 +733,7 @@ fn sheets_as_bitmaps(doc: &mut Document, dpi: f64) {
                 rect: tracedraw_core::geometry::Rect::new(0.0, 0.0, size.width, size.height),
                 width_px: white.width(),
                 height_px: white.height(),
-                png,
+                png: png.into(),
                 fx: None,
             },
         );

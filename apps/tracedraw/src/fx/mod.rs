@@ -469,7 +469,7 @@ pub fn vector_raster_fx(
         rect: tracedraw_core::Rect::ZERO,
         width_px: 0,
         height_px: 0,
-        png: Vec::new(),
+        png: Vec::new().into(),
         source: 0,
     }));
     let source = target.raster_source();
@@ -478,7 +478,7 @@ pub fn vector_raster_fx(
         rect,
         width_px: w,
         height_px: h,
-        png,
+        png: png.into(),
         effects: effects.clone(),
     };
     let (img, rect) = render_stack(&stack, auto_inflate)?;
@@ -488,7 +488,7 @@ pub fn vector_raster_fx(
         rect,
         width_px: img.width(),
         height_px: img.height(),
-        png,
+        png: png.into(),
         source,
     }))
 }
@@ -565,7 +565,7 @@ impl crate::app::App {
                 rect: r,
                 width_px: img.width(),
                 height_px: img.height(),
-                png,
+                png: png.into(),
                 fx: Some(Box::new(stack)),
             }
         };
@@ -636,7 +636,7 @@ impl crate::app::App {
                     rect,
                     width_px: w,
                     height_px: h,
-                    png,
+                    png: png.into(),
                     effects: fx.effects.clone(),
                 })
             }
@@ -706,7 +706,7 @@ impl crate::app::App {
                 fx: made.or_else(|| {
                     // Not drawable now: keep the effects, mark as made.
                     let mut f = fx.clone();
-                    f.png.clear();
+                    f.png = Default::default();
                     let mut t = s.clone();
                     t.raster_fx = Some(f.clone());
                     f.source = t.raster_source();
@@ -1051,7 +1051,7 @@ mod tests {
             rect: tracedraw_core::Rect::new(0.0, 0.0, 24.0, 20.0),
             width_px: 24,
             height_px: 20,
-            png,
+            png: png.into(),
             effects: vec![blur.clone()],
         };
         let (out, rect) = render_stack(&stack, true).expect("renders");
@@ -1076,7 +1076,7 @@ mod tests {
                 rect: tracedraw_core::Rect::new(0.0, 0.0, 24.0, 20.0),
                 width_px: 24,
                 height_px: 20,
-                png: png.clone(),
+                png: png.clone().into(),
                 fx: None,
             })
             .expect("bitmap");
@@ -1114,7 +1114,7 @@ mod tests {
                 rect: tracedraw_core::Rect::new(0.0, 0.0, 24.0, 20.0),
                 width_px: 24,
                 height_px: 20,
-                png,
+                png: png.into(),
                 fx: None,
             })
             .expect("bitmap");

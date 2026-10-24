@@ -1594,7 +1594,7 @@ fn flatten_page(doc: &Document, page: &tracedraw_core::document::Page, dpi: f64)
                 ),
                 width_px: crop.width(),
                 height_px: crop.height(),
-                png,
+                png: png.into(),
                 fx: None,
             },
         );
@@ -1659,7 +1659,7 @@ fn raster_of(
             rect: Rect::new(b.x0, b.y0, b.x0 + w as f64 / zoom, b.y0 + h as f64 / zoom),
             width_px: pm.width(),
             height_px: pm.height(),
-            png,
+            png: png.into(),
             fx: None,
         },
     );

@@ -6620,6 +6620,8 @@ fn an_idle_window_asks_for_no_frame() {
             ctx.repaint_causes()
         );
     }
+}
+
 /// The property bar's wrap style list starts with None, as the reference
 /// program's does: it is marked while the selection does not wrap text,
 /// and a click on it stops the selection wrapping (#661).
@@ -6666,7 +6668,7 @@ fn the_wrap_style_list_starts_with_none() {
     for a in arrows {
         click_at(&ctx, &mut app, a, Modifiers::NONE);
         let now = texts(&mut app);
-        if now.iter().any(|(t, _)| t == "Square: text on the left") {
+        if now.iter().any(|(t, _)| t == "Text flows left") {
             opened = now.into_iter().find(|(t, _)| t == "None").map(|(_, p)| p);
             break;
         }
@@ -6678,7 +6680,31 @@ fn the_wrap_style_list_starts_with_none() {
         );
     }
     let none = opened.expect("the wrap style list with None");
+    let shown: Vec<String> = texts(&mut app).into_iter().map(|(t, _)| t).collect();
+    for heading in ["Wrap style", "Contour", "Square", "Above/below"] {
+        assert!(shown.iter().any(|t| t == heading), "{heading}: {shown:?}");
+    }
     click_at(&ctx, &mut app, none, Modifiers::NONE);
     assert!(!app.wrap_state().0, "wrapping is off");
     assert!(!app.doc().find_shape(id).expect("rect").wrap_text);
+    // The offset is greyed out under None: typing there does not turn
+    // wrapping back on.
+    let label = texts(&mut app)
+        .into_iter()
+        .find(|(t, _)| t == "Text wrap offset:")
+        .map(|(_, p)| p)
+        .expect("the offset field, still in the open list");
+    let field = label + egui::vec2(90.0, 0.0);
+    click_at(&ctx, &mut app, field, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            Event::Text("7".into()),
+            key(egui::Key::Enter, Modifiers::NONE),
+        ],
+        Modifiers::NONE,
+    );
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    assert!(!app.wrap_state().0, "still off");
 }

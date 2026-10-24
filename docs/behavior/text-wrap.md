@@ -18,15 +18,19 @@ baselines can sit on the page's baseline grid. Code: `crates/core/src/text_flow.
 - The context menu's Wrap Paragraph Text submenu holds the same toggle
   ("Text flows around it"), the seven wrap styles (the one in use marked
   while the object wraps) and the text wrap offset field; a style or an
-  offset turns wrapping on, as on the property bar.
-- The arrow beside the button lists None, the seven wrap styles and
-  the text wrap offset (in the ruler unit), as the reference program's
-  list does (#661). None is marked while the first selected object does
-  not wrap text, and picking it turns wrapping off for the selection
-  (the style and offset are kept). Picking a style, or changing the
-  offset, turns wrapping on for the selection with that style
-  (`Command::SetWrapStyle`, "Wrap Style"); the list marks the style of
-  the first selected object while it wraps.
+  offset turns wrapping on.
+- The arrow beside the button lists the styles as the reference
+  program's list does (#661): the title Wrap style, None, then under a
+  Contour heading and a Square heading their sides (text flows left,
+  text flows right, straddle text; and above/below for Square), then the
+  text wrap offset (in the ruler unit). None is marked while no selected
+  object wraps text, and picking it turns wrapping off for the selection
+  (the style and offset are kept). Picking a style turns wrapping on for
+  the selection with that style (`Command::SetWrapStyle`, "Wrap Style");
+  the list marks the style of the first selected object while any
+  wraps. The offset field is greyed out while no selected object wraps,
+  so it cannot turn wrapping back on; while one wraps, changing it sets
+  the offset for the selection.
 
 ## Which objects push which text
 

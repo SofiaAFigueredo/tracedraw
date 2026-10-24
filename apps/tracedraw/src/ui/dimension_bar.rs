@@ -1,8 +1,9 @@
 //! The dimension tools' property bar (also shown when dimensions are
 //! selected with the Pick tool) and the preview of the dimension being
 //! placed. Bar: Precision, Units, Show units, Prefix, Suffix, Text
-//! position, Text size; then what to click next. Changes apply to the
-//! selected dimensions and to the ones made next.
+//! position, Text size; the look; more options (extension lines,
+//! arrowhead size, horizontal text); then what to click next. Changes
+//! apply to the selected dimensions and to the ones made next.
 
 use crate::app::App;
 use crate::dimensions::{units_choices, ArrowStyle, DimensionStyle, TextPosition};
@@ -120,6 +121,85 @@ fn style_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
     }
 }
 
+/// A length as printed, mm, in the drawing's units; applied when it
+/// changes.
+fn length_field(
+    app: &mut App,
+    ui: &mut Ui,
+    key: &str,
+    mm: f64,
+    max: f64,
+    apply: impl Fn(&mut DimensionStyle, f64),
+) {
+    let u = app.units;
+    ui.horizontal(|ui| {
+        ui.label(tr(key));
+        let mut v = u.from_mm(mm);
+        let r = ui.add(
+            NumField::new(&mut v)
+                .speed(u.from_mm(0.1))
+                .range(0.0..=u.from_mm(max))
+                .max_decimals(3)
+                .unit_mm(u.mm())
+                .suffix(format!(" {}", u.short()))
+                .width(64.0),
+        );
+        let next = u.to_mm(v);
+        if r.changed() && next.is_finite() && (next - mm).abs() > 1e-9 {
+            app.set_dimension_style(|s| apply(s, next));
+        }
+    });
+}
+
+/// More options (#644): the extension lines' gap from the object and how
+/// far they run past the dimension line, the arrowheads' size, a
+/// horizontal label; and the measured value back for a typed label.
+fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
+    ui.menu_button(tr("dimension.options"), |ui| {
+        length_field(
+            app,
+            ui,
+            "dimension.extension_gap",
+            style.extension_gap,
+            100.0,
+            |s, v| s.extension_gap = v,
+        );
+        length_field(
+            app,
+            ui,
+            "dimension.extension_overshoot",
+            style.extension_overshoot,
+            100.0,
+            |s, v| s.extension_overshoot = v,
+        );
+        length_field(
+            app,
+            ui,
+            "dimension.arrow_size",
+            style.arrow_size,
+            50.0,
+            |s, v| s.arrow_size = v,
+        );
+        let mut horizontal = style.horizontal_text;
+        if ui
+            .checkbox(&mut horizontal, tr("dimension.horizontal_text"))
+            .changed()
+        {
+            app.set_dimension_style(|s| s.horizontal_text = horizontal);
+        }
+    })
+    .response
+    .rich_tip(tr("dimension.options"));
+    if app.dimension_label_typed()
+        && ui
+            .button(tr("dimension.measured_value"))
+            .rich_tip(tr("dimension.measured_value"))
+            .clicked()
+    {
+        app.measured_dimension_labels();
+    }
+}
+
 /// The bar.
 pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
     let style = app.dimension_style_shown();
@@ -195,6 +275,7 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
         app.set_dimension_style(|s| s.text_size = size);
     }
     style_part(app, ui, &style);
+    options_part(app, ui, &style);
     if matches!(
         app.tool,
         Tool::ParallelDimension

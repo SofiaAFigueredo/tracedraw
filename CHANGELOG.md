@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Dimensions: the label can be edited in place, with a double click on it (Pick tool) or a click with the Text tool. Text typed around the measured value becomes the prefix and suffix and the number keeps following the size; text without the value stays as typed until Measured value on the bar brings it back; the label's font, size and colour are kept. Before, whatever was typed was lost at the next change. Break Apart now frees the lines, arrowheads and label as separate objects instead of doing nothing, and a new Options menu on the bar sets the extension lines' gap from the object and how far they run past the dimension line, the arrowhead size and a horizontal label (#644).
+
 - Convert Outline to Object (Ctrl+Shift+Q) on an outline with round ends or round corners: each round end is now two real curves meeting at its tip, with nodes where it meets the sides, and each round corner a curve, instead of many tiny straight segments. Curved sides also get fewer nodes (#623).
 
 - File > Export now starts with the choices of the last export of the session (format, resolution, quality, transparency, pages and PDF settings; Selected only starts off again) instead of resetting them each time. To keep them for the next session too, turn on Options > Global > File Formats > Remember the settings of the last export, which new preferences now have on and which now keeps WebP lossless as well (#617).

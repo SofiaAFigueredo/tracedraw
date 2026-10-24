@@ -6781,3 +6781,64 @@ fn the_edge_of_the_shape_being_drawn_shows_over_a_wide_outline() {
         frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
     }
 }
+
+/// A double click on a dimension's label with the Pick tool edits it in
+/// place; what is typed stays, and the dimension stays a dimension with
+/// the typed text as its suffix (#644).
+#[test]
+fn a_double_click_edits_a_dimension_label_in_place() {
+    let (ctx, mut app, rect) = setup();
+    app.run(tracedraw_core::Command::DeleteShapes { shapes: vec![rect] });
+    app.create_dimension(
+        Point::new(20.0, 60.0),
+        Point::new(80.0, 60.0),
+        Point::new(50.0, 80.0),
+    );
+    let g = app.selection[0];
+    let label = match &app.doc().find_shape(g).expect("dimension").kind {
+        ShapeKind::Group { children } => children[2].clone(),
+        other => panic!("{other:?}"),
+    };
+    app.set_tool(Tool::Pick);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let at = app.view.to_screen(label.bounds().center());
+    double_click_at(&ctx, &mut app, at);
+    assert_eq!(app.tool, Tool::Text);
+    assert_eq!(app.text_edit.as_ref().map(|te| te.shape), Some(label.id));
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::End, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::Text(" max".into())],
+        Modifiers::NONE,
+    );
+    app.bake_dimensions();
+    let d = crate::dimensions::Dimension::of(app.doc().find_shape(g).expect("dimension"))
+        .expect("still a dimension");
+    assert_eq!(d.style.suffix, " max");
+    assert_eq!(d.text, None);
+    match &app.doc().find_shape(label.id).expect("label").kind {
+        ShapeKind::Text { spans, .. } => {
+            assert_eq!(tracedraw_core::document::spans_text(spans), "60.00 mm max")
+        }
+        other => panic!("{other:?}"),
+    }
+    // A Text tool click on the label edits it too, no new text made.
+    app.finish_text();
+    let count = shape_count(&app);
+    let at = app.view.to_screen(
+        app.doc()
+            .find_shape(label.id)
+            .expect("label")
+            .bounds()
+            .center(),
+    );
+    click_at(&ctx, &mut app, at, Modifiers::NONE);
+    assert_eq!(app.text_edit.as_ref().map(|te| te.shape), Some(label.id));
+    assert_eq!(shape_count(&app), count);
+}

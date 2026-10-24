@@ -6620,6 +6620,7 @@ fn an_idle_window_asks_for_no_frame() {
             ctx.repaint_causes()
         );
     }
+}
 
 /// A curve whose second segment runs straight along the middle node's
 /// outgoing handle, so that handle lies on the segment, selected for the
@@ -6683,6 +6684,38 @@ fn a_handle_clicked_then_dragged_leaves_its_node_in_place() {
     // A smooth node's other handle follows, on the far side.
     let back = n[1].1.expect("in") - n[1].0;
     assert!(back.x < 0.0 && back.y < 0.0, "{n:?}");
+}
+
+/// Shape tool: a node whose handle is retracted onto it still takes
+/// clicks once chosen: Ctrl+click drops it from the chosen nodes and a
+/// plain click chooses it alone; the handle never swallows them (#639).
+#[test]
+fn a_click_on_a_chosen_node_with_a_retracted_handle_takes_the_node() {
+    use tracedraw_core::geometry::BezPath;
+    let (ctx, mut app, first) = setup();
+    app.select(vec![first]);
+    app.delete_selection();
+    let mut path = BezPath::new();
+    path.move_to((100.0, 150.0));
+    path.curve_to((110.0, 150.0), (130.0, 170.0), (140.0, 170.0));
+    path.curve_to((140.0, 170.0), (170.0, 160.0), (180.0, 150.0));
+    let id = app
+        .new_shape(ShapeKind::Path {
+            path,
+            closed: false,
+        })
+        .expect("curve");
+    app.select(vec![id]);
+    app.set_tool(Tool::Shape);
+    app.node_selection = vec![(id, 0), (id, 1), (id, 2)];
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let at = app.view.to_screen(Point::new(140.0, 170.0));
+    click_at(&ctx, &mut app, at, Modifiers::COMMAND | Modifiers::CTRL);
+    assert_eq!(app.node_selection, vec![(id, 0), (id, 2)], "dropped");
+    click_at(&ctx, &mut app, at, Modifiers::NONE);
+    assert_eq!(app.node_selection, vec![(id, 1)], "chosen alone");
 }
 
 /// Shape tool: the two handles a chosen segment shows can be dragged;

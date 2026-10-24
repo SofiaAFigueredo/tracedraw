@@ -316,35 +316,37 @@ impl App {
         // The nearest handle within the pick distance, on the page.
         let tol = self.settings.nodes.pick_px() / self.view.zoom as f64;
         let mut best: Option<((ShapeId, usize, Which), f64)> = None;
-        let both = [Which::In, Which::Out];
-        let shown: Vec<(ShapeId, usize, &[Which])> = match self.chosen_segment() {
-            Some((id, index)) if index > 0 => {
-                vec![(id, index - 1, &both[1..]), (id, index, &both[..1])]
+        let mut take = |key: (ShapeId, usize, Which), c: Option<Point>| {
+            let Some(c) = c else { return };
+            let d = (c - p).hypot();
+            if d <= tol && best.as_ref().is_none_or(|b| d < b.1) {
+                best = Some((key, d));
             }
-            _ => self
-                .node_selection
-                .iter()
-                .map(|&(id, index)| (id, index, &both[..]))
-                .collect(),
         };
-        for (id, index, kinds) in shown {
+        if let Some((id, index)) = self.chosen_segment().filter(|s| s.1 > 0) {
+            if let Some((path, _, t)) = self.path_of(id) {
+                for n in nodes::nodes(&(t * path)) {
+                    if n.index + 1 == index {
+                        take((id, n.index, Which::Out), n.ctrl_out);
+                    } else if n.index == index {
+                        take((id, n.index, Which::In), n.ctrl_in);
+                    }
+                }
+            }
+            return best.map(|b| b.0);
+        }
+        // The nodes of each curve with chosen nodes, worked out once.
+        for (k, &(id, _)) in self.node_selection.iter().enumerate() {
+            if self.node_selection[..k].iter().any(|s| s.0 == id) {
+                continue;
+            }
             let Some((path, _, t)) = self.path_of(id) else {
                 continue;
             };
-            let Some(n) = nodes::nodes(&(t * path))
-                .into_iter()
-                .find(|n| n.index == index)
-            else {
-                continue;
-            };
-            for (c, which) in [(n.ctrl_in, Which::In), (n.ctrl_out, Which::Out)] {
-                if !kinds.contains(&which) {
-                    continue;
-                }
-                let Some(c) = c else { continue };
-                let d = (c - p).hypot();
-                if d <= tol && best.as_ref().is_none_or(|b| d < b.1) {
-                    best = Some(((id, index, which), d));
+            for n in nodes::nodes(&(t * path)) {
+                if self.node_selection.contains(&(id, n.index)) {
+                    take((id, n.index, Which::In), n.ctrl_in);
+                    take((id, n.index, Which::Out), n.ctrl_out);
                 }
             }
         }
@@ -790,15 +792,16 @@ impl App {
                 }
                 return;
             }
-            // A click on a control handle keeps the nodes chosen, so the
-            // handle can be dragged next; the segment or node under it is
-            // not taken instead (#639).
-            if self.ctrl_handle_at(p).is_some() {
-                return;
-            }
             if let Some(hit) = self.node_at(p) {
                 self.segment_spot = None;
                 self.click_node((hit.shape, hit.index), mods);
+                return;
+            }
+            // A click on a control handle keeps the nodes chosen, so the
+            // handle can be dragged next; the segment under it is not
+            // taken instead (#639). A node comes first, so a handle lying
+            // on its node never swallows a click on the node.
+            if self.ctrl_handle_at(p).is_some() {
                 return;
             }
             // A click on a corner widget keeps the selection.

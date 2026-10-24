@@ -117,6 +117,50 @@ struct Break {
     t_out: Option<Vec2>,
 }
 
+/// `pts` with each run of vertices closer than `tol` to the one before
+/// made one vertex, at a kept vertex of the run or else its middle: the
+/// tiny steps polygon operations leave where pieces overlap, which would
+/// read as corners.
+fn merge_close(pts: &[Point], closed: bool, tol: f64, keep: &dyn Fn(Point) -> bool) -> Vec<Point> {
+    let mut out: Vec<Point> = Vec::with_capacity(pts.len());
+    let mut group: Vec<Point> = Vec::new();
+    let flush = |group: &mut Vec<Point>, out: &mut Vec<Point>| {
+        let kept = group.iter().copied().find(|p| keep(*p));
+        let mid = || {
+            let sum = group.iter().fold(Vec2::ZERO, |s, p| s + p.to_vec2());
+            (sum / group.len() as f64).to_point()
+        };
+        if !group.is_empty() {
+            out.push(kept.unwrap_or_else(mid));
+        }
+        group.clear();
+    };
+    for (i, p) in pts.iter().enumerate() {
+        // The ends of an open subpath stay where they are.
+        let end = !closed && (i == 0 || i + 1 == pts.len());
+        let near = group.last().is_some_and(|q| (*p - *q).hypot() < tol);
+        if !near || end {
+            flush(&mut group, &mut out);
+        }
+        group.push(*p);
+        if end {
+            flush(&mut group, &mut out);
+        }
+    }
+    flush(&mut group, &mut out);
+    if closed && out.len() > 3 {
+        if let (Some(a), Some(b)) = (out.first().copied(), out.last().copied()) {
+            if (a - b).hypot() < tol && !keep(b) {
+                out.pop();
+            }
+        }
+    }
+    if out.len() < 2 {
+        return pts.to_vec();
+    }
+    out
+}
+
 /// `pts` without the vertices that lie within `tol` of the lines between
 /// their neighbours (the rounding of polygon operations along straight
 /// runs), keeping those `keep` names. A closed loop is opened at a kept
@@ -164,9 +208,9 @@ fn thin(pts: &[Point], closed: bool, tol: f64, keep: &dyn Fn(Point) -> bool) -> 
 }
 
 fn fit_subpath(pts: &[Point], closed: bool, tol: f64, nodes: &[(Point, Vec2)], out: &mut BezPath) {
-    let thinned = thin(pts, closed, tol * 0.02, &|p| {
-        node_at(nodes, p, tol).is_some()
-    });
+    let keep = |p: Point| node_at(nodes, p, tol).is_some();
+    let merged = merge_close(pts, closed, tol, &keep);
+    let thinned = thin(&merged, closed, tol * 0.25, &keep);
     let pts = &thinned[..];
     let n = pts.len();
     let Some(&first) = pts.first() else {
@@ -295,7 +339,7 @@ fn fit_subpath(pts: &[Point], closed: bool, tol: f64, nodes: &[(Point, Vec2)], o
 /// of a flattened curve) do not tilt it.
 const REACH: f64 = 10.0;
 /// Most vertices walked to find them.
-const REACH_STEPS: usize = 8;
+const REACH_STEPS: usize = 32;
 
 /// Derivative at `b` of the parabola through `a`, `b` and `c` at their
 /// chord lengths, as a unit vector.
@@ -494,7 +538,14 @@ fn split_run(
         .map(|(i, _)| i)
         .unwrap_or(n / 2)
         .clamp(1, n - 2);
-    let tc = tangent_at(part, split, false, tol * REACH);
+    // The tangent from points well apart, so the small wiggles of a
+    // polygon (the joins of a stroke along short lines) do not tilt it.
+    let span = part
+        .first()
+        .zip(part.last())
+        .map(|(a, b)| (*b - *a).hypot())
+        .unwrap_or(0.0);
+    let tc = tangent_at(part, split, false, (tol * REACH).max(span / 16.0));
     let mid = from + split;
     split_run(pts, from, mid, t1, tc, tol, depth + 1, pieces);
     split_run(pts, mid, to, tc, t2, tol, depth + 1, pieces);
@@ -502,7 +553,14 @@ fn split_run(
 
 /// `pts` as one line or one curve within `tol`, if they fit.
 fn try_fit(pts: &[Point], t1: Vec2, t2: Vec2, tol: f64) -> Option<Seg> {
-    if pts.len() == 2 || straight(pts, tol) {
+    let (Some(&a), Some(&b)) = (pts.first(), pts.last()) else {
+        return None;
+    };
+    let flat = pts.len() == 2 || straight(pts, tol);
+    // A line where the run leaves and arrives along it; a slightly bent
+    // stretch of a curve stays a curve, so the curve stays smooth.
+    let along = |t: Vec2| unit(b - a).is_some_and(|c| c.cross(t).abs() < 0.02 && c.dot(t) > 0.0);
+    if flat && (pts.len() == 2 || (along(t1) && along(t2))) {
         return Some(Seg::Line);
     }
     let mut u = chord_params(pts);
@@ -520,7 +578,11 @@ fn try_fit(pts: &[Point], t1: Vec2, t2: Vec2, tol: f64) -> Option<Seg> {
             }
         }
     }
-    (err <= tol).then_some(Seg::Curve(bez))
+    if err <= tol {
+        Some(Seg::Curve(bez))
+    } else {
+        flat.then_some(Seg::Line)
+    }
 }
 
 /// Every point within `tol` of the chord from the first to the last.

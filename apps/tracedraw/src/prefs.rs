@@ -266,7 +266,12 @@ impl ExportPreset {
     /// it, or for a format this version does not know, which every format
     /// lists so it can still be deleted (#612).
     pub fn fits(&self, format: usize) -> bool {
-        self.format == format || self.format >= EXPORT_FORMATS.len()
+        self.fits_only(format) || self.format >= EXPORT_FORMATS.len()
+    }
+
+    /// The preset was saved for `format` itself.
+    fn fits_only(&self, format: usize) -> bool {
+        self.format == format
     }
 
     /// The choices of the Export dialog as they stand, named `name`.
@@ -338,20 +343,22 @@ impl FormatPrefs {
     /// false when `to` is empty or taken by another preset of that format.
     pub fn rename_preset(&mut self, from: &str, to: &str, format: usize) -> bool {
         let to = to.trim();
+        let Some(i) = self.preset_index(from, format) else {
+            return false;
+        };
+        // A preset of an unknown format shows with every format, so its
+        // name must be free in all of them.
+        let unknown = !self.export_presets[i].fits_only(format);
         if to.is_empty()
             || (to != from
                 && self
                     .export_presets
                     .iter()
-                    .any(|q| q.name == to && q.fits(format)))
+                    .any(|q| q.name == to && (unknown || q.fits(format))))
         {
             return false;
         }
-        match self
-            .export_presets
-            .iter_mut()
-            .find(|q| q.name == from && q.fits(format))
-        {
+        match self.export_presets.get_mut(i) {
             Some(q) => {
                 q.name = to.to_string();
                 true
@@ -362,10 +369,29 @@ impl FormatPrefs {
 
     /// Delete the preset `name` of the export format `format`.
     pub fn delete_preset(&mut self, name: &str, format: usize) -> bool {
-        let before = self.export_presets.len();
-        self.export_presets
-            .retain(|q| !(q.name == name && q.fits(format)));
-        self.export_presets.len() != before
+        match self.preset_index(name, format) {
+            Some(i) => {
+                self.export_presets.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The preset `name` the Export dialog lists for `format`: the one
+    /// saved for that format, else one of an unknown format.
+    fn preset_index(&self, name: &str, format: usize) -> Option<usize> {
+        let at = |exact: bool| {
+            self.export_presets.iter().position(|q| {
+                q.name == name
+                    && if exact {
+                        q.fits_only(format)
+                    } else {
+                        q.fits(format)
+                    }
+            })
+        };
+        at(true).or_else(|| at(false))
     }
 
     /// The Export dialog starting with these choices; values out of range
@@ -631,6 +657,13 @@ mod tests {
         unknown.name = "Future".into();
         g.export_presets.push(unknown);
         assert!(g.export_presets[1].fits(2) && g.export_presets[1].fits(3));
+        // Its name must be free in every format.
+        assert!(!g.rename_preset("Future", "Web small", 2), "a JPEG name");
+        // Saving under its name in a format replaces it, as the list shows.
+        assert!(g.save_preset("Future", &png));
+        assert_eq!(g.export_presets.len(), 2);
+        assert_eq!(g.export_presets[1].format, 2);
+        assert!(!g.delete_preset("Future", 3), "now a PNG preset");
         assert!(g.delete_preset("Future", 2));
         assert_eq!(g.export_presets.len(), 1);
         // Preferences from before have none.

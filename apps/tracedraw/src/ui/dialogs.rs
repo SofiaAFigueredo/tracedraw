@@ -2761,8 +2761,10 @@ fn export_presets_row(app: &mut App, ui: &mut Ui, st: &mut ExportState) {
                     }
                 }
             });
+        // A script filter has no presets: "+" would save under the last
+        // built-in format, out of sight.
         if ui
-            .small_button("+")
+            .add_enabled(st.script.is_none(), egui::Button::new("+").small())
             .on_hover_text(tr("dialog.export_preset_add"))
             .clicked()
         {
@@ -2804,6 +2806,11 @@ fn export_presets_row(app: &mut App, ui: &mut Ui, st: &mut ExportState) {
                 done = Some(false);
             }
         });
+    }
+    // A script filter chosen while a name was being typed: nothing to save.
+    if st.script.is_some() {
+        st.preset_name = None;
+        done = None;
     }
     if let Some(ok) = done {
         if let (true, Some((name, renaming))) = (ok, st.preset_name.clone()) {

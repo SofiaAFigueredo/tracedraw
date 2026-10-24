@@ -3077,6 +3077,15 @@ fn wrap_style_list(app: &mut App, ui: &mut Ui) {
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(260.0)
         .show(|ui| {
+            // None first, as the reference program lists it: the
+            // selection stops pushing text (#661).
+            if ui.selectable_label(!on, tr("context.wrap_none")).clicked() && on {
+                let shapes = app.selection.clone();
+                app.run(tracedraw_core::Command::SetWrapText {
+                    shapes,
+                    wrap: false,
+                });
+            }
             for (mode, side) in tracedraw_core::TextWrap::STYLES {
                 let here = on && current.mode == mode && current.side == side;
                 if ui

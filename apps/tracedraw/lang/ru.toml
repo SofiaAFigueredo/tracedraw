@@ -241,6 +241,7 @@ context.node_to_line = "В линию"
 context.wrap_contour_left = "По контуру: текст слева"
 context.wrap_contour_right = "По контуру: текст справа"
 context.wrap_contour_straddle = "По контуру: текст с обеих сторон"
+context.wrap_none = "Нет" # mt
 context.wrap_offset = "Отступ обтекания:"
 context.revert_to_master = "Вернуть к оригиналу"
 context.select_clones = "Выбрать клоны"

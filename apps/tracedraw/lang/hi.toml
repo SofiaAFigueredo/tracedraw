@@ -241,6 +241,7 @@ context.node_to_line = "रेखा में बदलें"
 context.wrap_contour_left = "आउटलाइन: टेक्स्ट बाईं ओर"
 context.wrap_contour_right = "आउटलाइन: टेक्स्ट दाईं ओर"
 context.wrap_contour_straddle = "आउटलाइन: टेक्स्ट दोनों ओर"
+context.wrap_none = "कोई नहीं" # mt
 context.wrap_offset = "टेक्स्ट रैप की दूरी:"
 context.revert_to_master = "मूल पर लौटाएँ"
 context.select_clones = "क्लोन चुनें"

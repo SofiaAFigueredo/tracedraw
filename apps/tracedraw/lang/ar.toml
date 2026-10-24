@@ -241,6 +241,7 @@ context.node_to_line = "إلى خط"
 context.wrap_contour_left = "المحيط: النص على اليسار"
 context.wrap_contour_right = "المحيط: النص على اليمين"
 context.wrap_contour_straddle = "المحيط: النص على الجانبين"
+context.wrap_none = "بلا" # mt
 context.wrap_offset = "إزاحة التفاف النص:"
 context.revert_to_master = "العودة إلى الأصل"
 context.select_clones = "تحديد النسخ المرتبطة"

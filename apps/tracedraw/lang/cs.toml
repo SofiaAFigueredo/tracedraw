@@ -241,6 +241,7 @@ context.node_to_line = "Na úsečku"
 context.wrap_contour_left = "Obrys: text vlevo"
 context.wrap_contour_right = "Obrys: text vpravo"
 context.wrap_contour_straddle = "Obrys: text po obou stranách"
+context.wrap_none = "Žádné" # mt
 context.wrap_offset = "Odsazení obtékání:"
 context.revert_to_master = "Vrátit k předloze"
 context.select_clones = "Vybrat klony"

@@ -241,6 +241,7 @@ context.node_to_line = "Naar lijn"
 context.wrap_contour_left = "Contour: tekst links"
 context.wrap_contour_right = "Contour: tekst rechts"
 context.wrap_contour_straddle = "Contour: tekst aan beide kanten"
+context.wrap_none = "Geen" # mt
 context.wrap_offset = "Afstand tot de tekst:"
 context.revert_to_master = "Terugzetten naar origineel"
 context.select_clones = "Klonen selecteren"

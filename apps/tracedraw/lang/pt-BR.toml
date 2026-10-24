@@ -241,6 +241,7 @@ context.node_to_line = "Em linha"
 context.wrap_contour_left = "Contorno: texto à esquerda"
 context.wrap_contour_right = "Contorno: texto à direita"
 context.wrap_contour_straddle = "Contorno: texto dos dois lados"
+context.wrap_none = "Nenhum" # mt
 context.wrap_offset = "Distância do contorno:"
 context.revert_to_master = "Reverter ao mestre"
 context.select_clones = "Selecionar clones"

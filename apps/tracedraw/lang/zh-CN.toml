@@ -241,6 +241,7 @@ context.node_to_line = "转换为直线"
 context.wrap_contour_left = "轮廓：文本在左侧"
 context.wrap_contour_right = "轮廓：文本在右侧"
 context.wrap_contour_straddle = "轮廓：文本在两侧"
+context.wrap_none = "无" # mt
 context.wrap_offset = "文本换行偏移："
 context.revert_to_master = "还原为主对象"
 context.select_clones = "选择克隆"

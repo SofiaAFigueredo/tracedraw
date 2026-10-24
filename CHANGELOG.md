@@ -6,6 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Wrap Paragraph Text: the wrap style list beside the property bar button now starts with None, which stops the selected objects pushing paragraph text, as in the reference program. Text already flows around shapes and pictures marked to wrap it: contour or square, text on the left, right or both sides, or above and below, with a text wrap offset (#661).
 - `CONTRIBUTORS.md` lists the people who contributed code, with what each contributed, also those whose commits were recorded under another name; the README links it.
 
 - The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).

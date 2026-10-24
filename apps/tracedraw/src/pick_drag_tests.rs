@@ -6620,4 +6620,65 @@ fn an_idle_window_asks_for_no_frame() {
             ctx.repaint_causes()
         );
     }
+/// The property bar's wrap style list starts with None, as the reference
+/// program's does: it is marked while the selection does not wrap text,
+/// and a click on it stops the selection wrapping (#661).
+#[test]
+fn the_wrap_style_list_starts_with_none() {
+    let (ctx, mut app, id) = setup();
+    app.set_wrap_style(
+        tracedraw_core::WrapMode::Square,
+        tracedraw_core::WrapSide::Left,
+    );
+    assert!(app.wrap_state().0);
+    let texts = |app: &mut App| {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+        out.textures_delta.clear();
+        let mut all: Vec<(String, Pos2)> = Vec::new();
+        fn walk(s: &egui::Shape, all: &mut Vec<(String, Pos2)>) {
+            match s {
+                egui::Shape::Text(t) => all.push((
+                    t.galley.text().to_string(),
+                    t.pos + t.galley.rect.center().to_vec2(),
+                )),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, all)),
+                _ => {}
+            }
+        }
+        out.shapes.iter().for_each(|c| walk(&c.shape, &mut all));
+        all
+    };
+    // The small arrows of the property bar: the one that opens the wrap
+    // styles.
+    let arrows: Vec<Pos2> = texts(&mut app)
+        .into_iter()
+        .filter(|(t, p)| t == "\u{25BE}" && p.y < 140.0)
+        .map(|(_, p)| p)
+        .collect();
+    let mut opened = None;
+    for a in arrows {
+        click_at(&ctx, &mut app, a, Modifiers::NONE);
+        let now = texts(&mut app);
+        if now.iter().any(|(t, _)| t == "Square: text on the left") {
+            opened = now.into_iter().find(|(t, _)| t == "None").map(|(_, p)| p);
+            break;
+        }
+        frame(
+            &ctx,
+            &mut app,
+            vec![key(egui::Key::Escape, Modifiers::NONE)],
+            Modifiers::NONE,
+        );
+    }
+    let none = opened.expect("the wrap style list with None");
+    click_at(&ctx, &mut app, none, Modifiers::NONE);
+    assert!(!app.wrap_state().0, "wrapping is off");
+    assert!(!app.doc().find_shape(id).expect("rect").wrap_text);
 }

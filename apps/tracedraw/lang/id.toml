@@ -241,6 +241,7 @@ context.node_to_line = "Ke Garis"
 context.wrap_contour_left = "Kontur: teks di kiri"
 context.wrap_contour_right = "Kontur: teks di kanan"
 context.wrap_contour_straddle = "Kontur: teks di kedua sisi"
+context.wrap_none = "Tidak ada" # mt
 context.wrap_offset = "Jarak lipatan:"
 context.revert_to_master = "Kembalikan ke induk"
 context.select_clones = "Pilih klon"

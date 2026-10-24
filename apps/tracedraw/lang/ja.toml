@@ -241,6 +241,7 @@ context.node_to_line = "直線に変換"
 context.wrap_contour_left = "輪郭: 左側にテキスト"
 context.wrap_contour_right = "輪郭: 右側にテキスト"
 context.wrap_contour_straddle = "輪郭: 両側にテキスト"
+context.wrap_none = "なし" # mt
 context.wrap_offset = "回り込みの間隔:"
 context.revert_to_master = "マスターに戻す"
 context.select_clones = "クローンを選択"

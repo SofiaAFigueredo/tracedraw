@@ -6621,3 +6621,81 @@ fn an_idle_window_asks_for_no_frame() {
         );
     }
 }
+
+/// Ctrl+Z through a curve drawn with the Pen goes back to drawing it: the
+/// Pen is chosen again and a line goes on from the last node left,
+/// leaving along the mirror of its handle, with a curved preview; that
+/// works after closing too, and Ctrl+Shift+Z takes the next node up
+/// again (#631).
+#[test]
+fn undoing_pen_steps_goes_back_to_drawing_the_curve() {
+    let (ctx, mut app, first) = setup();
+    app.select(vec![first]);
+    app.delete_selection();
+    app.set_tool(Tool::Pen);
+    let (a, b, c) = (
+        Point::new(100.0, 150.0),
+        Point::new(140.0, 150.0),
+        Point::new(140.0, 190.0),
+    );
+    pull(&ctx, &mut app, a, Point::new(110.0, 140.0));
+    pull(&ctx, &mut app, b, Point::new(150.0, 160.0));
+    pull(&ctx, &mut app, c, Point::new(130.0, 200.0));
+    click_page(&ctx, &mut app, a);
+    assert!(app.curve.is_none(), "closed");
+    let id = app.selection[0];
+    let count = shape_count(&app);
+    app.set_tool(Tool::Pick);
+    let ctrl = Modifiers::COMMAND | Modifiers::CTRL;
+    let undo = |ctx: &egui::Context, app: &mut App, mods: Modifiers| {
+        frame(ctx, app, vec![key(egui::Key::Z, mods)], mods);
+        frame(ctx, app, Vec::new(), Modifiers::NONE);
+    };
+    let nodes_of = |app: &App| match &app.doc().find_shape(id).map(|s| &s.kind) {
+        Some(ShapeKind::Path { path, .. }) => tracedraw_core::nodes::nodes(path).len(),
+        _ => 0,
+    };
+    let curved_preview = |app: &App| {
+        let c = app.curve.as_ref().expect("a curve being drawn");
+        crate::pen_look::curve_look(c, Some(Point::new(60.0, 60.0)), true, None)
+            .preview
+            .is_some_and(|p| {
+                p.elements()
+                    .iter()
+                    .any(|e| matches!(e, tracedraw_core::geometry::PathEl::CurveTo(..)))
+            })
+    };
+    // Undoing the close: the Pen again, on c, leaving along (130, 200).
+    undo(&ctx, &mut app, ctrl);
+    assert_eq!(app.tool, Tool::Pen);
+    assert_eq!(app.selection, vec![id]);
+    assert_eq!(nodes_of(&app), 3);
+    let cur = app.curve.clone().expect("drawing again");
+    assert_eq!(cur.nodes.len(), 1);
+    assert!(near(cur.nodes[0].0, c), "{cur:?}");
+    assert!(
+        near(cur.nodes[0].1.expect("handle"), Point::new(130.0, 200.0)),
+        "{cur:?}"
+    );
+    assert!(curved_preview(&app));
+    // One node further back: on b, leaving along (150, 160).
+    undo(&ctx, &mut app, ctrl);
+    assert_eq!(nodes_of(&app), 2);
+    let cur = app.curve.clone().expect("drawing again");
+    assert!(near(cur.nodes[0].0, b), "{cur:?}");
+    assert!(
+        near(cur.nodes[0].1.expect("handle"), Point::new(150.0, 160.0)),
+        "{cur:?}"
+    );
+    assert!(curved_preview(&app));
+    // Redo takes c up again.
+    undo(&ctx, &mut app, ctrl | Modifiers::SHIFT);
+    assert_eq!(nodes_of(&app), 3);
+    let cur = app.curve.clone().expect("drawing again");
+    assert!(near(cur.nodes[0].0, c), "{cur:?}");
+    // Going on from there joins the same curve.
+    click_page(&ctx, &mut app, Point::new(90.0, 190.0));
+    app.finish_curve();
+    assert_eq!(shape_count(&app), count, "no new object");
+    assert_eq!(nodes_of(&app), 4);
+}

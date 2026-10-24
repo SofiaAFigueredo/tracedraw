@@ -854,6 +854,10 @@ pub struct App {
     pub curve: Option<CurveInProgress>,
     /// Undo and redo steps of `curve`, node by node.
     pub curve_steps: CurveSteps,
+    /// The steps that made or changed a curve drawn with the Pen or
+    /// Bezier tool, by (engine instance, step id): the curve and the tool.
+    /// Undoing or redoing one takes the curve up again with that tool.
+    pub pen_curve_steps: std::collections::HashMap<(u64, u64), (ShapeId, Tool)>,
     pub text_edit: Option<TextEdit>,
     /// Text an input method is composing at the caret (Chinese, Japanese,
     /// Korean and other input methods), shown underlined until it is
@@ -2171,6 +2175,7 @@ impl App {
             node_selection: Vec::new(),
             segment_spot: None,
             curve_steps: CurveSteps::default(),
+            pen_curve_steps: std::collections::HashMap::new(),
             snap: crate::snap::SnapSettings::default(),
             snap_mark: std::cell::Cell::new(None),
             live_guides: Default::default(),
@@ -4306,6 +4311,9 @@ impl App {
             return;
         }
         let id = self.add_drawn_line(line.clone());
+        if let Some(id) = id {
+            self.note_pen_curve_step(id);
+        }
         if c.bspline {
             // A B-spline of its own keeps its control points (one that
             // went on from another curve is a curve like that one).
@@ -4351,7 +4359,11 @@ impl App {
             .filter(|p| !matches!(&last, ShapeKind::Path { path, .. } if path == p))
             .collect();
         if prior.is_empty() || self.symmetry_edit.is_some() {
-            return self.new_shape(last);
+            let id = self.new_shape(last);
+            if let Some(id) = id {
+                self.note_pen_curve_step(id);
+            }
+            return id;
         }
         let layer = self.active_layer()?;
         let id = self.engine.new_shape_id();
@@ -4369,6 +4381,7 @@ impl App {
                 ..shape
             },
         });
+        self.note_pen_curve_step(id);
         for kind in kinds.chain(std::iter::once(last)) {
             if self
                 .engine
@@ -4377,8 +4390,31 @@ impl App {
             {
                 break;
             }
+            self.note_pen_curve_step(id);
         }
         Some(id)
+    }
+
+    /// The step just run made or changed curve `id` drawn with the Pen or
+    /// Bezier tool: undoing or redoing it takes the curve up again (#631).
+    fn note_pen_curve_step(&mut self, id: ShapeId) {
+        if !matches!(self.tool, Tool::Pen | Tool::Bezier) {
+            return;
+        }
+        if let Some(step) = self.engine.last_step_id() {
+            self.pen_curve_steps
+                .insert((self.engine.instance(), step), (id, self.tool));
+        }
+    }
+
+    /// After an undo or redo whose step was `step` (see
+    /// [`Self::pen_curve_steps`]): a curve drawn with the Pen or Bezier
+    /// tool goes on being drawn with it, from its last node.
+    fn resume_pen_step(&mut self, step: Option<u64>) {
+        let key = step.map(|s| (self.engine.instance(), s));
+        if let Some(&(id, tool)) = key.and_then(|k| self.pen_curve_steps.get(&k)) {
+            self.resume_curve(id, tool);
+        }
     }
 
     /// The curve `id`, just made with the outline `line` from the B-spline
@@ -5129,12 +5165,25 @@ impl App {
         }
         self.curve_steps.clear();
         self.finish_text();
-        match self.engine.undo() {
-            Ok(l) => self.status = crate::i18n::trf("status.undo_n", &[("l", l)]),
-            Err(e) => self.status = e.to_string(),
-        }
+        let step = self.engine.last_step_id();
+        let undone = match self.engine.undo() {
+            Ok(l) => {
+                self.status = crate::i18n::trf("status.undo_n", &[("l", l)]);
+                true
+            }
+            Err(e) => {
+                self.status = e.to_string();
+                false
+            }
+        };
         self.selection
             .retain(|id| self.engine.document().find_shape(*id).is_some());
+        if undone {
+            // A curve taken up by an earlier undo goes; undoing a Pen or
+            // Bezier step takes its curve up again (#631).
+            self.curve = None;
+            self.resume_pen_step(step);
+        }
     }
 
     pub fn redo(&mut self) {
@@ -5142,12 +5191,22 @@ impl App {
             return;
         }
         self.curve_steps.clear();
-        match self.engine.redo() {
-            Ok(l) => self.status = crate::i18n::trf("status.redo_n", &[("l", l)]),
-            Err(e) => self.status = e.to_string(),
-        }
+        let redone = match self.engine.redo() {
+            Ok(l) => {
+                self.status = crate::i18n::trf("status.redo_n", &[("l", l)]);
+                true
+            }
+            Err(e) => {
+                self.status = e.to_string();
+                false
+            }
+        };
         self.selection
             .retain(|id| self.engine.document().find_shape(*id).is_some());
+        if redone {
+            self.curve = None;
+            self.resume_pen_step(self.engine.last_step_id());
+        }
     }
 
     // ----- files -------------------------------------------------------------

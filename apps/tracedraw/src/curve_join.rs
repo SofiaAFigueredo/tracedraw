@@ -251,6 +251,29 @@ impl App {
             })
     }
 
+    /// Take the curve `id` up again with the Pen or Bezier `tool` as if
+    /// it were still being drawn (#631): the tool is chosen, the curve
+    /// selected, and a line goes on from the end of its last open subpath
+    /// (where its last node went), leaving along the mirror of the handle
+    /// the curve arrives there with. A closed curve is only selected.
+    pub(crate) fn resume_curve(&mut self, id: ShapeId, tool: crate::tools::Tool) {
+        let Some(path) = self.doc().shape_on_page(id).map(|s| s.page_path()) else {
+            return;
+        };
+        let subs = subpaths(&path);
+        if self.tool != tool {
+            self.set_tool(tool);
+        }
+        self.select(vec![id]);
+        if let Some(sub) = subs.iter().rev().find(|s| !s.closed) {
+            self.curve = Some(crate::app::CurveInProgress {
+                nodes: vec![(sub.end(), mirrored_handle(sub, true))],
+                smooth: true,
+                ..Default::default()
+            });
+        }
+    }
+
     /// The selected curve a new line may join: one open curve lying on a
     /// layer.
     pub(crate) fn join_candidate(&self) -> Option<tracedraw_core::Shape> {

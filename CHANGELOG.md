@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Pen and Bezier: Ctrl+Z through the steps of a curve drawn with them goes back to drawing it. The tool comes back, and the line goes on from the last node left with a curved preview along the mirror of its previous handle, wherever the pointer is. This also works after closing: undoing the close reconnects to the last node. You can undo anchor by anchor and go on drawing at once (#631).
+
 - `CONTRIBUTORS.md` lists the people who contributed code, with what each contributed, also those whose commits were recorded under another name; the README links it.
 
 - The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).

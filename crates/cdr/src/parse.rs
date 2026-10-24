@@ -83,6 +83,45 @@ const ARG_HIDDEN: u32 = 16016;
 
 /// Family and size used when neither the run nor its style names one.
 const DEFAULT_FAMILY: &str = "Arial";
+
+/// The names a family takes for a face of a weight other than regular
+/// and bold, the way installed fonts list such faces under their own
+/// family name (name ID 1).
+const WEIGHT_NAMES: [(u16, &str); 7] = [
+    (100, "Thin"),
+    (200, "ExtraLight"),
+    (300, "Light"),
+    (500, "Medium"),
+    (600, "SemiBold"),
+    (800, "ExtraBold"),
+    (900, "Black"),
+];
+
+/// A span set in a face of a weight between or beyond regular and bold
+/// (a semibold, a light): the family takes the weight's name and the
+/// span is not bold, so the text draws with that face rather than the
+/// bold or regular one ("Titillium Web" at 600 is "Titillium Web
+/// SemiBold"). A family already named with a weight keeps its name.
+fn name_weight(span: &mut TextSpan, weight: Option<u16>) {
+    let Some(&(_, name)) = weight.and_then(|w| WEIGHT_NAMES.iter().find(|(n, _)| *n == w)) else {
+        return;
+    };
+    let key: String = span
+        .font_family
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    let named = [
+        "thin", "light", "medium", "semibold", "demibold", "bold", "black", "heavy",
+    ]
+    .iter()
+    .any(|w| key.ends_with(w));
+    if !named {
+        span.font_family = format!("{} {name}", span.font_family.trim_end());
+        span.bold = false;
+    }
+}
 const DEFAULT_SIZE_PT: f64 = 24.0;
 
 /// Object types stored in the `loda` header.
@@ -1595,15 +1634,19 @@ impl<'a> Ctx<'a> {
             .filter(|s| s.is_finite() && *s > 0.0 && *s < 10_000.0)
             .unwrap_or(DEFAULT_SIZE_PT);
         let mut span = TextSpan::new(text, family, size_pt);
+        let mut weight = None;
         if let Some(f) = style.flags {
             span.bold = f.bold();
             span.italic = f.italic();
             span.underline = f.underline();
             span.strikethrough = f.strikethrough();
+            weight = f.weight();
         }
         if let Some(b) = style.bold {
             span.bold = b;
+            weight = style.weight;
         }
+        name_weight(&mut span, weight);
         if let Some(i) = style.italic {
             span.italic = i;
         }
@@ -6955,6 +6998,87 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A run set in a semibold face (style code 1024, weight 600) reads
+    /// as that face, named by the family and its weight, not as bold;
+    /// regular (64) and bold (4096) runs keep the family's name (#624).
+    #[test]
+    fn semibold_runs_keep_their_face() {
+        let v = 21u16;
+        let read = |family: &str, weight: &str| {
+            let mut t = u32s(&[0xffff_ffff]);
+            t.extend_from_slice(&[0; 32]);
+            t.extend_from_slice(&u16s(&[1700]));
+            t.extend_from_slice(&[0; 3]);
+            t.extend_from_slice(&u32s(&[1, 1]));
+            t.extend_from_slice(&[0; 48]);
+            t.extend_from_slice(&u32s(&[0]));
+            t.extend_from_slice(&[0; 8]);
+            t.extend_from_slice(&u32s(&[1]));
+            t.extend_from_slice(&u32s(&[0]));
+            t.push(0);
+            t.push(0);
+            t.extend_from_slice(&style_string(
+                v,
+                &format!(
+                    r#"{{"character":{{"latin":{{"font":"{family}","size":"128819","weight":"{weight}","italic":"0"}}}}}}"#
+                ),
+            ));
+            t.extend_from_slice(&u32s(&[0]));
+            t.extend_from_slice(&u32s(&[2]));
+            for _ in 0..2 {
+                t.extend_from_slice(&u16s(&[0]));
+                t.push(0xfe);
+                t.extend_from_slice(&[0; 5]);
+            }
+            t.extend_from_slice(&u32s(&[2]));
+            t.extend_from_slice(b"Hi");
+            t.push(0);
+            let obj = list(
+                b"obj ",
+                &[
+                    chunk(b"bbox", &i32s(&[0, 100_000, 100_000, 0])),
+                    chunk(
+                        b"loda",
+                        &loda(OBJ_ARTISTIC_TEXT, &[(ARG_COORDS, i32s(&[0, 8]))]),
+                    ),
+                    chunk(b"trfd", &trfd(v, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0])),
+                    chunk(b"txsm", &t),
+                ]
+                .concat(),
+            );
+            let body = [
+                chunk(b"mcfg", &mcfg(v, 2_540_000, 2_540_000)),
+                list(b"page", &list(b"layr", &obj)),
+            ]
+            .concat();
+            let (doc, _) = parse(&riff(b"CDRL", &body), v);
+            match &first_shape(&doc).kind {
+                ShapeKind::Text { spans, .. } => (spans[0].font_family.clone(), spans[0].bold),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(
+            read("Titillium Web", "1024"),
+            ("Titillium Web SemiBold".to_string(), false)
+        );
+        assert_eq!(
+            read("Titillium Web", "4096"),
+            ("Titillium Web".to_string(), true)
+        );
+        assert_eq!(
+            read("Titillium Web", "64"),
+            ("Titillium Web".to_string(), false)
+        );
+        // Light (16) and black (65536) faces too.
+        assert_eq!(read("Lato", "16").0, "Lato Light");
+        assert_eq!(read("Lato", "65536"), ("Lato Black".to_string(), false));
+        // A family already named with its weight keeps its name.
+        assert_eq!(
+            read("Segoe UI Semibold", "1024"),
+            ("Segoe UI Semibold".to_string(), true)
+        );
     }
 
     /// Version 21 paragraph text: the loda has no frame size; the frame

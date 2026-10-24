@@ -557,7 +557,17 @@ family, "Arial") and by its legacy family name when that differs
 ("Arial Narrow", "Arial Black", "Segoe UI Semibold", the name a drawing
 from another program usually gives); the font lists show both. A
 legacy name picks the face of that name nearest the text's weight and
-style.
+style. A family name ending in a weight ("Titillium Web SemiBold",
+"Lato Light", "Semi Bold" written apart too) that no font lists is
+drawn with the family's face nearest that weight, and is not reported
+missing.
+
+A .cdr run set in a face between or beyond regular and bold (thin,
+extra light, light, medium, semibold, extra bold, black) opens as that
+face: the family takes the weight's name ("Titillium Web" at 600 opens
+as "Titillium Web SemiBold", not bold), so editing, the PDF and the
+saved file keep the face. A family already named with a weight keeps
+its name.
 
 A drawing that carries several faces of one family (regular and bold)
 has each face serve its text; an installed face of the same family,
@@ -705,7 +715,11 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
   (text crate: the outline cache keys a fitted text on its whole path,
   not on the path's number of elements).
 - `tests::fonts_are_found_by_their_legacy_family_names`,
-  `tests::a_drawing_brings_every_face_of_a_family`,
+  `tests::family_names_ending_in_a_weight_split`,
+  `tests::a_family_named_with_its_weight_draws_with_the_nearest_face`,
+  `tests::a_drawing_brings_every_face_of_a_family`, the .cdr reader's
+  `parse::tests::semibold_runs_keep_their_face` and
+  `text::tests::style_string_weights_are_style_codes`,
 - `tests::missing_fonts_get_stand_ins_with_the_same_widths_or_style`,
   `tests::letters_a_font_lacks_are_drawn_with_a_font_that_has_them`,
   `tests::variable_fonts_draw_bold_with_their_weight_axis` and

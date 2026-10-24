@@ -268,6 +268,52 @@ pub fn substitutes(family: &str) -> Vec<&'static str> {
     out
 }
 
+/// Weight names a family name can end in, with their weights: drawings
+/// name a face of a family that way ("Titillium Web SemiBold").
+const WEIGHT_NAMES: [(&str, u16); 12] = [
+    ("thin", 100),
+    ("hairline", 100),
+    ("extralight", 200),
+    ("ultralight", 200),
+    ("light", 300),
+    ("medium", 500),
+    ("semibold", 600),
+    ("demibold", 600),
+    ("extrabold", 800),
+    ("ultrabold", 800),
+    ("black", 900),
+    ("heavy", 900),
+];
+
+/// A family name ending in a weight name, split into the family and the
+/// weight: "Titillium Web SemiBold" is ("Titillium Web", 600), and so is
+/// "Titillium Web Semi Bold". `None` for other names.
+pub fn split_weight(family: &str) -> Option<(&str, u16)> {
+    let weight_of = |words: &[&str]| {
+        let key: String = words
+            .iter()
+            .flat_map(|w| w.chars())
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        WEIGHT_NAMES
+            .iter()
+            .find(|(n, _)| *n == key)
+            .map(|(_, w)| *w)
+    };
+    // The weight is the last word, or the last two run together.
+    let (head, last) = family.trim_end().rsplit_once(' ')?;
+    let head = head.trim_end();
+    if let Some(w) = weight_of(&[last]).filter(|_| !head.is_empty()) {
+        return Some((head, w));
+    }
+    let (head2, prev) = head.rsplit_once(' ')?;
+    let head2 = head2.trim_end();
+    weight_of(&[prev, last])
+        .filter(|_| !head2.is_empty())
+        .map(|w| (head2, w))
+}
+
 /// The legacy family names (name ID 1) a face's name table gives that
 /// differ from the families fontdb lists for it (the typographic family,
 /// name ID 16): "Arial Narrow" for a face fontdb files under "Arial".
@@ -1561,11 +1607,11 @@ impl FontSystem {
 
     /// Whether a family exists (missing fonts are substituted and reported).
     pub fn has_family(&self, family: &str) -> bool {
-        self.families
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .any(|f| f == family)
+        let families = self.families.read().unwrap_or_else(|e| e.into_inner());
+        families.iter().any(|f| f == family)
+            // A face named by its family and weight ("Titillium Web
+            // SemiBold") is drawn by the family.
+            || split_weight(family).is_some_and(|(base, _)| families.iter().any(|f| f == base))
     }
 
     /// Pick a face for a span: the family itself, else a stand-in (see
@@ -1594,6 +1640,24 @@ impl FontSystem {
             .or_else(|| self.legacy_face(&db, family, weight, style))
         {
             return Some(id);
+        }
+        // A family named with its weight ("Titillium Web SemiBold") whose
+        // faces are not listed under that name: the face of the family
+        // nearest that weight (bold text at least bold).
+        if let Some((base, w)) = split_weight(family) {
+            let weight = fontdb::Weight(if bold { w.max(700) } else { w });
+            let q = fontdb::Query {
+                families: &[fontdb::Family::Name(base)],
+                weight,
+                stretch: fontdb::Stretch::Normal,
+                style,
+            };
+            if let Some(id) = db
+                .query(&q)
+                .or_else(|| self.legacy_face(&db, base, weight, style))
+            {
+                return Some(id);
+            }
         }
         let mut fams: Vec<fontdb::Family> = substitutes(family)
             .into_iter()
@@ -4398,6 +4462,43 @@ mod tests {
         let b = f.outline(&[TextSpan::new("Hello", "Quicksand", 24.0)]);
         assert_eq!(a.path.elements().len(), b.path.elements().len());
         assert!((a.bounds.width() - b.bounds.width()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn family_names_ending_in_a_weight_split() {
+        assert_eq!(
+            split_weight("Titillium Web SemiBold"),
+            Some(("Titillium Web", 600))
+        );
+        assert_eq!(
+            split_weight("Titillium Web Semi Bold"),
+            Some(("Titillium Web", 600))
+        );
+        assert_eq!(split_weight("Segoe UI Semibold"), Some(("Segoe UI", 600)));
+        assert_eq!(split_weight("Lato Light"), Some(("Lato", 300)));
+        assert_eq!(split_weight("Arial Black"), Some(("Arial", 900)));
+        assert_eq!(split_weight("Arial"), None);
+        assert_eq!(split_weight("Arial Bold"), None);
+        assert_eq!(split_weight("Light"), None);
+        assert_eq!(split_weight("Semi Bold"), None);
+    }
+
+    #[test]
+    fn a_family_named_with_its_weight_draws_with_the_nearest_face() {
+        // "Selawik SemiBold" is not a family: drawn with Selawik's face
+        // nearest 600 (its bold), not reported missing (#624).
+        const SELAWIK_BOLD: &[u8] =
+            include_bytes!("../../../apps/tracedraw/assets/fonts/Selawik-Bold.ttf");
+        let f = system_with(&[SELAWIK, SELAWIK_BOLD]);
+        assert!(f.has_family("Selawik SemiBold"));
+        assert_eq!(f.substitute("Selawik SemiBold"), None);
+        let bold = f.face_for("Selawik", true, false);
+        assert_eq!(f.face_for("Selawik SemiBold", false, false), bold);
+        assert_eq!(
+            f.face_for("Selawik Light", false, false),
+            f.face_for("Selawik", false, false)
+        );
+        assert!(!f.has_family("Missing SemiBold"));
     }
 
     #[test]

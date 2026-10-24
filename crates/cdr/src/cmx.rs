@@ -2017,21 +2017,11 @@ pub(crate) mod tests {
             "{b:?}"
         );
         // Top row first in the picture: red above blue. The rows of the
-        // PNG (RGBA, each after a filter byte) from its IDAT chunk.
+        // PNG (RGBA, each after a filter byte).
         let ShapeKind::Bitmap { png, .. } = &s[0].kind else {
             panic!("not a picture");
         };
-        let at = png
-            .windows(4)
-            .position(|w| w == b"IDAT")
-            .expect("an IDAT chunk");
-        let len = u32::from_be_bytes([png[at - 4], png[at - 3], png[at - 2], png[at - 1]]) as usize;
-        let mut rows = Vec::new();
-        std::io::Read::read_to_end(
-            &mut flate2::read::ZlibDecoder::new(&png[at + 4..at + 4 + len]),
-            &mut rows,
-        )
-        .expect("rows");
+        let rows = crate::parse::raw_rows(png);
         assert_eq!(rows.get(1..4), Some([255, 0, 0].as_slice()), "{rows:?}");
         assert_eq!(rows.get(6..9), Some([0, 0, 255].as_slice()), "{rows:?}");
     }

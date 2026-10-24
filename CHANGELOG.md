@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Opening a .cdr file with photos takes far less memory: the pictures are kept packed about half as small (22 MB instead of 40 MB for a 4000 x 3000 photo), and a picture placed many times is kept once instead of once per object. Saving a .cdr writes such a picture once, and a bitmap pattern fill no longer takes several times its size in memory while the file is written.
+
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.
 
 ## 0.17.0 (2026-10-24)

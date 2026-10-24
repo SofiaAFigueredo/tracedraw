@@ -2722,3 +2722,83 @@ fn a_version_8_style_table_with_set11_is_read() {
     assert!(notes.is_empty(), "{notes:?}");
     assert_eq!(eight.len(), nine.len());
 }
+
+/// A picture placed many times is one bitmap record in the file and one
+/// shared copy in the drawing read back; its pixels stay as they were.
+#[test]
+fn a_picture_placed_many_times_is_written_and_read_once() {
+    let mut pm = tiny_skia::Pixmap::new(40, 30).expect("pixmap");
+    for (i, p) in pm.pixels_mut().iter_mut().enumerate() {
+        *p = tiny_skia::ColorU8::from_rgba((i * 7) as u8, (i / 3) as u8, 90, 255).premultiply();
+    }
+    let png: SharedBytes = pm.encode_png().expect("png").into();
+    let mut doc = doc_with(Vec::new());
+    let mut ids = doc.ids().clone();
+    for i in 0..5 {
+        let mut s = Shape::new(
+            ids.shape(),
+            ShapeKind::Bitmap {
+                rect: Rect::new(0.0, 0.0, 40.0, 30.0),
+                width_px: 40,
+                height_px: 30,
+                png: png.clone(),
+                fx: None,
+            },
+        );
+        s.transform = Affine::translate((i as f64 * 41.0, 0.0));
+        s.fill = Fill::None;
+        s.stroke = None;
+        doc.pages[0].layers[0].shapes.push(s);
+    }
+    let one = {
+        let mut d = doc.clone();
+        d.pages[0].layers[0].shapes.truncate(1);
+        document_to_cdr(&d).len()
+    };
+    let five = document_to_cdr(&doc);
+    // Four more objects, not four more pictures (a picture is 3.6 kB raw).
+    assert!(five.len() < one + 2000, "{} against {one}", five.len());
+    let (back, _) = crate::open_bytes(&five, "back").expect("reads back");
+    let pictures: Vec<SharedBytes> = back.pages[0].layers[0]
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.kind {
+            ShapeKind::Bitmap { png, .. } => Some(png.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pictures.len(), 5);
+    assert!(pictures
+        .iter()
+        .all(|p| SharedBytes::ptr_eq(p, &pictures[0])));
+    let read = tiny_skia::Pixmap::decode_png(&pictures[0]).expect("decodes");
+    assert_eq!(read.data(), pm.data());
+}
+
+/// The reader's pictures: RGB when opaque, RGBA otherwise, rows filtered
+/// so a photo-like picture packs well; the pixels come back exact.
+#[test]
+fn reader_pictures_are_filtered_and_exact() {
+    let (w, h) = (64u32, 48u32);
+    let mut rgba = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            rgba.extend_from_slice(&[(x * 3) as u8, (y * 5) as u8, ((x + y) * 2) as u8, 255]);
+        }
+    }
+    let png = crate::parse::encode_png(w, h, &rgba);
+    assert_eq!(png[25], 2, "opaque: RGB");
+    let pm = tiny_skia::Pixmap::decode_png(&png).expect("decodes");
+    assert_eq!(pm.data(), &rgba[..]);
+    // A gradient packs far better filtered than as plain rows.
+    assert!(png.len() * 4 < rgba.len() / 4, "{} bytes", png.len());
+    rgba[3] = 0;
+    let png = crate::parse::encode_png(w, h, &rgba);
+    assert_eq!(png[25], 6, "see-through: RGBA");
+    let back = crate::parse::raw_rows(&png);
+    assert_eq!(back[4], 0);
+    assert_eq!(&back[5..9], &rgba[4..8]);
+    // Short data: the missing rows are clear.
+    let png = crate::parse::encode_png(w, h, &rgba[..rgba.len() / 2]);
+    assert!(tiny_skia::Pixmap::decode_png(&png).is_ok());
+}

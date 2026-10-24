@@ -31,7 +31,7 @@ use tracedraw_core::{
     document::{Shape, ShapeKind, Symbol, TextSpan},
     geometry::{Affine, BezPath, PathEl, Point, Rect, Shape as _},
     style::{FountainKind, LineCap, LineJoin},
-    Color, Document, Fill, Stroke, TextAlign,
+    Color, Document, Fill, Pattern, SharedBytes, Stroke, TextAlign,
 };
 
 /// The oldest version whose files written here are known to open in the
@@ -2631,6 +2631,10 @@ struct Writer<'a> {
     outline_ids: HashMap<String, u32>,
     fonts: Vec<(u16, String)>,
     bitmaps: Vec<Vec<u8>>,
+    /// Bitmap records already written, by picture (its shared bytes'
+    /// address and length) and size, so a picture placed many times is
+    /// written once.
+    bitmap_ids: HashMap<(usize, usize, u64, u64), u32>,
     /// Static ids (`usdn`), object ids (argument 100), next fill, outline
     /// and bitmap ids.
     next_usdn: u32,
@@ -2714,6 +2718,7 @@ impl<'a> Writer<'a> {
             next_fill: 1,
             next_outline: 1,
             next_bitmap: 1,
+            bitmap_ids: HashMap::new(),
             next_spnd: 1,
             text_formats: Vec::new(),
             guid_seed: seed,
@@ -2729,7 +2734,22 @@ impl<'a> Writer<'a> {
     }
 
     fn fill_id(&mut self, fill: &Fill) -> u32 {
-        let key = format!("{fill:?}");
+        // A bitmap pattern goes by its picture, not by the printed bytes
+        // (about five characters per byte of the PNG, kept for the whole
+        // write).
+        let key = match fill {
+            Fill::Pattern(Pattern::Bitmap {
+                png,
+                width_px,
+                height_px,
+                size_mm,
+            }) => format!(
+                "bitmap pattern {:x} {} {width_px} {height_px} {size_mm:?}",
+                png.addr(),
+                png.len()
+            ),
+            _ => format!("{fill:?}"),
+        };
         if let Some(id) = self.fill_ids.get(&key) {
             return *id;
         }
@@ -2761,11 +2781,21 @@ impl<'a> Writer<'a> {
         id
     }
 
-    fn bitmap_id(&mut self, png: &[u8], size_mm: (f64, f64)) -> Option<u32> {
+    fn bitmap_id(&mut self, png: &SharedBytes, size_mm: (f64, f64)) -> Option<u32> {
+        let key = (
+            png.addr(),
+            png.len(),
+            size_mm.0.to_bits(),
+            size_mm.1.to_bits(),
+        );
+        if let Some(id) = self.bitmap_ids.get(&key) {
+            return Some(*id);
+        }
         let id = self.next_bitmap;
         let rec = bmp_record(id, png, size_mm)?;
         self.next_bitmap += 1;
         self.bitmaps.push(rec);
+        self.bitmap_ids.insert(key, id);
         Some(id)
     }
 

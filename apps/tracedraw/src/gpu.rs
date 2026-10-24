@@ -494,6 +494,25 @@ pub fn restart_with(next: Mode, args: &[String]) -> bool {
 mod tests {
     use super::*;
 
+    /// The OpenGL renderer asks for a compatibility context of any version
+    /// when OpenGL 3.3 core and OpenGL ES fail, so a card with OpenGL 2.1
+    /// only opens the window on its own driver (#616). That needs the
+    /// patched eframe (vendor/README.md) until egui 0.37.
+    #[test]
+    fn opengl_falls_back_to_a_compatibility_context() {
+        let manifest = include_str!("../../../Cargo.toml");
+        assert!(manifest.contains("eframe = { path = \"vendor/eframe\" }"));
+        let glow = include_str!("../../../vendor/eframe/src/native/glow_integration.rs");
+        let tried = glow
+            .split("fn context_attributes_to_try(")
+            .nth(1)
+            .expect("the attempts");
+        let compat = tried.find(".with_profile(GlProfile::Compatibility)");
+        let gles = tried.find("ContextApi::Gles(None)");
+        assert!(compat.is_some() && gles < compat, "compatibility last");
+        assert!(glow.contains("create_first_context("));
+    }
+
     #[test]
     fn a_renderer_that_fails_hands_over_to_the_next() {
         let args = vec!["drawing.cdr".to_string()];

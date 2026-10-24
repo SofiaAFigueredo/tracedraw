@@ -377,8 +377,23 @@ fn font_list_with(
         }
     }
 
-    // What the list holds.
+    // What the list holds: built only while it is open, typed in or
+    // turned with the wheel. Closed on a bar it costs nothing a frame,
+    // where it cloned every family name (#616: 1332 of them).
+    let wheeling = wheel
+        && ui.rect_contains_pointer(anchor)
+        && ui.input(|i| {
+            i.raw
+                .events
+                .iter()
+                .any(|e| matches!(e, egui::Event::MouseWheel { .. }))
+        });
+    let needed = egui::Popup::is_id_open(&ctx, popup_id)
+        || field.has_focus()
+        || field.lost_focus()
+        || wheeling;
     let all: Vec<String> = match st.show {
+        _ if !needed => Vec::new(),
         Show::All => app.font_families.clone(),
         Show::Installed => {
             let fonts = tracedraw_text::fonts();

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- The OpenGL renderer now opens on graphics cards with OpenGL 2.1 only, such as the Intel HD Graphics of 2010 PCs: after OpenGL 3.3 and OpenGL ES it asks for a compatibility context, so such a PC draws on its card instead of the CPU's software adapter. The font list on the property bar no longer copies every font name on each frame while it is closed, which cost about 0.1 to 0.25 ms a frame with 1300 font families (#616).
+
 - The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).
 
 - The preferences are no longer serialized on every frame to see whether they changed: only on frames with a key, text, a click or a dropped file, and at most once a second otherwise. A pointer move now costs about 0.1 µs there instead of about 20 µs, more on an older PC (#616).

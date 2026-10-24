@@ -117,6 +117,18 @@ and `--reset-settings` starts open windows of their own.
   (`gpu::tests::a_renderer_that_fails_hands_over_to_the_next`,
   `gpu::tests::hardware_mode_never_draws_on_the_software_adapter`).
   So a virtual machine without a usable graphics card opens.
+- The OpenGL renderer asks the driver for OpenGL 3.3 core, then OpenGL
+  ES, then a compatibility context of any version. A card whose driver
+  offers OpenGL 2.1 only (Intel HD Graphics of the Ironlake generation,
+  which has no Direct3D 12 and which wgpu's OpenGL backend refuses below
+  3.3) gets the last one and draws on the card through `--renderer=gl`
+  with GLSL 1.20 shaders, instead of on the CPU (#616). Older eframe
+  stopped after OpenGL ES, which Windows cannot make on those drivers,
+  so the window did not open; TraceDraw carries eframe 0.36.2 with the
+  fallback of eframe 0.37 (`vendor/README.md`,
+  `gpu::tests::opengl_falls_back_to_a_compatibility_context`). Checked
+  under Mesa forced to OpenGL 2.1 and GLSL 1.20: the window, the page,
+  gradients and text draw as on the other renderers.
 - A panic while a renderer starts (eframe's OpenGL set-up panics when
   the driver offers no matching pixel format) is caught and logged, and
   the next renderer is tried; it is not written to `crash.log` or shown.

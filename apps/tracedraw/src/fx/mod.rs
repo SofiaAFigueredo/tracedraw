@@ -636,7 +636,7 @@ impl crate::app::App {
                     rect,
                     width_px: w,
                     height_px: h,
-                    png: png.into(),
+                    png,
                     effects: fx.effects.clone(),
                 })
             }
@@ -648,14 +648,17 @@ impl crate::app::App {
     pub fn vector_base_cached(
         &self,
         s: &tracedraw_core::Shape,
-    ) -> Option<(Vec<u8>, u32, u32, tracedraw_core::Rect)> {
+    ) -> Option<(tracedraw_core::SharedBytes, u32, u32, tracedraw_core::Rect)> {
         let key = (s.id, s.raster_source());
         if let Some((k, v)) = self.vector_fx_base.borrow().as_ref() {
             if *k == key {
                 return Some(v.clone());
             }
         }
-        let v = vector_base(s, &self.doc().symbols, vector_fx_dpi(&self.doc().metadata))?;
+        let (png, w, h, rect) =
+            vector_base(s, &self.doc().symbols, vector_fx_dpi(&self.doc().metadata))?;
+        // Shared from here on: every frame that asks takes a pointer.
+        let v = (png.into(), w, h, rect);
         *self.vector_fx_base.borrow_mut() = Some((key, v.clone()));
         Some(v)
     }

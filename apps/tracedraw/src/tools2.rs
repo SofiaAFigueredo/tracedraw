@@ -917,6 +917,59 @@ mod tests {
         sum.abs() / 2.0
     }
 
+    /// A thin outline (a hairline counts as 0.25 mm) with round ends and
+    /// a round corner keeps its whole area and reach: the fine fans of
+    /// its round parts are not merged away.
+    #[test]
+    fn a_thin_round_outline_keeps_its_shape() {
+        let mut line = BezPath::new();
+        line.move_to((10.0, 10.0));
+        line.line_to((40.0, 10.0));
+        line.line_to((60.0, 30.0));
+        let line = ShapeKind::Path {
+            path: line,
+            closed: false,
+        };
+        let (_, out) = outline_object(line, 0.25, |st| {
+            st.cap = tracedraw_core::LineCap::Round;
+            st.join = tracedraw_core::LineJoin::Round;
+        });
+        let r = 0.125;
+        let b = out.bounding_box();
+        let want = Rect::new(10.0 - r, 10.0 - r, 60.0 + r, 30.0 + r);
+        for (got, want) in [
+            (b.x0, want.x0),
+            (b.y0, want.y0),
+            (b.x1, want.x1),
+            (b.y1, want.y1),
+        ] {
+            assert!((got - want).abs() < 0.01, "{b:?} vs {want:?}");
+        }
+        // Two strokes meeting at 45 degrees: the rectangles, less their
+        // overlap inside the corner, the round corner and the two ends.
+        let turn = std::f64::consts::FRAC_PI_4;
+        let len = 30.0 + 20.0 * 2f64.sqrt();
+        let stroke = 2.0 * r * len - r * r * (turn / 2.0).tan()
+            + r * r * turn / 2.0
+            + std::f64::consts::PI * r * r;
+        let a = area(&out);
+        assert!((a - stroke).abs() < stroke * 0.005, "{a} vs {stroke}");
+        // A straight hairline with round ends: not a flat sliver.
+        let mut line = BezPath::new();
+        line.move_to((10.0, 10.0));
+        line.line_to((40.0, 10.0));
+        let line = ShapeKind::Path {
+            path: line,
+            closed: false,
+        };
+        let (_, out) = outline_object(line, 0.0, |st| {
+            st.cap = tracedraw_core::LineCap::Round;
+        });
+        let stroke = 2.0 * r * 30.0 + std::f64::consts::PI * r * r;
+        let a = area(&out);
+        assert!((a - stroke).abs() < stroke * 0.005, "{a} vs {stroke}");
+    }
+
     /// A Variable Length outline converted to an object is a clean band:
     /// the eased width runs in a few curves, the butt ends are lines, not
     /// hundreds of short lines (#627).

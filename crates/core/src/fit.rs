@@ -117,13 +117,16 @@ struct Break {
     t_out: Option<Vec2>,
 }
 
-/// `pts` with each run of vertices closer than `tol` to the one before
-/// made one vertex, at a kept vertex of the run or else its middle: the
-/// tiny steps polygon operations leave where pieces overlap, which would
-/// read as corners.
+/// `pts` with each run of vertices lying within `tol` of the run's first
+/// one made one vertex, at a kept vertex of the run or else its middle:
+/// the tiny steps polygon operations leave where pieces overlap, which
+/// would read as corners. A run never spans more than twice `tol`, so the
+/// fine fan of a thin outline's round end keeps its shape, and a second
+/// kept vertex starts a run of its own.
 fn merge_close(pts: &[Point], closed: bool, tol: f64, keep: &dyn Fn(Point) -> bool) -> Vec<Point> {
     let mut out: Vec<Point> = Vec::with_capacity(pts.len());
     let mut group: Vec<Point> = Vec::new();
+    let mut group_kept = false;
     let flush = |group: &mut Vec<Point>, out: &mut Vec<Point>| {
         let kept = group.iter().copied().find(|p| keep(*p));
         let mid = || {
@@ -138,13 +141,17 @@ fn merge_close(pts: &[Point], closed: bool, tol: f64, keep: &dyn Fn(Point) -> bo
     for (i, p) in pts.iter().enumerate() {
         // The ends of an open subpath stay where they are.
         let end = !closed && (i == 0 || i + 1 == pts.len());
-        let near = group.last().is_some_and(|q| (*p - *q).hypot() < tol);
-        if !near || end {
+        let kept = keep(*p);
+        let near = group.first().is_some_and(|q| (*p - *q).hypot() < tol);
+        if !near || end || (kept && group_kept) {
             flush(&mut group, &mut out);
+            group_kept = false;
         }
         group.push(*p);
+        group_kept |= kept;
         if end {
             flush(&mut group, &mut out);
+            group_kept = false;
         }
     }
     flush(&mut group, &mut out);
@@ -155,7 +162,7 @@ fn merge_close(pts: &[Point], closed: bool, tol: f64, keep: &dyn Fn(Point) -> bo
             }
         }
     }
-    if out.len() < 2 {
+    if out.len() < if closed { 3 } else { 2 } {
         return pts.to_vec();
     }
     out
@@ -359,7 +366,14 @@ fn tangent_at(pts: &[Point], i: usize, closed: bool, reach: f64) -> Vec2 {
     let p = pts[i % n];
     let mut prev = None;
     let mut next = None;
-    for k in 1..=REACH_STEPS.min(n.saturating_sub(1)) {
+    // Round a loop, no further than halfway either way, so the walk never
+    // comes back past the vertex itself.
+    let steps = if closed {
+        n.saturating_sub(1) / 2
+    } else {
+        n.saturating_sub(1)
+    };
+    for k in 1..=REACH_STEPS.min(steps) {
         if prev.is_none_or(|q: Point| (q - p).hypot() < reach) {
             if i >= k {
                 prev = Some(pts[i - k]);

@@ -23,8 +23,10 @@ loses its outline. One undo step, and the new objects are selected.
   (#622). Each smooth run between corners is fitted by least squares,
   refined by Newton steps and split in the middle until it fits, so the
   nodes fall evenly, and neighbouring pieces that fit as one curve are
-  joined again. Vertices closer than the tolerance are merged first (the
-  tiny steps polygon operations leave), and a stretch that is straight
+  joined again. Vertices within the tolerance of the first of their run are
+  merged first (the tiny steps polygon operations leave; a run never
+  spans more than twice the tolerance, so the fine round ends of a thin
+  outline keep their shape), and a stretch that is straight
   but leaves at an angle stays a curve, so curves stay smooth; a smooth closed ring is split at its leftmost and
   rightmost points.
 - Round ends and round corners are real curves: each round end is two
@@ -49,6 +51,10 @@ loses its outline. One undo step, and the new objects are selected.
   curved path the ends also meet the sides at nodes and the whole
   outline stays within 16 segments
   (`tools2::tests::round_ends_of_a_curve_meet_its_sides_at_nodes`).
+- Given a 0.25 mm line with a corner, round ends and a round corner,
+  and a straight hairline with round ends, the results reach as far as
+  the strokes and have their areas within 0.5 %
+  (`tools2::tests::a_thin_round_outline_keeps_its_shape`).
 - Given a line with a Variable Length node of 10 mm in the middle of a
   2 mm outline, the result is two curves per side and two straight
   ends; along an arch, two straight ends and at most 16 curves, with the

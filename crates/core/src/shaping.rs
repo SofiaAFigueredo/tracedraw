@@ -847,14 +847,20 @@ pub fn variable_band_within(
             // The ends of the piece on the path are corners too: a join's
             // fan starts there, and a point of it in the middle of an edge
             // left a crack after rounding.
-            polys.push(vec![
+            let mut poly = vec![
                 [p.x + n[0] * l0, p.y + n[1] * l0],
                 [q.x + n[0] * l1, q.y + n[1] * l1],
                 [q.x, q.y],
                 [q.x - n[0] * r1, q.y - n[1] * r1],
                 [p.x - n[0] * r0, p.y - n[1] * r0],
                 [p.x, p.y],
-            ]);
+            ];
+            // A side of no reach repeats the point on the path.
+            poly.dedup();
+            if poly.first() == poly.last() {
+                poly.pop();
+            }
+            polys.push(poly);
         }
         // Round joins between consecutive pieces (and around the seam of
         // a closed subpath): a fan from one normal to the next on each

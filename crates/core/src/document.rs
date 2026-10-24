@@ -2268,6 +2268,26 @@ impl Shape {
         })
     }
 
+    /// Make a rectangle's rounded corners keep their size when it is
+    /// resized (Relative corner scaling off), at the size they measure on
+    /// the page now; a rectangle whose axes scale differently gets round
+    /// corners of the smaller scale. Other shapes, square corners and
+    /// corners that already keep their size are left as they are.
+    pub fn keep_corner_size(&mut self) {
+        let Some(page) = self.page_corners() else {
+            return;
+        };
+        if page.fixed || page.max() <= 0.0 {
+            return;
+        }
+        if let Some(kind) = self.with_page_corners(Corners {
+            fixed: true,
+            ..page
+        }) {
+            self.kind = kind;
+        }
+    }
+
     /// This rectangle with corners measured on the page (as
     /// `page_corners` gives them), each at most half the shorter side.
     /// `None` for other kinds.

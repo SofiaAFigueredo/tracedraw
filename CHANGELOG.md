@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- .cdr files: rounded rectangles now open with Relative Corner Scaling off, like rectangles drawn in TraceDraw, so resizing one no longer stretches its corners and there is no need to switch the setting off rectangle by rectangle. A rectangle the file stores stretched shows round corners instead of oval ones (#619).
+
 - Convert Outline to Object (Ctrl+Shift+Q) on an outline with round ends or round corners: each round end is now two real curves meeting at its tip, with nodes where it meets the sides, and each round corner a curve, instead of many tiny straight segments. Curved sides also get fewer nodes (#623).
 
 - File > Export now starts with the choices of the last export of the session (format, resolution, quality, transparency, pages and PDF settings; Selected only starts off again) instead of resetting them each time. To keep them for the next session too, turn on Options > Global > File Formats > Remember the settings of the last export, which new preferences now have on and which now keeps WebP lossless as well (#617).

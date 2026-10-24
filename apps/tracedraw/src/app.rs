@@ -4651,6 +4651,11 @@ impl App {
     /// live (the Shape tool converting an object to edit its nodes).
     pub(crate) fn convert_selection_to_curves(&mut self, bake: bool) {
         let shapes = self.selected_shapes();
+        self.convert_shapes_to_curves(shapes, bake);
+    }
+
+    /// [`App::convert_selection_to_curves`] for `shapes`, one undo step.
+    pub(crate) fn convert_shapes_to_curves(&mut self, shapes: Vec<Shape>, bake: bool) {
         let symbols = self.doc().symbols.clone();
         let mut cmds = Vec::new();
         for s in &shapes {

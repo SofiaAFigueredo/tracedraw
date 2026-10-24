@@ -18,6 +18,7 @@ switched off. One undo step.
 | Symbol instance | a group holding the symbol's objects as curves, where the instance was, at its size and turn; a symbol inside a symbol is converted too |
 | Object with an envelope, perspective or distortion | a curve with the warped outline, as it was drawn; a curve converts too |
 | Group with an envelope, perspective or distortion | still a group of the same objects, each a curve warped as it was drawn, keeping its own fill and outline |
+| Clip frame with an envelope, perspective or distortion | still a clip frame, its frame and contents warped as drawn; then the warps of the objects inside are baked, the group's or clip frame's first as they are drawn. The frame object's own envelope stays live, since the contents are clipped to its outline without it. Inside a group or clip frame whose contour, shadow or other drawn effect stays, the objects keep their warps, or that effect would change |
 | Curve, group | stays as it is |
 | Bitmap | stays as it is: a bitmap has no outline to convert, and keeps its envelope (also in a group). The status bar says so |
 
@@ -58,6 +59,15 @@ it but keeps an envelope live, so the frame being edited stays.
 - Given enveloped text, converting gives one curve covering what was
   drawn, in the text's fill
   (`text_effect_tests::convert_to_curves_bakes_the_envelope_of_text`).
+- Given a clip frame with an Arch envelope whose frame has its own
+  envelope and whose content has a perspective, converting gives the
+  content drawn as before (the clip frame's warp first, then its own)
+  and the frame keeping its envelope; with only the frame's envelope
+  left, the command is greyed
+  (`tracedraw_core::document::tests::a_clip_frame_bakes_its_warp_before_the_warps_inside`,
+  `tracedraw_core::document::tests::warps_under_a_live_contour_stay`).
+- A brush press on an enveloped group converts nothing
+  (`envelope_edit::tests::a_brush_press_leaves_an_enveloped_group`).
 - The bake itself: the warped outline equals what is drawn, the other
   effects keep their order and switched-off state, warps after a
   contour stay, perspective and distortion bake too, groups bake object

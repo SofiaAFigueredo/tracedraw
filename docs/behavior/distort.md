@@ -72,9 +72,8 @@ curve stays open.
   middles again. Clear Distortion removes them. Convert to Curves
   (Ctrl+Q) makes the distorted outline the object's own (the object
   becomes a curve, also when it already was one), and Break Apart breaks
-  the distorted curve, or a distorted text into one curve per letter. A
-  random Zipper on letters broken apart can place its teeth differently
-  from the whole.
+  the distorted curve, or a distorted text into one curve per letter,
+  each distorted as the whole text was.
 - Apply (shown when a selected object has no distortion): the bar's
   distortion on those objects, about their middles.
 - The values are kept in the preferences (`tools.distort`).

@@ -347,3 +347,74 @@ fn break_apart_bakes_the_envelope_into_letter_curves() {
         .any(|e| matches!(e, Effect::Envelope { .. })));
     assert!(app.doc().find_shape(pieces[2]).is_none() || pieces[2] == id);
 }
+
+/// Break Apart of one enveloped letter makes it one warped curve with its
+/// hole kept; it used to split it into filled parts (#647).
+#[test]
+fn break_apart_keeps_the_hole_of_a_single_warped_letter() {
+    let mut app = App::headless();
+    let id = text(&mut app, Point::new(20.0, 100.0), "O");
+    app.select(vec![id]);
+    app.apply_envelope_preset(crate::envelope_edit::Preset::Arch);
+    app.break_apart();
+    assert_eq!(app.selection, vec![id]);
+    let s = app.doc().find_shape(id).expect("piece");
+    let ShapeKind::Path { path, .. } = &s.kind else {
+        panic!("a curve: {:?}", s.kind);
+    };
+    assert!(s.effects.is_empty());
+    assert!(tracedraw_core::effects::subpaths(path).len() >= 2);
+}
+
+/// Several warped texts broken apart at once keep the stacking order:
+/// each text's letters stay right above it, under what was above it.
+#[test]
+fn breaking_several_warped_texts_keeps_the_stacking_order() {
+    let mut app = App::headless();
+    let low = text(&mut app, Point::new(20.0, 100.0), "ABC");
+    let between = app
+        .new_shape(ShapeKind::Rect {
+            rect: Rect::new(0.0, 0.0, 200.0, 200.0),
+            radius: 0.0,
+            corners: None,
+        })
+        .expect("rect");
+    let high = text(&mut app, Point::new(20.0, 160.0), "DE");
+    for id in [low, high] {
+        app.select(vec![id]);
+        app.apply_envelope_preset(crate::envelope_edit::Preset::Arch);
+    }
+    app.select(vec![low, high]);
+    app.break_apart();
+    assert_eq!(app.selection.len(), 5, "{:?}", app.selection);
+    let order: Vec<ShapeId> = app
+        .doc()
+        .pages
+        .iter()
+        .flat_map(|p| &p.layers)
+        .flat_map(|l| &l.shapes)
+        .map(|s| s.id)
+        .collect();
+    let at = |id: ShapeId| order.iter().position(|o| *o == id).expect("placed");
+    let rect_at = at(between);
+    for id in &app.selection {
+        let y = app
+            .doc()
+            .find_shape(*id)
+            .expect("piece")
+            .bounds()
+            .center()
+            .y;
+        if y < 130.0 {
+            assert!(
+                at(*id) < rect_at,
+                "a letter of the low text above the rectangle"
+            );
+        } else {
+            assert!(
+                at(*id) > rect_at,
+                "a letter of the high text under the rectangle"
+            );
+        }
+    }
+}

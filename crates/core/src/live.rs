@@ -470,17 +470,59 @@ pub fn bake_outline_warps(shape: &Shape) -> Option<Shape> {
     Some(out)
 }
 
-/// The outline warps a bake would take, each with the box it maps: they
-/// warp any part of the object's outline as they warp the whole (for the
-/// letters of a text broken apart). Not for groups and clip frames.
+/// The outline warps a bake would take, each with the box it maps (for
+/// the letters of a text broken apart). Not for groups and clip frames.
 pub struct OutlineWarp(Vec<(Effect, Rect)>);
 
 impl OutlineWarp {
-    /// `path` (the object's own space) warped as the whole outline is.
+    /// `path` (the object's own space) warped with the boxes of the whole
+    /// outline. A distortion also measures its reach on the path it is
+    /// given, so parts go through [`OutlineWarp::apply_parts`].
     pub fn apply(&self, path: &BezPath) -> BezPath {
         self.0.iter().fold(path.clone(), |p, (e, b)| {
             warp_outline(e, &p, *b).unwrap_or(p)
         })
+    }
+
+    /// `parts`, which together make the whole outline, warped as the whole
+    /// is drawn: warped together, then split back by their subpaths (a
+    /// twister turns each part by its distance across the whole, not
+    /// across the part alone). Each part on its own if the warp changed
+    /// the number of subpaths.
+    pub fn apply_parts(&self, parts: &[BezPath]) -> Vec<BezPath> {
+        let starts = |p: &BezPath| {
+            p.elements()
+                .iter()
+                .filter(|e| matches!(e, PathEl::MoveTo(_)))
+                .count()
+        };
+        let mut whole = BezPath::new();
+        for p in parts {
+            whole.extend(p.elements().iter().copied());
+        }
+        let warped = self.apply(&whole);
+        let counts: Vec<usize> = parts.iter().map(starts).collect();
+        if counts.iter().sum::<usize>() != starts(&warped) {
+            return parts.iter().map(|p| self.apply(p)).collect();
+        }
+        let mut out = Vec::with_capacity(parts.len());
+        let mut els = warped.elements().iter().copied().peekable();
+        for n in counts {
+            let mut part = BezPath::new();
+            let mut seen = 0;
+            while let Some(e) = els.peek() {
+                if matches!(e, PathEl::MoveTo(_)) {
+                    if seen == n {
+                        break;
+                    }
+                    seen += 1;
+                }
+                part.push(*e);
+                els.next();
+            }
+            out.push(part);
+        }
+        out
     }
 }
 
@@ -553,7 +595,7 @@ pub fn warped_letters(shape: &Shape) -> Option<Vec<BezPath>> {
         letters.push(layout.rest.clone());
     }
     letters.retain(|p| !p.elements().is_empty());
-    Some(letters.iter().map(|p| warp.apply(p)).collect())
+    Some(warp.apply_parts(&letters))
 }
 
 impl Shape {
@@ -565,6 +607,15 @@ impl Shape {
             .take_while(|e| !e.draws_from_outline())
             .any(Effect::warps_outline)
             && !holds_bitmap(self, 0)
+    }
+
+    /// Effects of this object that stay live and read its outline after a
+    /// bake (a contour, shadow, blend..., or a warp kept for a picture
+    /// inside): the warps of the objects inside it then stay live too,
+    /// or what those effects draw would change.
+    pub fn outline_stays_live(&self) -> bool {
+        self.effects.iter().any(Effect::draws_from_outline)
+            || (self.effects.iter().any(Effect::warps_outline) && holds_bitmap(self, 0))
     }
 }
 
@@ -885,6 +936,10 @@ fn set_path(shape: &mut Shape, path: BezPath) {
         .iter()
         .any(|e| matches!(e, PathEl::ClosePath));
     shape.kind = ShapeKind::Path { path, closed };
+    // A warped outline is no longer the B-spline of its control points,
+    // and its nodes are new (#647).
+    shape.spline = None;
+    shape.node_types.clear();
 }
 
 /// Break the effect stack into ordinary shapes (below, main, above), with
@@ -2087,6 +2142,74 @@ mod tests {
         // Nothing for a group, or with no warp to bake.
         s.effects = vec![contour(), arch()];
         assert!(outline_warp(&s).is_none());
+        // A twister and a local zipper measure their reach on the whole:
+        // three parts warped together give the parts of the warped whole
+        // (each part on its own turned far more).
+        let parts = [square(0.0), square(12.0), square(24.0)];
+        let mut whole = BezPath::new();
+        for p in &parts {
+            whole.extend(p.elements().iter().copied());
+        }
+        s.kind = ShapeKind::Path {
+            path: whole,
+            closed: true,
+        };
+        for how in [
+            crate::effects::Distort::Twister {
+                angle_deg: 90.0,
+                center: None,
+            },
+            crate::effects::Distort::Zipper {
+                amplitude: 2.0,
+                frequency: 4,
+                center: None,
+                random: false,
+                smooth: false,
+                local: true,
+            },
+        ] {
+            s.effects = vec![Effect::Distort(how)];
+            let warp = outline_warp(&s).expect("warp");
+            let got = warp.apply_parts(&parts);
+            assert_eq!(got.len(), 3);
+            let mut joined = BezPath::new();
+            for p in &got {
+                joined.extend(p.elements().iter().copied());
+            }
+            assert_eq!(
+                joined.elements(),
+                evaluate(&s).main.local_path().elements(),
+                "{how:?}"
+            );
+        }
+    }
+
+    /// A warp baked into a group's objects drops their B-spline control
+    /// points and node types: the Shape tool would rebuild the old outline
+    /// from them.
+    #[test]
+    fn a_baked_group_object_loses_its_spline() {
+        let mut child = rect_shape();
+        child.id = crate::ShapeId(2);
+        child.kind = ShapeKind::Path {
+            path: child.local_path(),
+            closed: true,
+        };
+        child.spline = Some(vec![Point::new(0.0, 0.0), Point::new(20.0, 20.0)]);
+        child.node_types.insert(1, crate::nodes::NodeType::Smooth);
+        let mut g = Shape::new(
+            crate::ShapeId(4),
+            ShapeKind::Group {
+                children: vec![child],
+            },
+        );
+        g.effects = vec![arch()];
+        let baked = bake_outline_warps(&g).expect("baked");
+        let ShapeKind::Group { children } = &baked.kind else {
+            panic!("a group");
+        };
+        assert!(children[0].spline.is_none());
+        assert!(children[0].node_types.is_empty());
     }
 
     /// A curve whose own space is small and scaled up by its transform

@@ -952,4 +952,41 @@ mod tests {
             .all(|c| matches!(c.kind, ShapeKind::Path { .. })));
         assert!(s.bounds().y1 > 25.0, "{:?}", s.bounds());
     }
+
+    /// Break Apart has nothing to break in a group: it keeps its envelope
+    /// and its objects (Convert to Curves bakes it).
+    #[test]
+    fn break_apart_leaves_an_enveloped_group() {
+        let mut app = App::headless();
+        let a = rect(&mut app, 0.0, 0.0, 15.0, 20.0);
+        let b = rect(&mut app, 25.0, 0.0, 40.0, 20.0);
+        app.select(vec![a, b]);
+        app.group_selection();
+        let g = app.selection[0];
+        app.apply_envelope_preset(Preset::Arch);
+        let before = page_shape(&app, g);
+        app.break_apart();
+        assert_eq!(page_shape(&app, g).kind, before.kind);
+        assert!(app.envelope_of(g).is_some());
+    }
+
+    /// A brush press on an enveloped group leaves it as it is: brushes
+    /// never touch groups, so nothing is converted or baked.
+    #[test]
+    fn a_brush_press_leaves_an_enveloped_group() {
+        let mut app = App::headless();
+        let a = rect(&mut app, 0.0, 0.0, 15.0, 20.0);
+        let b = rect(&mut app, 25.0, 0.0, 40.0, 20.0);
+        app.select(vec![a, b]);
+        app.group_selection();
+        let g = app.selection[0];
+        app.apply_envelope_preset(Preset::Arch);
+        let before = page_shape(&app, g);
+        let depth = app.engine.history_labels().0.len();
+        app.brush_begin(Point::new(10.0, 10.0));
+        let after = page_shape(&app, g);
+        assert_eq!(after.kind, before.kind);
+        assert_eq!(after.effects, before.effects);
+        assert_eq!(app.engine.history_labels().0.len(), depth);
+    }
 }

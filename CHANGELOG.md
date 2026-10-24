@@ -8,6 +8,42 @@ full, row-by-row status.
 
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.
 
+- When a software adapter draws the window (no usable graphics card driver), TraceDraw keeps to 30 frames a second, draws no shadows and uses the system's pointers instead of the drawn cross hair and I-beam, and says so once in the status bar. On an older PC every pointer move redrew the whole window on the CPU, which took every core (#616).
+
+- With hardware acceleration on, TraceDraw no longer draws the window on the CPU's software adapter when no graphics card is usable: it tries OpenGL next and the software adapter only last, keeps going when the OpenGL set-up panics, says in a message box when no renderer can open the window, and logs every graphics adapter with why it was taken or left. An older PC sat at full CPU with the window crawling, with hardware acceleration on or off, and `--renderer=gl` showed nothing (#616).
+
+- Print on Windows: the Printer list now shows the printers Windows has, network printers included, the default one first, and prints straight to the one chosen with the copies asked for. Before, Windows offered only the PDF viewer and PDF or PostScript files (#614).
+
+- Property bar: the mouse wheel over the outline width box now changes the selected objects' outline to the next width of the list up or down, one undo step a notch (#663).
+
+- Convert Outline to Object (Ctrl+Shift+Q) now gives clean shapes: curves stay real curves with handles, straight parts stay straight, and the result has as few nodes as keep its shape, instead of hundreds of tiny straight segments. The outline of an ellipse also no longer has a notch where the ellipse starts (#622).
+
+- Print Merge, On every page: Create Merged Document and Print Merged Document now fill the pages of the open drawing, one record per page, instead of making a new drawing. With no placeholder picture but a pictures folder chosen, Place Inside Frame gives each page of the drawing its own picture from the folder, in name order, in the same frame (#618).
+
+- Pen and Bezier: a click on an end node of an open curve, selected or not, now goes on drawing that curve as if you had never stopped. The next segment leaves along the mirror of the end's handle, so the preview is curved and the join is smooth. The curve had to be selected first, and the new segment always started straight (#630).
+
+- Font lists: the mouse wheel over the font name box (with the list closed) now steps to the next or previous font, changing the selected or edited text at each notch (#665).
+
+- Shape tool on rectangles: corner nodes can be chosen several at a time, with Shift+click or Ctrl+click (which also takes a chosen corner out) or with a marquee or freehand marquee over them, and dragging a chosen corner then rounds just the chosen corners, so the two top corners or any three can be rounded together. Only all four corners or a single one could be rounded before (#671).
+
+- Tools > Options is now one window with a tab for each set of options along the top (TraceDraw, Customization, Tools, Global, Workspaces, AI and Document Options while a drawing is open), so every option can be reached without closing the dialog and opening another menu item. Each tab comes back to the page it showed last, and OK or Cancel covers the changes made on every tab (#633).
+
+- The default colour palette can show two or three rows of swatches (columns when docked on a side), set in Options > Customization > Color Palette > Rows, so more colours are in reach without scrolling; the arrows and the wheel then scroll a column at a time (#610).
+
+- Convert to Curves (Ctrl+Q) now works on dimensions: the dimension becomes a group of plain curves (its lines, its filled arrowheads and its label as curves) that no longer measures, each editable with the Shape tool. It used to do nothing. An angular dimension's arc is now a few smooth curves instead of dozens of short lines (#640).
+
+- Text editing on the canvas: the caret is now a black bar with a white edge instead of the interface's text colour, which in the dark themes was a light grey lost on the white page, and selected characters get a clearly darker shade. Table cells being edited show the same caret and shade (#632).
+
+- Font lists now follow the dark themes: the font names are drawn in the theme's text colour instead of near black on the dark list, and so are the characters of the Glyphs docker. The preview under the list and the font sampler keep dark text on their white card (#660).
+
+- The default palette of an RGB drawing now holds clean RGB values instead of the CMYK colours as the press would print them: black is 0 0 0, white 255 255 255, red 255 0 0, and the tints are the matching RGB tints. CMYK drawings keep the CMYK palette (#620).
+
+- Autofit Page: the popup has a Live preview check box. On (as before), the page shows the size it would get while the margin is typed; off, the page stays as it is until Autofit Page is clicked. The choice is kept (#659).
+
+- An ellipse converted to curves is now one closed curve of four smooth nodes with equal handles, at its right, bottom, left and top. It was an open curve with a fifth node on top of the first, and large ellipses got more nodes still, so it had to be closed by hand (#625).
+
+- Save As now starts at the `.cdr` version chosen in Options > Global > File Formats instead of always offering version 27. A new option there, Save new drawings as .cdr files, makes Save As start at the CDR type for a drawing without a file (#613).
+
 ## 0.17.0 (2026-10-24)
 
 - Convert to Curves (Ctrl+Q) and Break Apart (Ctrl+K) now make an envelope, perspective or distortion part of the curves. Convert to Curves did nothing on an enveloped curve, and Break Apart lost the warp. Enveloped text breaks into one curve per letter, each warped as the whole text was, holes kept; a group with an envelope stays a group of warped curves. A warp after a contour, blend or extrusion stays live, and bitmaps keep theirs (#647).

@@ -55,8 +55,10 @@ whatever tool is active.
   Drawings saved before this default changed keep what they store: a
   rectangle without the setting in the file scales its corners as it
   did. Rounded rectangles opened from `.cdr` files keep their corner
-  size, at the size the corners measure on the page; one the file
-  stretches gets round corners of its shorter scale
+  size, at the size the corners measure on the page (a corner larger
+  than half the shorter side stays so); one the file stretches gets
+  round corners of its shorter scale, the stretch going into its size
+  (`document::tests::keep_corner_size_leaves_the_outline_and_takes_the_stretch`)
   (`parse::tests::rounded_rectangles_keep_their_corner_size` in the
   .cdr reader). Preferences saved by older versions, which could not store the
   choice, start with it off once.

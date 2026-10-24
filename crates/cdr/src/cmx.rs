@@ -568,7 +568,8 @@ struct PageBuild {
     open: Option<(String, Vec<Vec<Shape>>)>,
     clip_depth: usize,
     pending_image: Option<Placement>,
-    images: Vec<Option<(u32, u32, Vec<u8>)>>,
+    /// The page's images, each one copy that every placement shares.
+    images: Vec<Option<(u32, u32, tracedraw_core::SharedBytes)>>,
     text: TextState,
 }
 
@@ -1200,7 +1201,7 @@ impl Ctx {
         let mut found = Vec::new();
         walk_chunks(d, 0, d.len(), 0, &mut found);
         for c in found.iter().filter(|c| c.tag == *b"data") {
-            let image = decode_image(c.data);
+            let image = decode_image(c.data).map(|(w, h, png)| (w, h, png.into()));
             page.images.push(image.clone().ok());
             // Images that fill shapes (patterns) have no placement.
             if let Some(p) = page.pending_image.take() {
@@ -1288,14 +1289,18 @@ fn push_shape(page: &mut PageBuild, shape: Shape) {
     }
 }
 
-fn image_shape(p: Placement, (w, h, png): (u32, u32, Vec<u8>), doc: &mut Document) -> Shape {
+fn image_shape(
+    p: Placement,
+    (w, h, png): (u32, u32, tracedraw_core::SharedBytes),
+    doc: &mut Document,
+) -> Shape {
     let mut s = Shape::new(
         doc.ids_mut().shape(),
         ShapeKind::Bitmap {
             rect: p.rect,
             width_px: w,
             height_px: h,
-            png: png.into(),
+            png,
             fx: None,
         },
     );

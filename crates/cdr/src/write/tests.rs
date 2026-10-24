@@ -2749,56 +2749,32 @@ fn a_version_8_style_table_with_set11_is_read() {
     assert_eq!(eight.len(), nine.len());
 }
 
-/// A picture placed many times is one bitmap record in the file and one
-/// shared copy in the drawing read back; its pixels stay as they were.
+/// Bitmap pattern fills with the same picture are one fill record, even
+/// when each holds its own copy of the bytes (as a reopened file does);
+/// another picture is another record.
 #[test]
-fn a_picture_placed_many_times_is_written_and_read_once() {
-    let mut pm = tiny_skia::Pixmap::new(40, 30).expect("pixmap");
-    for (i, p) in pm.pixels_mut().iter_mut().enumerate() {
-        *p = tiny_skia::ColorU8::from_rgba((i * 7) as u8, (i / 3) as u8, 90, 255).premultiply();
-    }
-    let png: SharedBytes = pm.encode_png().expect("png").into();
-    let mut doc = doc_with(Vec::new());
-    let mut ids = doc.ids().clone();
-    for i in 0..5 {
-        let mut s = Shape::new(
-            ids.shape(),
-            ShapeKind::Bitmap {
-                rect: Rect::new(0.0, 0.0, 40.0, 30.0),
-                width_px: 40,
-                height_px: 30,
-                png: png.clone(),
-                fx: None,
-            },
-        );
-        s.transform = Affine::translate((i as f64 * 41.0, 0.0));
-        s.fill = Fill::None;
-        s.stroke = None;
-        doc.pages[0].layers[0].shapes.push(s);
-    }
-    let one = {
-        let mut d = doc.clone();
-        d.pages[0].layers[0].shapes.truncate(1);
-        document_to_cdr(&d).len()
-    };
-    let five = document_to_cdr(&doc);
-    // Four more objects, not four more pictures (a picture is 3.6 kB raw).
-    assert!(five.len() < one + 2000, "{} against {one}", five.len());
-    let (back, _) = crate::open_bytes(&five, "back").expect("reads back");
-    let pictures: Vec<SharedBytes> = back.pages[0].layers[0]
-        .shapes
-        .iter()
-        .filter_map(|s| match &s.kind {
-            ShapeKind::Bitmap { png, .. } => Some(png.clone()),
-            _ => None,
+fn bitmap_pattern_fills_are_matched_by_content() {
+    use tracedraw_core::style::Pattern;
+    let mut pm = tiny_skia::Pixmap::new(8, 8).expect("pixmap");
+    pm.fill(tiny_skia::Color::from_rgba8(10, 200, 30, 255));
+    let bytes = pm.encode_png().expect("png");
+    let fill = |png: SharedBytes| {
+        Fill::Pattern(Pattern::Bitmap {
+            png,
+            width_px: 8,
+            height_px: 8,
+            size_mm: 5.0,
         })
-        .collect();
-    assert_eq!(pictures.len(), 5);
-    assert!(pictures
-        .iter()
-        .all(|p| SharedBytes::ptr_eq(p, &pictures[0])));
-    let read = tiny_skia::Pixmap::decode_png(&pictures[0]).expect("decodes");
-    assert_eq!(read.data(), pm.data());
+    };
+    let doc = doc_with(Vec::new());
+    let mut w = Writer::new(Ver(NEWEST_VERSION), &doc.symbols, &doc.title);
+    let a = w.fill_id(&fill(bytes.clone().into()));
+    let b = w.fill_id(&fill(bytes.clone().into()));
+    assert_eq!(a, b);
+    pm.fill(tiny_skia::Color::from_rgba8(10, 200, 31, 255));
+    let other = w.fill_id(&fill(pm.encode_png().expect("png").into()));
+    assert_ne!(other, a);
+    assert_eq!(w.fills.len(), 2);
 }
 
 /// The reader's pictures: RGB when opaque, RGBA otherwise, rows filtered

@@ -4320,16 +4320,10 @@ pub(crate) fn build_path(pts: &[Point], types: &[u8]) -> (BezPath, bool) {
     (path, closed)
 }
 
-/// Minimal PNG encoder: 8-bit RGB when every pixel is opaque, else RGBA,
-/// each row with the Sub filter, one IDAT chunk. The rows go into a fast
-/// zlib stream: the PNG only carries the pixels inside the document, and
-/// the default level made opening files with large pictures several
-/// times slower. Unfiltered RGBA came out nearly as large as the raw
-/// pixels for photos (40 MB for a 4000 x 3000 one, 22 MB like this), and
-/// every undo step and copy of the drawing used to hold it.
 /// The pixels of `png` as the encoder's rows were before it filtered
-/// them: a zero byte, then the row's RGBA (not premultiplied), top row
-/// first. For tests.
+/// them: a zero byte, then the row's RGBA, top row first. For tests. The
+/// decoder premultiplies, so colours are exact only where a pixel is
+/// opaque (alpha is always exact).
 #[cfg(test)]
 pub(crate) fn raw_rows(png: &[u8]) -> Vec<u8> {
     let pm = tiny_skia::Pixmap::decode_png(png).expect("a png");
@@ -4344,6 +4338,13 @@ pub(crate) fn raw_rows(png: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Minimal PNG encoder: 8-bit RGB when every pixel is opaque, else RGBA,
+/// each row with the Sub filter, one IDAT chunk. The rows go into a fast
+/// zlib stream: the PNG only carries the pixels inside the document, and
+/// the default level made opening files with large pictures several
+/// times slower. Unfiltered RGBA came out nearly as large as the raw
+/// pixels for photos (40 MB for a 4000 x 3000 one, 22 MB like this), and
+/// every undo step and copy of the drawing used to hold it.
 pub(crate) fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     use std::io::Write;
     fn chunk(out: &mut Vec<u8>, tag: &[u8; 4], body: &[u8]) {
@@ -6032,6 +6033,50 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// Objects naming one bitmap record share one copy of its picture.
+    #[test]
+    fn objects_naming_one_bitmap_share_its_picture() {
+        let mut bmp = u32s(&[42]);
+        bmp.extend_from_slice(&[0; 50]);
+        bmp.extend_from_slice(&u32s(&[5, 0, 2, 2, 0, 24, 0, 16]));
+        bmp.extend_from_slice(&[0; 32]);
+        bmp.extend_from_slice(&[0, 0, 255, 0, 255, 0, 0, 0]);
+        bmp.extend_from_slice(&[255, 0, 0, 255, 255, 255, 0, 0]);
+        let mut c = i32s(&[0, 0, 254000, 254000]);
+        c.extend_from_slice(&[0; 32]);
+        c.extend_from_slice(&u32s(&[42]));
+        c.extend_from_slice(&[0; 20]);
+        c.extend_from_slice(&u32s(&[0]));
+        let obj = list(
+            b"obj ",
+            &chunk(b"loda", &loda(OBJ_BITMAP, &[(ARG_COORDS, c)])),
+        );
+        let body = [
+            chunk(b"mcfg", &mcfg(13, 2_540_000, 2_540_000)),
+            chunk(b"bmp ", &bmp),
+            list(
+                b"page",
+                &list(b"layr", &[obj.clone(), obj.clone(), obj].concat()),
+            ),
+        ]
+        .concat();
+        let (doc, rep) = parse(&riff(b"CDRD", &body), 13);
+        assert_eq!(rep.shapes, 3, "{:?}", rep.warnings);
+        let pictures: Vec<&tracedraw_core::SharedBytes> = doc.pages[0]
+            .layers
+            .iter()
+            .flat_map(|l| &l.shapes)
+            .filter_map(|s| match &s.kind {
+                ShapeKind::Bitmap { png, .. } => Some(png),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pictures.len(), 3);
+        assert!(pictures
+            .iter()
+            .all(|p| tracedraw_core::SharedBytes::ptr_eq(p, pictures[0])));
     }
 
     #[test]

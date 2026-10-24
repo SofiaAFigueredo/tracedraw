@@ -1130,20 +1130,35 @@ fn bevel(
 /// copies go with it. Left behind, the copies mirrored a move about the
 /// old centre and a scale or a turn rearranged them, as if the symmetry
 /// were still being edited. A move, a turn, a uniform scale and a mirror
-/// carry it exactly; a stretch carries the first line through it.
-pub fn carry_effects(effects: &mut [Effect], t: Affine) {
+/// carry it exactly. A stretch or a slant cannot keep the copies mirror
+/// images of the changed whole; the centre goes with it and the lines
+/// keep their angle (mirrored when `t` mirrors), so the copies stay mirror
+/// images of the changed object.
+pub fn carry_effects<'a>(effects: impl IntoIterator<Item = &'a mut Effect>, t: Affine) {
+    let [a, b, c, d, _, _] = t.as_coeffs();
+    let scale = a.hypot(b).max(c.hypot(d)).max(1e-12);
+    let near = |x: f64, y: f64| (x - y).abs() <= 1e-9 * scale;
+    // A turn and an even scale, or that and a mirror.
+    let similar = (near(a, d) && near(b, -c)) || (near(a, -d) && near(b, c));
+    let mirrors = a * d - b * c < 0.0;
     for e in effects {
         if let Effect::Symmetry { center, angle, .. } = e {
-            let c = t * *center;
-            if !(c.x.is_finite() && c.y.is_finite()) {
+            let p = t * *center;
+            if !(p.x.is_finite() && p.y.is_finite()) {
                 continue;
             }
-            let a = angle.to_radians();
-            let d = t * (*center + Vec2::new(a.cos(), a.sin())) - c;
-            if d.hypot() > 1e-12 && d.hypot().is_finite() {
-                *angle = d.y.atan2(d.x).to_degrees().rem_euclid(360.0);
+            if similar {
+                let r = angle.to_radians();
+                let dir = t * (*center + Vec2::new(r.cos(), r.sin())) - p;
+                if dir.hypot() > 1e-12 && dir.hypot().is_finite() {
+                    *angle = dir.y.atan2(dir.x).to_degrees();
+                }
+            } else if mirrors {
+                *angle = -*angle;
             }
-            *center = c;
+            // A line is the same turned half a turn.
+            *angle = angle.rem_euclid(180.0);
+            *center = p;
         }
     }
 }
@@ -1417,6 +1432,25 @@ mod tests {
                 "{b:?} {a:?}"
             );
         }
+        // Switched off, a symmetry still goes with the object, and an
+        // object taken out of a group takes the group's transform with
+        // its symmetry.
+        let mut off = s.clone();
+        off.parked_effects = vec![crate::document::ParkedEffect {
+            index: 0,
+            effect: off.effects.remove(0),
+        }];
+        off.transform_by(Affine::translate((7.0, 0.0)));
+        let Effect::Symmetry { center, .. } = off.parked_effects[0].effect else {
+            unreachable!()
+        };
+        assert!(near(center.x, 11.0), "{center:?}");
+        let mut out = s.clone();
+        out.absorb(Affine::translate((0.0, 5.0)));
+        let Effect::Symmetry { center, .. } = out.effects[0] else {
+            unreachable!()
+        };
+        assert!(near(center.y, 6.0), "{center:?}");
     }
     use crate::geometry::Rect;
 

@@ -5760,10 +5760,9 @@ fn editing_a_symmetry_a_drag_on_the_object_keeps_the_line() {
 }
 
 /// A duplicate of a finished symmetry is a whole symmetry at the offset,
-/// its line moved with it; a symmetry inside a group moved with the group
-/// is measured where it is drawn.
+/// its line moved with it.
 #[test]
-fn copies_and_groups_of_a_symmetry_take_its_line_along() {
+fn a_duplicate_of_a_symmetry_takes_its_line_along() {
     let (_ctx, mut app, id) = finished_symmetry();
     app.duplicate();
     let copy = app.selection[0];
@@ -5772,15 +5771,158 @@ fn copies_and_groups_of_a_symmetry_take_its_line_along() {
     let offy = bounds(&app, copy).y0 - bounds(&app, id).y0;
     let c = sym_center(&app, copy);
     assert!(close(c.x, 60.0 + off) && close(c.y, 25.0 + offy), "{c:?}");
-    // In a group moved 30 mm right: the symmetry's box as drawn.
-    app.select(vec![id]);
+}
+
+fn rect_at(app: &mut App, r: Rect) -> ShapeId {
+    app.new_shape(ShapeKind::Rect {
+        rect: r,
+        radius: 0.0,
+        corners: None,
+    })
+    .expect("rect")
+}
+
+/// A symmetry in a group goes with the group: its line stays put in the
+/// group (it is stored in the group's space), the group's box takes the
+/// moved copy, and ungrouping brings the line onto the page where the
+/// object now is.
+#[test]
+fn a_symmetry_in_a_group_follows_the_group_and_an_ungroup() {
+    let (_ctx, mut app, id) = finished_symmetry();
+    let other = rect_at(&mut app, Rect::new(10.0, 60.0, 20.0, 70.0));
+    app.select(vec![id, other]);
     app.group_selection();
     let g = app.selection[0];
+    assert!(g != id && app.doc().shape(id).is_err(), "inside a group");
     app.run(tracedraw_core::Command::TransformShapes {
         shapes: vec![g],
         transform: Affine::translate((30.0, 0.0)),
     });
-    let on_page = app.doc().shape_on_page(id).expect("on page");
-    let vb = on_page.visual_bounds();
+    assert!(
+        close(sym_center(&app, id).x, 60.0),
+        "stored in the group's space"
+    );
+    let group = app.doc().find_shape(g).expect("group").clone();
+    let vb = group.visual_bounds();
     assert!(close(vb.x0, 40.0) && close(vb.x1, 140.0), "{vb:?}");
+    app.select(vec![g]);
+    app.ungroup_selection();
+    assert!(app.doc().shape(id).is_ok(), "on the layer again");
+    let c = sym_center(&app, id);
+    assert!(close(c.x, 90.0) && close(c.y, 25.0), "{c:?}");
+    let vb = app.doc().find_shape(id).expect("symmetry").visual_bounds();
+    assert!(close(vb.x0, 40.0) && close(vb.x1, 140.0), "{vb:?}");
+}
+
+/// With another live effect on the object, the box measured while the
+/// symmetry was edited (the object's own, as picked) does not outlast
+/// Finish: the whole symmetry's box and handles come back at once, and a
+/// click on the copy picks it.
+#[test]
+fn after_finish_the_box_is_the_whole_symmetrys_with_other_effects_too() {
+    let (ctx, mut app, id) = setup();
+    app.add_contour();
+    app.create_symmetry();
+    assert_eq!(app.symmetry_edit, Some(id));
+    // Hover and hit tests while editing measure the object alone.
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let _ = app.hit_test(Point::new(85.0, 25.0));
+    let _ = app.selection_bounds();
+    app.finish_symmetry_edit();
+    let vb = app.selection_bounds().expect("bounds");
+    assert!(vb.x1 > 105.0, "the copy is in the box: {vb:?}");
+    app.select(Vec::new());
+    assert_eq!(app.hit_test(Point::new(85.0, 25.0)), Some(id));
+}
+
+/// While a lone object's symmetry is edited, its duplicate joins the
+/// symmetry without a symmetry of its own (it would mirror it twice).
+#[test]
+fn a_duplicate_made_while_editing_joins_without_its_own_symmetry() {
+    use tracedraw_core::live::Effect;
+    let (_ctx, mut app, id) = setup();
+    app.create_symmetry();
+    assert_eq!(app.symmetry_edit, Some(id));
+    app.duplicate();
+    let copy = app.selection[0];
+    assert_ne!(copy, id);
+    let fx = &app.doc().find_shape(copy).expect("copy").effects;
+    assert!(
+        !fx.iter().any(|e| matches!(e, Effect::Symmetry { .. })),
+        "{fx:?}"
+    );
+    let g = app.symmetry_edit.expect("still editing");
+    assert!(app
+        .doc()
+        .find_shape(g)
+        .expect("group")
+        .effects
+        .iter()
+        .any(|e| matches!(e, Effect::Symmetry { .. })));
+}
+
+/// While editing, Align leaves the mirror line where it is; out of edit
+/// mode Align moves it with the object.
+#[test]
+fn align_keeps_the_line_while_editing_and_moves_it_after() {
+    let (_ctx, mut app, id) = setup();
+    app.create_symmetry();
+    app.align(crate::ops::Align::CenterPage);
+    let moved = bounds(&app, id).x0 - 10.0;
+    assert!(moved.abs() > 1.0);
+    assert!(close(sym_center(&app, id).x, 60.0), "kept while editing");
+    app.undo();
+    assert!(close(bounds(&app, id).x0, 10.0) && close(sym_center(&app, id).x, 60.0));
+    app.finish_symmetry_edit();
+    app.align(crate::ops::Align::CenterPage);
+    let moved = bounds(&app, id).x0 - 10.0;
+    assert!(
+        close(sym_center(&app, id).x, 60.0 + moved),
+        "carried after Finish"
+    );
+}
+
+/// Joining curves rewrites the kept curve in page space without moving
+/// it: its symmetry stays where it was.
+#[test]
+fn joining_curves_leaves_a_symmetry_where_it_was() {
+    use tracedraw_core::live::Effect;
+    let (_ctx, mut app, _) = setup();
+    let line = |app: &mut App, a: (f64, f64), b: (f64, f64)| {
+        let mut p = tracedraw_core::geometry::BezPath::new();
+        p.move_to(a);
+        p.line_to(b);
+        let id = app
+            .new_shape(ShapeKind::Path {
+                path: p,
+                closed: false,
+            })
+            .expect("line");
+        app.run(tracedraw_core::Command::SetEffects {
+            shape: id,
+            effects: vec![Effect::Symmetry {
+                center: Point::new(5.0, 60.0),
+                angle: 0.0,
+                lines: 1,
+            }],
+        });
+        id
+    };
+    let a = line(&mut app, (0.0, 50.0), (10.0, 50.0));
+    let b = line(&mut app, (11.0, 50.0), (20.0, 50.0));
+    app.select(vec![a, b]);
+    app.transform_selection(Affine::translate((30.0, 0.0)));
+    assert!(close(sym_center(&app, a).x, 35.0) && close(sym_center(&app, b).x, 35.0));
+    app.join_settings.gap = 5.0;
+    app.select(vec![a, b]);
+    assert!(app.join_curves() > 0);
+    let kept = if app.doc().find_shape(a).is_some() {
+        a
+    } else {
+        b
+    };
+    let c = sym_center(&app, kept);
+    assert!(close(c.x, 35.0) && close(c.y, 60.0), "{c:?}");
 }

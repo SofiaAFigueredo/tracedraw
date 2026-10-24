@@ -2342,6 +2342,8 @@ impl Shape {
             }
         }
         self.transform = next;
+        // A symmetry's mirror lines go with the object.
+        self.carry_effects(parent);
     }
 
     /// A rectangle that one round radius describes (what formats with a
@@ -2709,16 +2711,23 @@ impl Shape {
         }
     }
 
-    /// Outline in page coordinates (transform applied).
     /// Apply `t` to the object (in the space its transform maps to): its
-    /// transform, and the places its live effects hold, such as a
-    /// symmetry's mirror lines, which go with it (see
+    /// transform, and the places its live effects hold (those switched
+    /// off too), such as a symmetry's mirror lines, which go with it (see
     /// [`crate::live::carry_effects`]).
     pub fn transform_by(&mut self, t: Affine) {
         self.transform = t * self.transform;
-        crate::live::carry_effects(&mut self.effects, t);
+        self.carry_effects(t);
     }
 
+    /// The places the object's live effects hold, those switched off too,
+    /// moved by `t` (see [`crate::live::carry_effects`]).
+    pub fn carry_effects(&mut self, t: Affine) {
+        crate::live::carry_effects(&mut self.effects, t);
+        crate::live::carry_effects(self.parked_effects.iter_mut().map(|p| &mut p.effect), t);
+    }
+
+    /// Outline in page coordinates (transform applied).
     pub fn page_path(&self) -> BezPath {
         self.transform * self.local_path()
     }
@@ -3956,7 +3965,9 @@ impl Document {
         }
         let parent = self.parent_transform(id)?;
         let mut s = self.find_shape(id)?.clone();
-        s.transform_by(parent);
+        // The effects stay as stored (in the parent's space): what reads
+        // them here writes them back to the object.
+        s.transform = parent * s.transform;
         Some(s)
     }
 

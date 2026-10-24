@@ -283,7 +283,7 @@ impl App {
             ShapeKind::Group { children } => open(children),
             ShapeKind::ClipFrame { frame, contents } => {
                 let mut f = (**frame).clone();
-                f.transform = s.transform * f.transform;
+                f.transform_by(s.transform);
                 if !f.page_path().contains(p) && !self.shape_hit(&f, p, tol) {
                     return None;
                 }
@@ -396,7 +396,7 @@ impl App {
             ShapeKind::Group { children } => children,
             ShapeKind::ClipFrame { frame, contents } => {
                 let mut f = (**frame).clone();
-                f.transform = g.transform * f.transform;
+                f.transform_by(g.transform);
                 if !f.page_path().contains(p) {
                     return Vec::new();
                 }

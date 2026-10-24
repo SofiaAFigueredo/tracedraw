@@ -24,7 +24,7 @@ pub(crate) fn export_document(app: &App, st: &ExportState) -> (Document, Rect) {
         let l = tmp.pages[0].layers[0].id;
         for s in app.selected_shapes() {
             let mut c = s.clone();
-            c.transform = Affine::translate((-bounds.x0, -bounds.y0)) * c.transform;
+            c.transform_by(Affine::translate((-bounds.x0, -bounds.y0)));
             if let Ok(layer) = tmp.layer_mut(l) {
                 layer.shapes.push(c);
             }

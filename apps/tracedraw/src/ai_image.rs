@@ -1487,7 +1487,7 @@ impl App {
                 rect,
                 width_px: img.width,
                 height_px: img.height,
-                png: img.png.clone().into(),
+                png: img.png.as_slice().into(),
                 fx: None,
             },
         );

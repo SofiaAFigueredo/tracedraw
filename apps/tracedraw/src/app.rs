@@ -6169,9 +6169,12 @@ impl App {
             return;
         }
         let mut kept = st.clone();
-        // The file's own title and tags are not choices.
+        // The file's own title and tags are not choices, and Selected only
+        // was for that selection: the next export, which may go straight to
+        // the file, starts with the whole page again.
         kept.title.clear();
         kept.tags.clear();
+        kept.selection_only = false;
         kept.preset_name = None;
         self.last_export = Some(kept);
         if self.settings.formats.remember_last {

@@ -6690,12 +6690,23 @@ fn the_export_dialog_starts_with_the_last_exports_choices() {
     st.quality = 100;
     st.dpi = 150.0;
     st.title = "Poster".into();
+    st.selection_only = true;
+    st.all_pages = true;
     app.settings.formats.remember_last = false;
     app.keep_export_choices(&st);
-    // ...is what the next export starts with, the file's title left out.
+    // ...is what the next export starts with, the file's title and
+    // Selected only left out.
     let next = ctrl_e(&ctx, &mut app);
     assert_eq!((next.format, next.quality, next.dpi), (3, 100, 150.0));
     assert!(next.title.is_empty());
+    assert!(!next.selection_only, "Selected only is for one export");
+    assert!(next.all_pages);
+    // "Do not show filter dialog" goes straight to the file with the same
+    // starting choices, so it never exports a selection that is gone.
+    assert_eq!(
+        app.last_export.as_ref().map(|e| e.selection_only),
+        Some(false)
+    );
     // With Remember off the next session still starts as the options say.
     assert_ne!(app.settings.formats.export_quality, 100);
     app.settings.formats.remember_last = true;

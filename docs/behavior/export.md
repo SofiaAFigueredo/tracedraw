@@ -68,10 +68,11 @@ writes the lossless way (#592, `export::tests::webp_quality_shrinks_the_file`).
 
 ## Starting choices
 
-File > Export starts with the choices of the last export of the session,
-else those of Options > Global > File Formats, which keep the last
+File > Export starts with the choices of the last export of the session
+(Selected only off again, the file's title and tags empty), else those
+of Options > Global > File Formats, which keep the last
 export's choices for the next session while Remember the settings of the
-last export is on (on at first; `options.md`, #617).
+last export is on (on in new preferences; `options.md`, #617).
 
 ## Checks
 

@@ -102,9 +102,12 @@ WebP quality (90, 1 to 100), Transparent background (on), the PDF
 standard (PDF 1.4), the PDF/X output condition (FOGRA39, at most 64
 characters) and the PDF bleed (0 mm, 0 to 50). Within a session File >
 Export always starts with the choices of the last export (format,
-resolution, quality, transparency, WebP lossless, selection, pages, PDF
-choices and preset; not the file's title and tags). Remember the
-settings of the last export (on): exporting also keeps the format,
+resolution, quality, transparency, WebP lossless, all pages, PDF choices
+and preset; not Selected only, which starts off again, nor the file's
+title and tags), which then take the place of the ones set here until
+the program is closed. Remember the
+settings of the last export (on in new preferences; preferences saved
+before keep their own value): exporting also keeps the format,
 resolution, quality, transparency, WebP lossless and PDF choices here
 for the next session (#617). Export for Web and Export for Office keep
 their own presets and never change these

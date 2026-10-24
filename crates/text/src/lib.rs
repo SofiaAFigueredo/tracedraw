@@ -77,7 +77,8 @@ pub fn install() {
             .map(|l| tracedraw_core::document::text_outline::Line {
                 start_char: l.start_char,
                 end_char: l.end_char,
-                x: l.edges.first().copied().unwrap_or(0.0),
+                // The left end, the end of right-to-left text too.
+                x: l.x_range().0,
                 baseline: l.baseline,
                 ascent: l.ascent,
                 descent: l.descent,
@@ -696,6 +697,11 @@ struct Glyph {
     ch: char,
     /// Index of that character in the concatenated span text.
     char_idx: usize,
+    /// One past the last character of its cluster.
+    char_end: usize,
+    /// Shaped right to left: its cluster's first character is at its
+    /// right end.
+    rtl: bool,
     span: usize,
     /// Width of a trailing hyphen if the line breaks after this glyph.
     hyphen_after: Option<Arc<HyphenGlyph>>,
@@ -813,13 +819,27 @@ pub struct LineBox {
     pub ascent: f64,
     pub descent: f64,
     /// Pen x before each character from `start_char` to `end_char`, then
-    /// after the last one: `end_char - start_char + 1` entries.
+    /// after the last one: `end_char - start_char + 1` entries. The caret
+    /// sits there; before a right-to-left character it is the right end.
     pub edges: Vec<f64>,
     /// The left x of each character's own glyph (a share of it for a
     /// cluster), `end_char - start_char` entries. Unlike `edges` it holds
     /// in right-to-left text too, where the glyphs run the other way and
     /// one character's end is not the next one's start (#474).
     pub starts: Vec<f64>,
+    /// The right x of each character's own glyph, `end_char - start_char`
+    /// entries: with `starts`, the stretch a selection highlights.
+    pub ends: Vec<f64>,
+}
+
+impl LineBox {
+    /// The left and right ends of the line's carets: right-to-left text
+    /// runs its edges the other way.
+    pub fn x_range(&self) -> (f64, f64) {
+        let a = self.edges.iter().copied().reduce(f64::min).unwrap_or(0.0);
+        let b = self.edges.iter().copied().reduce(f64::max).unwrap_or(a);
+        (a, b)
+    }
 }
 
 impl TextLayout {
@@ -846,9 +866,7 @@ impl TextLayout {
     /// `p.x`) and the nearest character edge on that line.
     pub fn hit_char(&self, p: Point) -> Option<usize> {
         let x_gap = |l: &LineBox| {
-            let a = l.edges.first().copied().unwrap_or(0.0);
-            let b = l.edges.last().copied().unwrap_or(a);
-            let (a, b) = (a.min(b), a.max(b));
+            let (a, b) = l.x_range();
             if p.x < a {
                 a - p.x
             } else if p.x > b {
@@ -2036,6 +2054,7 @@ impl FontSystem {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(text);
         buffer.guess_segment_properties();
+        let rtl = buffer.direction() == rustybuzz::Direction::RightToLeft;
         let glyphs = rustybuzz::shape(&hb, &features, buffer);
         let infos = glyphs.glyph_infos();
         let positions = glyphs.glyph_positions();
@@ -2086,16 +2105,16 @@ impl FontSystem {
                 gp = a * gp;
             }
             let start = info.cluster as usize;
+            let cluster_end = starts
+                .iter()
+                .copied()
+                .find(|c| *c > start)
+                .unwrap_or(text.len());
             let cluster_text = if claimed.contains(&start) {
                 String::new()
             } else {
                 claimed.push(start);
-                let end = starts
-                    .iter()
-                    .copied()
-                    .find(|c| *c > start)
-                    .unwrap_or(text.len());
-                text.get(start..end).unwrap_or("").to_string()
+                text.get(start..cluster_end).unwrap_or("").to_string()
             };
             let mut local = Affine::translate((0.0, baseline)) * Affine::scale(size_mm);
             if synth_italic {
@@ -2127,6 +2146,8 @@ impl FontSystem {
                 y_offset: pos.y_offset as f64 * scale,
                 ch,
                 char_idx: char_base + cluster.unwrap_or(0),
+                char_end: char_base + chars.partition_point(|(i, _)| *i < cluster_end),
+                rtl,
                 span: span_idx,
                 hyphen_after: hyphen_glyph.clone(),
                 src: Some(src),
@@ -2241,6 +2262,8 @@ impl FontSystem {
                                 y_offset: 0.0,
                                 ch: '\t',
                                 char_idx,
+                                char_end: char_idx + 1,
+                                rtl: false,
                                 span: si,
                                 hyphen_after: None,
                                 src: None,
@@ -2661,26 +2684,43 @@ impl FontSystem {
             // share their glyph's advance evenly.
             let mut edges: Vec<f64> = vec![line_start; n_chars + 1];
             let mut starts: Vec<Option<f64>> = vec![None; n_chars];
-            let mut record = |from: usize, to: usize, x0: f64, x1: f64| {
+            let mut ends: Vec<Option<f64>> = vec![None; n_chars];
+            // Right-to-left characters run from x1 to x0: the pen before
+            // one is at its right end (#629).
+            let mut record = |from: usize, to: usize, x0: f64, x1: f64, rtl: bool| {
                 let from = from.max(line.start_char);
                 let to = to.min(end_char);
                 if to <= from {
                     return;
                 }
                 let n = (to - from) as f64;
+                let (a, b) = if rtl { (x1, x0) } else { (x0, x1) };
                 for (k, c) in (from..to).enumerate() {
-                    let x = x0 + (x1 - x0) * k as f64 / n;
-                    if let Some(e) = edges.get_mut(c - line.start_char) {
+                    let x = a + (b - a) * k as f64 / n;
+                    let next = a + (b - a) * (k + 1) as f64 / n;
+                    let i = c - line.start_char;
+                    if let Some(e) = edges.get_mut(i) {
                         *e = x;
                     }
-                    if let Some(s) = starts.get_mut(c - line.start_char) {
-                        s.get_or_insert(x);
+                    if let Some(s) = starts.get_mut(i) {
+                        if rtl {
+                            *s = Some(next);
+                        } else {
+                            s.get_or_insert(x);
+                        }
+                    }
+                    if let Some(e) = ends.get_mut(i) {
+                        *e = Some(x.max(next));
                     }
                 }
                 if let Some(e) = edges.get_mut(to - line.start_char) {
-                    *e = x1;
+                    *e = b;
                 }
             };
+            // The first pen x of the right-to-left cluster being placed,
+            // so the glyphs of one cluster (a letter and its marks) count
+            // as one.
+            let mut rtl_cluster: Option<(usize, f64)> = None;
             for (gi, g) in glyphs.iter().enumerate() {
                 let next_idx = glyphs
                     .get(gi + 1)
@@ -2692,7 +2732,7 @@ impl FontSystem {
                     let next = next_tab(rel, &ps.tabs);
                     let before = pen;
                     pen = col_start + next;
-                    record(g.char_idx, next_idx, before, pen);
+                    record(g.char_idx, next_idx, before, pen, false);
                     continue;
                 }
                 if span_drawn(g.span) {
@@ -2712,7 +2752,17 @@ impl FontSystem {
                         _ => underline_runs.push((g.span, pen, pen + adv)),
                     }
                 }
-                record(g.char_idx, next_idx, pen, pen + adv);
+                if g.rtl {
+                    let x0 = match rtl_cluster {
+                        Some((c, x0)) if c == g.char_idx => x0,
+                        _ => pen,
+                    };
+                    rtl_cluster = Some((g.char_idx, x0));
+                    record(g.char_idx, g.char_end, x0, pen + adv, true);
+                } else {
+                    rtl_cluster = None;
+                    record(g.char_idx, next_idx, pen, pen + adv, false);
+                }
                 pen += adv;
                 glyph_count += 1;
             }
@@ -2720,6 +2770,11 @@ impl FontSystem {
                 .iter()
                 .zip(&edges)
                 .map(|(s, e)| s.unwrap_or(*e))
+                .collect();
+            let ends: Vec<f64> = ends
+                .iter()
+                .zip(&starts)
+                .map(|(e, s)| e.unwrap_or(*s))
                 .collect();
             line_boxes.push(LineBox {
                 start_char: line.start_char,
@@ -2729,6 +2784,7 @@ impl FontSystem {
                 descent: m.descent,
                 edges,
                 starts,
+                ends,
             });
             if let Some(h) = &line.hyphen {
                 if line.glyphs.last().is_none_or(|g| span_drawn(g.span)) {
@@ -3317,6 +3373,56 @@ mod tests {
         {
             assert_eq!(script_runs(whole), vec![0..whole.len()], "{whole}");
         }
+    }
+
+    /// In right-to-left text the caret before each letter is at the
+    /// letter's right end, the end of the text at its left, and each letter
+    /// covers its own glyph (#629).
+    #[test]
+    fn right_to_left_carets_run_from_the_right() {
+        if !has_fonts() {
+            return;
+        }
+        let l = fonts().layout(&TextRequest {
+            spans: &[span("\u{645}\u{631}\u{62D}\u{628}\u{627}")],
+            frame: None,
+            align: TextAlign::Left,
+            para: &ParagraphStyle::default(),
+            on_path: None,
+        });
+        if l.glyphs == 0 {
+            return;
+        }
+        let line = &l.lines[0];
+        assert_eq!(line.edges.len(), 6);
+        assert!(
+            line.edges.windows(2).all(|w| w[1] < w[0]),
+            "{:?}",
+            line.edges
+        );
+        let right = l.path.bounding_box().x1;
+        assert!(line.edges[0] >= right - 0.5, "{:?} {right}", line.edges);
+        assert!(line.edges[5].abs() < 1e-6, "{:?}", line.edges);
+        for i in 0..5 {
+            assert!((line.starts[i] - line.edges[i + 1]).abs() < 1e-9);
+            assert!((line.ends[i] - line.edges[i]).abs() < 1e-9);
+        }
+        // Left-to-right text as before.
+        let l = fonts().layout(&TextRequest {
+            spans: &[span("abc")],
+            frame: None,
+            align: TextAlign::Left,
+            para: &ParagraphStyle::default(),
+            on_path: None,
+        });
+        let line = &l.lines[0];
+        assert!(
+            line.edges.windows(2).all(|w| w[1] > w[0]),
+            "{:?}",
+            line.edges
+        );
+        assert_eq!(line.starts[..], line.edges[..3]);
+        assert_eq!(line.ends[..], line.edges[1..]);
     }
 
     fn span(text: &str) -> TextSpan {

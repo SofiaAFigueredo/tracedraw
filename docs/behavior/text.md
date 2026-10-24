@@ -167,6 +167,7 @@ concatenated spans; the layout's line boxes give its place on the page.
 | Up / Down | the same x on the previous / next line (the x is remembered across moves) |
 | Home / End, Ctrl+Home / End | line start / end, text start / end |
 | Ctrl+A | select all |
+| Right-to-left text (Arabic, Hebrew) | the caret before a letter is at its right end and the end of the text at its left; a selection shades the letters it holds, all of them after Ctrl+A, where it used to shade only the first letter (#629, `tracedraw_text::tests::right_to_left_carets_run_from_the_right`, `pick_drag_tests::select_all_in_right_to_left_text_highlights_all_of_it`) |
 | Ctrl+B / I / U | toggle bold, italic, underline on the selection, or on the whole text without one |
 | Ctrl+C / X / V | copy, cut, paste the selected characters |
 | Click / Shift+click / drag | place the caret / extend / select |

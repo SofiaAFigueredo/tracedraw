@@ -876,20 +876,40 @@ fn caret_geometry_sized(
             if s > e || (s == e && !(a < line.start_char && b > line.end_char)) {
                 continue;
             }
-            let x0 = line.edges.get(s - line.start_char).copied().unwrap_or(0.0);
-            let x1 = line.edges.get(e - line.start_char).copied().unwrap_or(x0);
-            let r = Rect::new(
-                x0,
-                line.baseline - line.descent,
-                x1.max(x0 + 0.3),
-                line.baseline + line.ascent,
-            );
-            quads.push([
-                *to_page * Point::new(r.x0, r.y0),
-                *to_page * Point::new(r.x1, r.y0),
-                *to_page * Point::new(r.x1, r.y1),
-                *to_page * Point::new(r.x0, r.y1),
-            ]);
+            // The stretches the selected characters cover: one for plain
+            // text, from the right for right-to-left text (#629), several
+            // where the directions mix.
+            let mut runs: Vec<(f64, f64)> = Vec::new();
+            for i in s - line.start_char..e - line.start_char {
+                let (Some(&x0), Some(&x1)) = (line.starts.get(i), line.ends.get(i)) else {
+                    continue;
+                };
+                match runs.last_mut() {
+                    Some(r) if x0 <= r.1 + 1e-6 && x1 >= r.0 - 1e-6 => {
+                        *r = (r.0.min(x0), r.1.max(x1));
+                    }
+                    _ => runs.push((x0.min(x1), x0.max(x1))),
+                }
+            }
+            if runs.is_empty() {
+                // A line with nothing on it inside the selection.
+                let x0 = line.edges.get(s - line.start_char).copied().unwrap_or(0.0);
+                runs.push((x0, x0));
+            }
+            for (x0, x1) in runs {
+                let r = Rect::new(
+                    x0,
+                    line.baseline - line.descent,
+                    x1.max(x0 + 0.3),
+                    line.baseline + line.ascent,
+                );
+                quads.push([
+                    *to_page * Point::new(r.x0, r.y0),
+                    *to_page * Point::new(r.x1, r.y0),
+                    *to_page * Point::new(r.x1, r.y1),
+                    *to_page * Point::new(r.x0, r.y1),
+                ]);
+            }
         }
     }
     Some((top, bottom, quads))

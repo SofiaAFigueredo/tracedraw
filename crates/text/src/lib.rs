@@ -83,6 +83,8 @@ pub fn install() {
                 ascent: l.ascent,
                 descent: l.descent,
                 edges: l.edges.clone(),
+                starts: l.starts.clone(),
+                ends: l.ends.clone(),
             })
             .collect()
     });

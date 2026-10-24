@@ -99,11 +99,19 @@ fn colors_of(app: &App, which: Row) -> Vec<(String, Color)> {
     match which {
         // An RGB drawing gets the palette's colours as RGB, so what it
         // applies is RGB too; spot inks and registration stay (#483).
-        Row::Main if rgb_drawing(app) => app
-            .palette
-            .iter()
-            .map(|(n, c)| (n.clone(), in_rgb(*c)))
-            .collect(),
+        // The default palette's colours take the RGB default palette's
+        // values, defined directly (#620); other colours their inks as RGB.
+        Row::Main if rgb_drawing(app) => {
+            let (cmyk, rgb) = &*DEFAULTS;
+            app.palette
+                .iter()
+                .enumerate()
+                .map(|(i, (n, c))| match (cmyk.get(i), rgb.get(i)) {
+                    (Some((dn, dc)), Some(r)) if dn == n && dc == c => r.clone(),
+                    _ => (n.clone(), in_rgb(*c)),
+                })
+                .collect()
+        }
         Row::Main => app.palette.clone(),
         Row::Document => app
             .doc()
@@ -114,6 +122,16 @@ fn colors_of(app: &App, which: Row) -> Vec<(String, Color)> {
     }
 }
 
+/// The default CMYK palette and the RGB one it shows as in an RGB drawing,
+/// slot for slot.
+type Defaults = (Vec<(String, Color)>, Vec<(String, Color)>);
+static DEFAULTS: std::sync::LazyLock<Defaults> = std::sync::LazyLock::new(|| {
+    (
+        crate::palette::default_cmyk(),
+        crate::palette::default_rgb(),
+    )
+});
+
 /// Whether the drawing's primary colour mode is RGB.
 fn rgb_drawing(app: &App) -> bool {
     app.has_document()
@@ -121,14 +139,15 @@ fn rgb_drawing(app: &App) -> bool {
 }
 
 /// `c` as an RGB colour, a spot ink or registration as it is. A CMYK
-/// colour takes the plain RGB of its inks, not the press simulation, so
-/// the palette's black is 0 0 0, its red 255 0 0 and its tints the
-/// matching RGB tints (#620).
+/// colour takes the plain RGB of its inks, not the press simulation: each
+/// channel is 255 (1 - min(1, ink + K)), so the palette's black is 0 0 0,
+/// its red 255 0 0, its tints the matching RGB tints and C20 M80 K20
+/// 153 0 204 (#620).
 fn in_rgb(c: Color) -> Color {
     match c {
         Color::Spot { .. } | Color::Registration => c,
         Color::Cmyk { c, m, y, k } => {
-            let ink = |v: f32| (1.0 - v.clamp(0.0, 1.0)) * (1.0 - k.clamp(0.0, 1.0));
+            let ink = |v: f32| 1.0 - (v.clamp(0.0, 1.0) + k.clamp(0.0, 1.0)).min(1.0);
             let byte = |v: f32| (ink(v) * 255.0).round() as u8;
             Color::rgb8(byte(c), byte(m), byte(y))
         }
@@ -1479,6 +1498,46 @@ mod tests {
         assert_eq!(of("Magenta"), Color::rgb8(255, 0, 255));
         assert_eq!(of("Orange"), Color::rgb8(255, 102, 0));
         assert!(rgb.iter().all(|(_, c)| c.model_name() == "RGB"));
+        // Swatches of the reference RGB palette (#620): the colours with
+        // black in them are clean RGB values too.
+        assert_eq!(of("Navy Blue"), Color::rgb8(0, 51, 153));
+        assert_eq!(of("Purple"), Color::rgb8(153, 0, 204));
+        assert_eq!(of("Dark Brown"), Color::rgb8(102, 51, 51));
+        assert_eq!(of("Ruby Red"), Color::rgb8(153, 0, 0));
+        assert_eq!(of("Twilight Blue"), Color::rgb8(102, 102, 204));
+        assert_eq!(of("Forest Green"), Color::rgb8(0, 102, 51));
+        assert_eq!(of("Walnut"), Color::rgb8(102, 51, 0));
+        assert_eq!(of("90% Black"), Color::rgb8(26, 26, 26));
+        assert_eq!(of("Crimson"), Color::rgb8(153, 51, 102));
+        assert_eq!(of("Plum"), Color::rgb8(102, 0, 102));
+        assert_eq!(of("Deep Blue"), Color::rgb8(51, 0, 204));
+        // Every channel is a multiple of 51 or a 10% grey.
+        for (n, c) in &rgb {
+            let [r, g, b] = c.to_rgb8();
+            let grey = r == g && g == b;
+            assert!(
+                grey || [r, g, b].iter().all(|v| v % 51 == 0),
+                "{n}: {r} {g} {b}"
+            );
+        }
+    }
+
+    /// A CMYK colour outside the default palette takes 255 (1 - min(1,
+    /// ink + K)) per channel in an RGB drawing (#620).
+    #[test]
+    fn inks_with_black_become_rgb_by_adding_the_black() {
+        assert_eq!(
+            in_rgb(Color::cmyk_pct(60.0, 40.0, 0.0, 40.0)),
+            Color::rgb8(0, 51, 153)
+        );
+        assert_eq!(
+            in_rgb(Color::cmyk_pct(0.0, 20.0, 20.0, 60.0)),
+            Color::rgb8(102, 51, 51)
+        );
+        assert_eq!(
+            in_rgb(Color::cmyk_pct(0.0, 0.0, 0.0, 100.0)),
+            Color::rgb8(0, 0, 0)
+        );
     }
 
     #[test]

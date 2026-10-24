@@ -314,6 +314,17 @@ pub fn split_weight(family: &str) -> Option<(&str, u16)> {
         .map(|w| (head2, w))
 }
 
+/// The weight text in `family` is drawn at: the weight the family's
+/// name ends in ("Lato Black" 900), else 400; bold text at least 700.
+pub fn target_weight(family: &str, bold: bool) -> u16 {
+    let named = split_weight(family).map_or(400, |(_, w)| w);
+    if bold {
+        named.max(700)
+    } else {
+        named
+    }
+}
+
 /// The legacy family names (name ID 1) a face's name table gives that
 /// differ from the families fontdb lists for it (the typographic family,
 /// name ID 16): "Arial Narrow" for a face fontdb files under "Arial".
@@ -441,15 +452,16 @@ fn embedding_allowed(face: &ttf_parser::Face) -> bool {
     !restricted && !bitmap_only
 }
 
-/// Choose the instance of a variable font: weight 700 for bold text and
-/// 400 otherwise (within the font's range), and its italic or slant axis
+/// Choose the instance of a variable font: the text's weight (see
+/// [`target_weight`]: 700 for bold text, 400 for regular, the weight a
+/// family name ends in; within the font's range), and its italic or slant axis
 /// for italic text when the face is upright. Returns the weight and
 /// whether the letters slant, which decide the synthetic styles, and the
 /// axis values set (empty for a static font).
 fn set_axes(
     face: &mut ttf_parser::Face,
     hb: &mut rustybuzz::Face,
-    bold: bool,
+    target: u16,
     italic: bool,
 ) -> (u16, bool, Vec<([u8; 4], f32)>) {
     let mut weight = face.weight().to_number();
@@ -463,7 +475,7 @@ fn set_axes(
         let hi = axis.max_value.max(axis.min_value);
         match &axis.tag.to_bytes() {
             b"wght" => {
-                let v = if bold { 700.0f32 } else { 400.0 }.clamp(lo, hi);
+                let v = f32::from(target).clamp(lo, hi);
                 set.push(rustybuzz::Variation {
                     tag: axis.tag,
                     value: v,
@@ -1121,7 +1133,13 @@ impl FontSystem {
         {
             return;
         }
-        for name in std::iter::once(family).chain(substitutes(family)) {
+        // A family named with its weight ("Titillium Web SemiBold") is
+        // fetched as its family, and stands in as that family would.
+        let base = split_weight(family).map(|(b, _)| b);
+        let names = std::iter::once(family)
+            .chain(base)
+            .chain(substitutes(base.unwrap_or(family)));
+        for name in names {
             if self.has_family(name) || self.request_offered(name) {
                 return;
             }
@@ -1618,11 +1636,7 @@ impl FontSystem {
     /// [`substitutes`]), else a sans-serif, else anything.
     fn face_for(&self, family: &str, bold: bool, italic: bool) -> Option<fontdb::ID> {
         self.ask_for(family);
-        let weight = if bold {
-            fontdb::Weight::BOLD
-        } else {
-            fontdb::Weight::NORMAL
-        };
+        let weight = fontdb::Weight(target_weight(family, bold));
         let style = if italic {
             fontdb::Style::Italic
         } else {
@@ -1644,8 +1658,8 @@ impl FontSystem {
         // A family named with its weight ("Titillium Web SemiBold") whose
         // faces are not listed under that name: the face of the family
         // nearest that weight (bold text at least bold).
-        if let Some((base, w)) = split_weight(family) {
-            let weight = fontdb::Weight(if bold { w.max(700) } else { w });
+        let base = split_weight(family).map(|(b, _)| b);
+        if let Some(base) = base {
             let q = fontdb::Query {
                 families: &[fontdb::Family::Name(base)],
                 weight,
@@ -1659,7 +1673,7 @@ impl FontSystem {
                 return Some(id);
             }
         }
-        let mut fams: Vec<fontdb::Family> = substitutes(family)
+        let mut fams: Vec<fontdb::Family> = substitutes(base.unwrap_or(family))
             .into_iter()
             .map(fontdb::Family::Name)
             .collect();
@@ -2045,7 +2059,8 @@ impl FontSystem {
         let Some(mut hb) = rustybuzz::Face::from_slice(&data, index) else {
             return out;
         };
-        let (weight, slanted, coords) = set_axes(&mut face, &mut hb, span.bold, span.italic);
+        let target = target_weight(&span.font_family, span.bold);
+        let (weight, slanted, coords) = set_axes(&mut face, &mut hb, target, span.italic);
         let font = tracedraw_core::document::text_outline::GlyphFont {
             data: data.clone(),
             index,
@@ -2054,7 +2069,8 @@ impl FontSystem {
         let size_pt = span.size_pt * size_scale;
         let upem = face.units_per_em() as f64;
         let scale = size_pt * PT_MM / upem;
-        let synth_bold = span.bold && weight < 600;
+        // A heavy weight the face lacks is drawn thicker.
+        let synth_bold = target >= 600 && weight < 600;
         let synth_italic = span.italic && !slanted;
         let tracking = span.tracking_pct / 100.0 * size_pt * PT_MM;
         let baseline = span.baseline_shift_pt * PT_MM;
@@ -4461,7 +4477,55 @@ mod tests {
         let a = f.outline(&[TextSpan::new("Hello", "Quicksand Light", 24.0)]);
         let b = f.outline(&[TextSpan::new("Hello", "Quicksand", 24.0)]);
         assert_eq!(a.path.elements().len(), b.path.elements().len());
-        assert!((a.bounds.width() - b.bounds.width()).abs() < 1e-9);
+        // The same font, at the weight its name says: Light is 300 on
+        // the weight axis, narrower than the regular 400 (#624).
+        assert!(a.bounds.width() < b.bounds.width() - 0.01);
+    }
+
+    /// A family named with its weight keeps that weight where no face of
+    /// that name is installed (#624): on a variable font's weight axis,
+    /// as a thickened regular face, in a stand-in, and when fetching.
+    #[test]
+    fn a_weight_in_the_family_name_reaches_every_way_of_drawing() {
+        let advance = |l: &TextLayout| l.lines[0].edges.last().copied().unwrap_or(0.0);
+        let em = 100.0 * PT_MM;
+        // The variable font at 600: between its 400 and 700 widths
+        // (2339 and 2463 units of 1000 for "Hello").
+        let f = system_with(&[QUICKSAND]);
+        let semi = f.outline(&[TextSpan::new("Hello", "Quicksand SemiBold", 100.0)]);
+        let w = advance(&semi) / em;
+        assert!(w > 2.36 && w < 2.45, "{w}");
+        // Only a regular face: a black weight is thickened as bold is.
+        let g = system_with(&[SELAWIK]);
+        let mut bold = TextSpan::new("Hello", "Selawik", 100.0);
+        bold.bold = true;
+        let black = g.outline(&[TextSpan::new("Hello", "Selawik Black", 100.0)]);
+        let thick = g.outline(&[bold]);
+        assert_eq!(black.path.elements().len(), thick.path.elements().len());
+        let plain = g.outline(&[TextSpan::new("Hello", "Selawik", 100.0)]);
+        assert_ne!(black.path.elements().len(), plain.path.elements().len());
+        // A missing family's stand-in at the weight: the same as bold
+        // text in the plain family name gets.
+        const SELAWIK_BOLD: &[u8] =
+            include_bytes!("../../../apps/tracedraw/assets/fonts/Selawik-Bold.ttf");
+        let h = system_with(&[SELAWIK, SELAWIK_BOLD]);
+        assert_eq!(
+            h.face_for("Segoe UI SemiBold", false, false),
+            h.face_for("Segoe UI", true, false),
+            "Selawik's bold stands in"
+        );
+        assert_ne!(
+            h.face_for("Segoe UI SemiBold", false, false),
+            h.face_for("Segoe UI", false, false)
+        );
+        // Fetching: the family is asked for, not the name with the weight.
+        let k = system_with(&[]);
+        k.offer_families(&["Quicksand".into()]);
+        let _ = k.outline(&[TextSpan::new("Hello", "Quicksand SemiBold", 24.0)]);
+        assert_eq!(k.take_font_requests(), ["Quicksand"]);
+        assert_eq!(target_weight("Lato Black", false), 900);
+        assert_eq!(target_weight("Lato Light", true), 700);
+        assert_eq!(target_weight("Lato", false), 400);
     }
 
     #[test]

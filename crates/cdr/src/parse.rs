@@ -97,6 +97,51 @@ const WEIGHT_NAMES: [(u16, &str); 7] = [
     (900, "Black"),
 ];
 
+/// Weight names a family name can end in, run together and in lower
+/// case, with their weights (the text engine reads the same names).
+const NAMED_WEIGHTS: [(&str, u16); 12] = [
+    ("thin", 100),
+    ("hairline", 100),
+    ("extralight", 200),
+    ("ultralight", 200),
+    ("light", 300),
+    ("medium", 500),
+    ("semibold", 600),
+    ("demibold", 600),
+    ("extrabold", 800),
+    ("ultrabold", 800),
+    ("black", 900),
+    ("heavy", 900),
+];
+
+/// A family name ending in a weight name (the last word, or the last two
+/// run together), split into the family and the weight: "Titillium Web
+/// SemiBold" is ("Titillium Web", 600).
+pub(crate) fn family_weight(family: &str) -> Option<(&str, u16)> {
+    let weight_of = |words: &[&str]| {
+        let key: String = words
+            .iter()
+            .flat_map(|w| w.chars())
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        NAMED_WEIGHTS
+            .iter()
+            .find(|(n, _)| *n == key)
+            .map(|(_, w)| *w)
+    };
+    let (head, last) = family.trim_end().rsplit_once(' ')?;
+    let head = head.trim_end();
+    if let Some(w) = weight_of(&[last]).filter(|_| !head.is_empty()) {
+        return Some((head, w));
+    }
+    let (head2, prev) = head.rsplit_once(' ')?;
+    let head2 = head2.trim_end();
+    weight_of(&[prev, last])
+        .filter(|_| !head2.is_empty())
+        .map(|w| (head2, w))
+}
+
 /// A span set in a face of a weight between or beyond regular and bold
 /// (a semibold, a light): the family takes the weight's name and the
 /// span is not bold, so the text draws with that face rather than the
@@ -106,17 +151,8 @@ fn name_weight(span: &mut TextSpan, weight: Option<u16>) {
     let Some(&(_, name)) = weight.and_then(|w| WEIGHT_NAMES.iter().find(|(n, _)| *n == w)) else {
         return;
     };
-    let key: String = span
-        .font_family
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    let named = [
-        "thin", "light", "medium", "semibold", "demibold", "bold", "black", "heavy",
-    ]
-    .iter()
-    .any(|w| key.ends_with(w));
+    let named = family_weight(&span.font_family).is_some()
+        || span.font_family.to_ascii_lowercase().ends_with("bold");
     if !named {
         span.font_family = format!("{} {name}", span.font_family.trim_end());
         span.bold = false;

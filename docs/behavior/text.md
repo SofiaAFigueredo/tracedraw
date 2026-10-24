@@ -560,7 +560,12 @@ legacy name picks the face of that name nearest the text's weight and
 style. A family name ending in a weight ("Titillium Web SemiBold",
 "Lato Light", "Semi Bold" written apart too) that no font lists is
 drawn with the family's face nearest that weight, and is not reported
-missing.
+missing. The weight in the name carries on everywhere: a variable font
+draws at it on its weight axis ("Quicksand Light" at 300), a family
+with only a regular face draws a weight from 600 up thickened as bold
+text is, a missing family's stand-in is the one for the family without
+the weight at that weight ("Segoe UI SemiBold" in Selawik Bold), and in
+the browser the family itself is fetched.
 
 A .cdr run set in a face between or beyond regular and bold (thin,
 extra light, light, medium, semibold, extra bold, black) opens as that
@@ -614,7 +619,7 @@ and showed its half forms with a visible halant and its conjuncts apart
 (#599, `tests::text_is_shaped_one_script_at_a_time`). Text with Hebrew
 or Arabic letters is shaped as one run.
 
-Variable fonts draw at weight 400, or 700 for bold, on their weight
+Variable fonts draw at weight 400, 700 for bold or the weight a family name ends in, on their weight
 axis (within its range), and slant on their italic or slant axis for
 italic when the face is upright; only what no axis gives is made
 synthetically (bold by drawing the letters twice, italic by slanting
@@ -717,6 +722,8 @@ stand-in next to each missing family: "Arial (Liberation Sans)".
 - `tests::fonts_are_found_by_their_legacy_family_names`,
   `tests::family_names_ending_in_a_weight_split`,
   `tests::a_family_named_with_its_weight_draws_with_the_nearest_face`,
+  `tests::a_weight_in_the_family_name_reaches_every_way_of_drawing`,
+  the .cdr writer's `write::tests::faces_named_with_their_weight_round_trip`,
   `tests::a_drawing_brings_every_face_of_a_family`, the .cdr reader's
   `parse::tests::semibold_runs_keep_their_face` and
   `text::tests::style_string_weights_are_style_codes`,

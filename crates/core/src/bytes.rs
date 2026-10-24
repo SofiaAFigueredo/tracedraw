@@ -25,7 +25,9 @@ impl SharedBytes {
         &self.0
     }
 
-    /// The address of the shared allocation, a key for caches.
+    /// The address of the shared allocation, a key for caches. Once every
+    /// clone is gone the address can be reused by other bytes, so a cache
+    /// that outlives the value it was keyed from must keep a clone of it.
     pub fn addr(&self) -> usize {
         self.0.as_ptr() as usize
     }

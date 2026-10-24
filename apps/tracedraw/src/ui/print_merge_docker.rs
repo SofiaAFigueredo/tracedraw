@@ -147,7 +147,7 @@ impl App {
                     rect: crate::print_merge::place(rect, p.mm.0, p.mm.1, d.scale, d.anchor),
                     width_px: p.px.0,
                     height_px: p.px.1,
-                    png: p.png.into(),
+                    png: p.png,
                     fx: None,
                 },
             );
@@ -255,7 +255,7 @@ impl App {
                         ),
                         width_px: p.px.0,
                         height_px: p.px.1,
-                        png: p.png.clone().into(),
+                        png: p.png.clone(),
                         fx: None,
                     },
                 );
@@ -377,7 +377,7 @@ impl App {
                         ),
                         width_px: p.px.0,
                         height_px: p.px.1,
-                        png: p.png.clone().into(),
+                        png: p.png.clone(),
                         fx: None,
                     },
                 );

@@ -65,7 +65,7 @@ pub fn selected_bitmap(app: &App) -> Option<(ShapeId, f32, tracedraw_core::Share
         }
         let (png, w, _, rect) = app.vector_base_cached(s)?;
         let mm = rect.width().abs().max(1e-6);
-        Some((s.id, (w as f64 / (mm / 25.4)) as f32, png.into()))
+        Some((s.id, (w as f64 / (mm / 25.4)) as f32, png))
     })
 }
 

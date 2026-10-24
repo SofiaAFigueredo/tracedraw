@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- What is being drawn shows over a black or dark fill: a freehand stroke, a polyline, 2-point line, B-spline or 3-point curve in progress and the 3-point tools' base line are a black hairline on a white line, the Bezier and Pen segments placed so far lie on a white line under their outline colour, and the zoom, text frame and rubber band boxes are on a white line too (#672).
+
 - `CONTRIBUTORS.md` lists the people who contributed code, with what each contributed, also those whose commits were recorded under another name; the README links it.
 
 - The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).

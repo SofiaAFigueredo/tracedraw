@@ -6621,3 +6621,98 @@ fn an_idle_window_asks_for_no_frame() {
         );
     }
 }
+
+/// Over a black fill, what is being drawn shows (#672): a freehand stroke
+/// and a polyline in progress are black lines on white ones, and the
+/// Bezier tool's placed segments, in the black outline they will get, lie
+/// on a white line too.
+#[test]
+fn lines_being_drawn_show_on_a_black_fill() {
+    let (ctx, mut app, id) = setup();
+    app.apply_fill(tracedraw_core::Fill::Solid(tracedraw_core::Color::BLACK));
+    let _ = id;
+    app.select(Vec::new());
+    let haloed = |shapes: &[egui::Shape], inner: egui::Color32| {
+        let has = |color: egui::Color32, width: f32| {
+            shapes.iter().any(|s| {
+                matches!(s, egui::Shape::LineSegment { stroke, .. }
+                    if stroke.color == color && (stroke.width - width).abs() < 1e-3)
+            })
+        };
+        has(egui::Color32::WHITE, crate::canvas::HALO_WIDTH)
+            && has(inner, crate::canvas::HALO_INNER)
+    };
+    let a = app.view.to_screen(Point::new(20.0, 20.0));
+    let b = app.view.to_screen(Point::new(50.0, 30.0));
+    // A freehand stroke, while the button is down.
+    app.set_tool(Tool::Freehand);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(a)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(a, true, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    for i in 1..=4 {
+        let p = a + (b - a) * (i as f32 / 4.0) + egui::vec2(0.0, (i % 2) as f32 * 6.0);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(p)],
+            Modifiers::NONE,
+        );
+    }
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert!(haloed(&shapes, egui::Color32::BLACK), "freehand");
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(b, false, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    // A polyline with two points placed, the pointer away.
+    app.select(Vec::new());
+    app.set_tool(Tool::Polyline);
+    let c = app.view.to_screen(Point::new(40.0, 35.0));
+    click_at(&ctx, &mut app, a, Modifiers::NONE);
+    click_at(&ctx, &mut app, b, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(c)],
+        Modifiers::NONE,
+    );
+    assert!(app.curve.is_some(), "a polyline in progress");
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert!(haloed(&shapes, egui::Color32::BLACK), "polyline");
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::Escape, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    // The Bezier tool: a segment placed, in the default black outline.
+    app.curve = None;
+    app.select(Vec::new());
+    app.set_tool(Tool::Bezier);
+    click_at(&ctx, &mut app, a, Modifiers::NONE);
+    click_at(&ctx, &mut app, b, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(c)],
+        Modifiers::NONE,
+    );
+    assert!(app.curve.is_some(), "a curve in progress");
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let outline = app
+        .default_stroke()
+        .map(|s| crate::canvas::to_color32(s.color))
+        .expect("a default outline");
+    assert!(haloed(&shapes, outline), "placed segments");
+}

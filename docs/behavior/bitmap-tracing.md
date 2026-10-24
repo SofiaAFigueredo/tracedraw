@@ -37,14 +37,28 @@ full trace.
 ## Algorithm (outline mode)
 
 1. Blur a little when detail < 50, then quantise the colours with median
-   cut to the number of colours (black and white: by brightness).
+   cut to the number of colours (black and white: by brightness). Colours
+   of the palette closer than 18 (RGB distance) to one kept before them
+   are dropped, so two shades of one flat colour or two near-blacks
+   trace as one region (#611).
 2. Specks (#611): every 4-connected patch of one colour smaller than
    `round(((100 - detail) / 10)^2)` pixels (none at detail 100, 4 at 80,
    16 at 60, 42 at 35) takes the colour most of its neighbours have, so
    stray dots and the fringes of soft edges make no curves of their own.
    Transparent pixels are left alone.
+   Thin bands (#611): a patch almost none of whose pixels has all four
+   neighbours in it (at most about 2 px thick), touching two or more
+   colours, whose colour lies between the two it touches most (within
+   `max(24, 0.2 * distance)` of the RGB segment joining them), is the
+   anti-aliasing of their edge: each of its pixels takes whichever of
+   the two most of its 8 neighbours have (the nearer colour on a tie).
+   A thin patch touching one colour only, such as a hairline on a fill,
+   stays.
 3. For each colour, the boundary rings of its mask along the pixel
-   edges.
+   edges. A region's mask also takes the pixels of the regions stacked
+   above it (lighter ones, not the background) within 2 px of its own,
+   so it reaches a little under its neighbours: their curves are fitted
+   each on its own, but no page shows between them (#611).
 4. Smoothing 0: each ring as straight lines along the pixel edges
    (Douglas-Peucker, tolerance `0.3 + (100 - detail) / 100 * 2.5` px).
    Otherwise each ring is fitted (#611):
@@ -77,6 +91,12 @@ width equal to the mean local thickness.
   specks around it is one square with corners on its pixel corners; at
   detail 100 the specks stay.
 - `trace::tests::despeckle_fills_small_patches_with_their_surroundings`.
+- `trace::tests::neighbouring_regions_leave_no_gaps_and_edges_make_no_slivers`:
+  an anti-aliased yellow disc crossed by a black band on white, Clipart
+  preset: two or three regions, and drawn back no pixel more than 2 px
+  inside the art is white or lets the page through.
+- `trace::tests::close_colours_merge_and_thin_edge_bands_go`,
+  `trace::tests::dilation_grows_a_mask_by_a_square`.
 
 - Given a 200x200 image of a black circle on white, outline mode, 2
   colours, then one closed curve with area within 2% of the circle.

@@ -6,7 +6,7 @@ use crate::document::{
     ColorStyle, Guide, Layer, MasterScope, Metadata, ObjectStyle, Page, Shadow, Shape, ShapeKind,
     Symbol,
 };
-use crate::geometry::{Affine, BezPath, PathEl, Size};
+use crate::geometry::{Affine, BezPath, PathEl, Shape as _, Size};
 use crate::id::{LayerId, PageId, ShapeId};
 use crate::style::{Fill, Stroke};
 use crate::Color;
@@ -1175,9 +1175,26 @@ impl Command {
                 let (layer_id, idx) = doc.locate(*group)?;
                 let layer = doc.layer_mut(layer_id)?;
                 let g = layer.shapes.remove(idx);
+                // The group's perspective stays on each of its objects, which
+                // are drawn as they were (#674).
+                let frame = g.local_path().bounding_box();
+                let perspectives: Vec<[crate::geometry::Point; 4]> = g
+                    .effects
+                    .iter()
+                    .filter_map(|e| match e {
+                        crate::live::Effect::Perspective { corners } => Some(*corners),
+                        _ => None,
+                    })
+                    .collect();
                 match g.kind {
                     ShapeKind::Group { children } => {
                         for (k, mut c) in children.into_iter().enumerate() {
+                            for corners in &perspectives {
+                                if let Some(e) = crate::live::member_perspective(frame, corners, &c)
+                                {
+                                    c.effects.push(e);
+                                }
+                            }
                             c.absorb(g.transform);
                             layer.shapes.insert(idx + k, c);
                         }
@@ -1767,6 +1784,79 @@ mod tests {
         assert!(Command::DeleteShapes { shapes: vec![ia] }
             .apply(&mut doc)
             .is_err());
+    }
+
+    /// A group's perspective stays on each object when it is ungrouped,
+    /// drawn where it was in the group (#674).
+    #[test]
+    fn ungrouping_keeps_the_perspective_on_each_object() {
+        let mut doc = Document::default();
+        let layer = doc.pages[0].layers[0].id;
+        let a = rect(&mut doc, 0.0);
+        let mut b = rect(&mut doc, 20.0);
+        b.transform = Affine::translate((3.0, 4.0)) * Affine::scale_non_uniform(1.5, 0.5);
+        let (ia, ib) = (a.id, b.id);
+        for s in [a, b] {
+            Command::AddShape { layer, shape: s }
+                .apply(&mut doc)
+                .unwrap();
+        }
+        Command::Group {
+            shapes: vec![ia, ib],
+        }
+        .apply(&mut doc)
+        .unwrap();
+        let gid = doc.layer(layer).unwrap().shapes[0].id;
+        Command::TransformShapes {
+            shapes: vec![gid],
+            transform: Affine::translate((5.0, 7.0)) * Affine::rotate(0.3),
+        }
+        .apply(&mut doc)
+        .unwrap();
+        let g = doc.find_shape(gid).unwrap();
+        let bb = g.local_path().bounding_box();
+        Command::SetEffects {
+            shape: gid,
+            effects: vec![crate::live::Effect::Perspective {
+                corners: [
+                    crate::geometry::Point::new(bb.x0 + 4.0, bb.y0),
+                    crate::geometry::Point::new(bb.x1 - 2.0, bb.y0 + 1.0),
+                    crate::geometry::Point::new(bb.x1, bb.y1),
+                    crate::geometry::Point::new(bb.x0, bb.y1 - 3.0),
+                ],
+            }],
+        }
+        .apply(&mut doc)
+        .unwrap();
+        // Where each object is drawn in the group.
+        let main = crate::live::evaluate(doc.find_shape(gid).unwrap()).main;
+        let ShapeKind::Group { children } = &main.kind else {
+            panic!("a group: {:?}", main.kind);
+        };
+        let drawn: Vec<_> = children
+            .iter()
+            .map(|c| (main.transform * c.page_path()).bounding_box())
+            .collect();
+        Command::Ungroup { group: gid }.apply(&mut doc).unwrap();
+        for (id, want) in [ia, ib].into_iter().zip(drawn) {
+            let s = doc.find_shape(id).unwrap();
+            assert!(
+                s.effects
+                    .iter()
+                    .any(|e| matches!(e, crate::live::Effect::Perspective { .. })),
+                "{:?}",
+                s.effects
+            );
+            let got = crate::live::evaluate(s).main.page_path().bounding_box();
+            for (g, w) in [
+                (got.x0, want.x0),
+                (got.y0, want.y0),
+                (got.x1, want.x1),
+                (got.y1, want.y1),
+            ] {
+                assert!((g - w).abs() < 1e-6, "{got:?} != {want:?}");
+            }
+        }
     }
 
     #[test]

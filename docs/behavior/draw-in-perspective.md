@@ -50,3 +50,19 @@ so the result is exact and the Shape tool edits its four corners. A box
 drawn past a plane's vanishing line is pulled towards the grid until it
 fits, and one that lies wholly beyond it stays flat. Drawing the object
 and laying it down are one undo step.
+
+## The Perspective effect on a group
+
+Effects > Add Perspective on a group warps every object in it with the
+group's four corners. Ungroup (Ctrl+U, also Ungroup All) keeps the
+perspective: each object takes its own Perspective effect, the group's
+projection as seen in the object's space, so the objects stay drawn as
+they were and the Shape tool edits each one's corners (#674).
+
+## Checks
+
+- Given a group of two rectangles, one scaled, the group turned and
+  given a perspective, when it is ungrouped, then each rectangle has a
+  Perspective effect and is drawn where it was in the group
+  (`command::tests::ungrouping_keeps_the_perspective_on_each_object`,
+  core).

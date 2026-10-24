@@ -1559,6 +1559,43 @@ pub fn perspective_in(path: &BezPath, b: Rect, corners: &[Point; 4]) -> BezPath 
     warp(path, b, map)
 }
 
+/// The perspective a group's `member` takes when the group is ungrouped
+/// (#674): the group's perspective of its box `b` onto `corners`, as seen
+/// in the member's own space. A homography restricted to the member is
+/// still one, so the member is drawn as it was in the group.
+pub fn member_perspective(b: Rect, corners: &[Point; 4], member: &Shape) -> Option<Effect> {
+    if b.width() < 1e-9 || b.height() < 1e-9 {
+        return None;
+    }
+    let t = member.transform;
+    if t.determinant().abs() < 1e-12 {
+        return None;
+    }
+    let mb = member.local_path().bounding_box();
+    if mb.width() < 1e-9 || mb.height() < 1e-9 {
+        return None;
+    }
+    let src = [
+        Point::new(b.x0, b.y0),
+        Point::new(b.x1, b.y0),
+        Point::new(b.x1, b.y1),
+        Point::new(b.x0, b.y1),
+    ];
+    let h = homography(&src, corners)?;
+    let inv = t.inverse();
+    let corners = [
+        Point::new(mb.x0, mb.y0),
+        Point::new(mb.x1, mb.y0),
+        Point::new(mb.x1, mb.y1),
+        Point::new(mb.x0, mb.y1),
+    ]
+    .map(|p| inv * map_homography(&h, t * p));
+    corners
+        .iter()
+        .all(|p| p.x.is_finite() && p.y.is_finite())
+        .then_some(Effect::Perspective { corners })
+}
+
 /// Solve the 8 parameters of a homography from 4 point pairs.
 pub fn homography(src: &[Point; 4], dst: &[Point; 4]) -> Option<[f64; 8]> {
     let mut m = [[0.0f64; 9]; 8];

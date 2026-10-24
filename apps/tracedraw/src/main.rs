@@ -34,6 +34,7 @@ mod connectors;
 mod contour_tool;
 mod coords;
 mod copy_effect;
+mod corner_widgets;
 mod corners;
 mod crop_tool;
 mod curve_join;
@@ -59,6 +60,8 @@ mod fill_tool;
 mod focus;
 #[cfg(any(target_arch = "wasm32", test))]
 mod font_folder;
+#[cfg(not(target_arch = "wasm32"))]
+mod frame_stats;
 mod frame_type;
 mod fx;
 mod github;
@@ -280,6 +283,8 @@ fn main() -> eframe::Result<()> {
         )
     }));
     startup_log::quiet_panics(false);
+    // A panic of the last renderer was reported as a crash already.
+    let reported = result.is_err() && next.is_none();
     let result = match result {
         Ok(r) => r,
         Err(panic) if gpu::window_opened() => std::panic::resume_unwind(panic),
@@ -306,7 +311,9 @@ fn main() -> eframe::Result<()> {
         }
     }
     log::error!("the window could not be opened with {mode:?}: {e}");
-    startup_log::no_window(&e.to_string());
+    if !reported {
+        startup_log::no_window(&e.to_string());
+    }
     Err(e)
 }
 
@@ -387,6 +394,10 @@ impl eframe::App for Shell {
         let Some(app) = self.app.as_mut() else {
             return;
         };
+        // The first frame's window size, and frame statistics at debug
+        // level (#616).
+        #[cfg(not(target_arch = "wasm32"))]
+        let began = frame_stats::begin(ui.ctx());
         // Fonts text asked for (browser build), and fonts that arrived.
         #[cfg(target_arch = "wasm32")]
         web::sync_ui_fonts(ui.ctx());
@@ -446,6 +457,8 @@ impl eframe::App for Shell {
         app.autosave_settings(Some(ui.ctx()));
         // Bitmaps edited outside follow their files.
         app.watch_linked_bitmaps(Some(ui.ctx()), web_time::Instant::now());
+        #[cfg(not(target_arch = "wasm32"))]
+        frame_stats::end(ui.ctx(), began);
     }
 
     /// Keep the toolbox, dockers and other preferences for the next session.

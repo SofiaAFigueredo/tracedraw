@@ -10,6 +10,30 @@ full, row-by-row status.
 
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.
 
+- The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).
+
+- The preferences are no longer serialized on every frame to see whether they changed: only on frames with a key, text, a click or a dropped file, and at most once a second otherwise. A pointer move now costs about 0.1 µs there instead of about 20 µs, more on an older PC (#616).
+
+- Pictures are decoded once and kept for every thread that draws the page. The canvas draws in bands on one thread per core, and each band decoded every picture it crossed again on every redraw: six large photos took about 1.1 s and 540 MB extra per redraw on four cores (more with more cores). Now a redraw after the first takes about 20 ms, thumbnails and the navigator reuse the same pictures, and the decoded pictures kept are capped at 512 MB.
+
+- Tracing (Quick Trace and Outline Trace): outlines come out as smooth Bezier curves fitted to the shapes instead of stair-stepped polylines, with far fewer nodes; corners stay sharp (Corner smoothness rounds more of them), and stray specks and the fringes of soft edges no longer become curves of their own (fewer the lower the detail). Smoothing 0 still follows the pixel edges (#611).
+
+- Saving a `.tdraw` and auto-backup now write the file as it is made instead of building the whole file in memory first: saving a drawing of 183 MB peaked at 2.4 GB and left about 2 GB held afterwards; now it stays near the drawing's own size. Auto-backup also runs on a thread of its own, so the window no longer stops every 20 minutes while a large drawing is backed up, and a backup cut short never replaces a whole one.
+
+- Variable Length tool: a stroke made much wider than its own outline width is now drawn whole on screen. Parts of it reaching far from the path could be left out of the picture, so the stroke looked cut off with a flat edge on one side (#626).
+
+- Canvas overlays show on any colour: a shape being drawn has a black hairline on a white line over its outline, so it no longer disappears into a black outline; the selection handles are black with a white edge; and the Shape tool's and curve tools' control handles are dashed on a white line, with white-edged arrow heads (#670).
+
+- Shape tool: corner widgets. A curve being edited shows a small circle inside each corner; dragging one into its corner rounds the corners on the canvas as you drag, every corner of the curve together, or only the chosen nodes' corners when nodes are chosen. Works on open curves too; the status bar shows the radius, and the drag is one undo step (#635).
+
+- View > Page > Mask Outside Page: an optional mode that covers everything outside the page with the desktop colour, with the page border drawn over the objects, so the page shows as it will print while you keep drawing and editing. Objects outside the page still show faintly and stay editable; the setting is kept with the other view settings (#615).
+
+- `tracedraw-cli convert`: what the .cdr reader skipped or guessed (a fill it cannot read yet, a page size it does not take, objects left out) now goes to stderr as warnings, as for the other formats it reads. Only `info` showed it, so a converted file could miss part of the drawing without a word.
+
+- Opening .cdr files: pages longer than 10 m on a side, such as a 22 m banner, keep their size up to 100 m, the bound the CMX reader already had. They opened as A4, with the warning that the page size looked wrong.
+
+- Publish to PDF: a picture wholly outside the page and its bleed stays out of the file. It could not show, but its pixels were written: a photo left beside the page could make up most of the file's size (#642).
+
 - When a software adapter draws the window (no usable graphics card driver), TraceDraw keeps to 30 frames a second, draws no shadows and uses the system's pointers instead of the drawn cross hair and I-beam, and says so once in the status bar. On an older PC every pointer move redrew the whole window on the CPU, which took every core (#616).
 
 - With hardware acceleration on, TraceDraw no longer draws the window on the CPU's software adapter when no graphics card is usable: it tries OpenGL next and the software adapter only last, keeps going when the OpenGL set-up panics, says in a message box when no renderer can open the window, and logs every graphics adapter with why it was taken or left. An older PC sat at full CPU with the window crawling, with hardware acceleration on or off, and `--renderer=gl` showed nothing (#616).

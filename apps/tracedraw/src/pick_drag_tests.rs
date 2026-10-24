@@ -6231,3 +6231,393 @@ fn the_pen_continues_an_unselected_curve_with_the_mirrored_handle() {
         "{s0:?} {s1:?}"
     );
 }
+
+/// The shapes and texts of one frame: every filled rectangle with its
+/// colour, and every text with its centre.
+fn painted(
+    ctx: &egui::Context,
+    app: &mut App,
+) -> (Vec<(egui::Rect, egui::Color32)>, Vec<(String, Pos2)>) {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+    out.textures_delta.clear();
+    let mut rects = Vec::new();
+    let mut texts = Vec::new();
+    fn walk(
+        s: &egui::Shape,
+        rects: &mut Vec<(egui::Rect, egui::Color32)>,
+        texts: &mut Vec<(String, Pos2)>,
+    ) {
+        match s {
+            egui::Shape::Rect(r) => rects.push((r.rect, r.fill)),
+            egui::Shape::Text(t) => texts.push((
+                t.galley.text().to_string(),
+                t.pos + t.galley.rect.center().to_vec2(),
+            )),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, rects, texts)),
+            _ => {}
+        }
+    }
+    out.shapes
+        .iter()
+        .for_each(|c| walk(&c.shape, &mut rects, &mut texts));
+    (rects, texts)
+}
+
+/// View > Page > Mask Outside Page covers what lies outside the page
+/// with the desktop colour, over the objects, and leaves the page clear;
+/// the objects stay editable, and the menu turns it off again (#615).
+#[test]
+fn mask_outside_page_covers_the_desktop_and_keeps_objects_editable() {
+    let (ctx, mut app, id) = setup();
+    // The rectangle reaches past the page's left edge.
+    app.select(vec![id]);
+    app.nudge(Vec2::new(-30.0, 0.0));
+    let mask = app
+        .desktop_color()
+        .gamma_multiply(crate::canvas::OUTSIDE_PAGE_MASK);
+    let page = app.view.rect_to_screen(app.page_rect());
+    let left_of_page = Pos2::new(page.left() - 5.0, page.center().y);
+    let masked_at = |rects: &[(egui::Rect, egui::Color32)], p: Pos2| {
+        rects.iter().any(|(r, c)| *c == mask && r.contains(p))
+    };
+    let (rects, _) = painted(&ctx, &mut app);
+    assert!(!masked_at(&rects, left_of_page), "off at first");
+    let menu_item = |ctx: &egui::Context, app: &mut App, name: &str| {
+        let (_, texts) = painted(ctx, app);
+        texts
+            .into_iter()
+            .find(|(t, _)| t.trim() == name)
+            .map(|(_, p)| p)
+            .unwrap_or_else(|| panic!("{name} in the menus"))
+    };
+    let view = menu_item(&ctx, &mut app, "View");
+    click_at(&ctx, &mut app, view, Modifiers::NONE);
+    let page_menu = menu_item(&ctx, &mut app, "Page");
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(page_menu)],
+        Modifiers::NONE,
+    );
+    for _ in 0..10 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let item = menu_item(&ctx, &mut app, "Mask Outside Page");
+    click_at(&ctx, &mut app, item, Modifiers::NONE);
+    assert!(app.mask_outside_page);
+    let (rects, _) = painted(&ctx, &mut app);
+    assert!(masked_at(&rects, left_of_page), "the desktop is covered");
+    assert!(!masked_at(&rects, page.center()), "the page is not");
+    // Still a live drawing: the rectangle moves with a drag.
+    let x0 = bounds(&app, id).x0;
+    let c = app.view.to_screen(bounds(&app, id).center());
+    drag(
+        &ctx,
+        &mut app,
+        c,
+        c + egui::vec2(40.0, 0.0),
+        Modifiers::NONE,
+        Vec::new(),
+    );
+    assert!(bounds(&app, id).x0 > x0 + 1.0, "moved");
+    // The preference keeps it.
+    assert!(app.view_prefs().mask_outside_page);
+    app.mask_outside_page = false;
+    let (rects, _) = painted(&ctx, &mut app);
+    assert!(!masked_at(&rects, left_of_page));
+}
+
+/// The Shape tool's corner widgets (#635): with no node chosen, dragging
+/// one into its corner rounds every corner of the curve together, live,
+/// in one undo step; with a node chosen only its corner shows a widget
+/// and rounds; an open curve rounds its inner corners.
+#[test]
+fn corner_widgets_round_every_corner_or_the_chosen_ones() {
+    use tracedraw_core::geometry::{BezPath, PathEl, Shape as _};
+    let (ctx, mut app, rect) = setup();
+    app.select(vec![rect]);
+    app.delete_selection();
+    let mut square = BezPath::new();
+    square.move_to((20.0, 20.0));
+    square.line_to((60.0, 20.0));
+    square.line_to((60.0, 60.0));
+    square.line_to((20.0, 60.0));
+    square.close_path();
+    let id = app
+        .new_shape(ShapeKind::Path {
+            path: square.clone(),
+            closed: true,
+        })
+        .expect("square");
+    app.select(vec![id]);
+    app.set_tool(Tool::Shape);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let path_of = |app: &App| match &app.doc().find_shape(id).expect("curve").kind {
+        ShapeKind::Path { path, .. } => path.clone(),
+        _ => panic!("a curve"),
+    };
+    let arcs = |p: &BezPath| {
+        p.elements()
+            .iter()
+            .filter(|e| matches!(e, PathEl::CurveTo(..)))
+            .count()
+    };
+    let widgets = app.corner_widgets();
+    assert_eq!(widgets.len(), 4, "one on every corner");
+    // Each sits inside the square, near its node.
+    let inside = egui::Rect::from_two_pos(
+        app.view.to_screen(Point::new(20.0, 20.0)),
+        app.view.to_screen(Point::new(60.0, 60.0)),
+    );
+    assert!(widgets.iter().all(|w| inside.contains(w.at)));
+    // Dragged 5 mm into its corner (towards the square's centre).
+    let w = widgets[0];
+    let centre = app.view.to_screen(Point::new(40.0, 40.0));
+    let dir = (centre - w.at).normalized();
+    let to = w.at + dir * (5.0 * app.view.zoom);
+    let undo_before = app.engine.undo_label().map(str::to_string);
+    drag(&ctx, &mut app, w.at, to, Modifiers::NONE, Vec::new());
+    let rounded = path_of(&app);
+    assert_eq!(arcs(&rounded), 4, "every corner rounded");
+    // The arc's middle came about 5 mm into the corner: a fillet of about
+    // 5 / (sqrt 2 - 1) mm on a right angle.
+    let b = rounded.bounding_box();
+    assert!(
+        (b.width() - 40.0).abs() < 1e-6,
+        "the sides keep their place"
+    );
+    let r = crate::corner_widgets::radius_for(5.0, std::f64::consts::FRAC_PI_2);
+    assert!((r - 12.07).abs() < 0.1, "{r}");
+    assert!(
+        (rounded.area().abs() - (1600.0 - (4.0 - std::f64::consts::PI) * r * r)).abs() < 3.0,
+        "{}",
+        rounded.area()
+    );
+    assert!(app.status.contains("12.07"), "{}", app.status);
+    // One undo step.
+    app.undo();
+    assert_eq!(path_of(&app), square);
+    assert_eq!(app.engine.undo_label().map(str::to_string), undo_before);
+    // A chosen node: only its corner has a widget, and only it rounds.
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let node = app.view.to_screen(Point::new(60.0, 60.0));
+    click_at(&ctx, &mut app, node, Modifiers::NONE);
+    assert_eq!(app.node_selection.len(), 1, "{:?}", app.node_selection);
+    let widgets = app.corner_widgets();
+    assert_eq!(widgets.len(), 1);
+    let w = widgets[0];
+    let dir = (centre - w.at).normalized();
+    drag(
+        &ctx,
+        &mut app,
+        w.at,
+        w.at + dir * 30.0,
+        Modifiers::NONE,
+        Vec::new(),
+    );
+    assert_eq!(arcs(&path_of(&app)), 1, "that corner only");
+    // An open zigzag rounds its two inner corners.
+    let mut zig = BezPath::new();
+    zig.move_to((20.0, 100.0));
+    zig.line_to((50.0, 100.0));
+    zig.line_to((50.0, 130.0));
+    zig.line_to((80.0, 130.0));
+    let open = app
+        .new_shape(ShapeKind::Path {
+            path: zig,
+            closed: false,
+        })
+        .expect("zigzag");
+    app.select(vec![open]);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let widgets = app.corner_widgets();
+    assert_eq!(widgets.len(), 2);
+    let w = widgets[0];
+    let node = app.view.to_screen(Point::new(50.0, 100.0));
+    let dir = (w.at - node).normalized();
+    drag(
+        &ctx,
+        &mut app,
+        w.at,
+        w.at + dir * 20.0,
+        Modifiers::NONE,
+        Vec::new(),
+    );
+    match &app.doc().find_shape(open).expect("zigzag").kind {
+        ShapeKind::Path { path, closed } => {
+            assert!(!closed);
+            assert_eq!(arcs(path), 2, "both inner corners");
+        }
+        _ => panic!("a curve"),
+    }
+}
+
+/// Every shape of one frame, nested ones taken out of their lists.
+fn frame_shapes(ctx: &egui::Context, app: &mut App, events: Vec<Event>) -> Vec<egui::Shape> {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        events,
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+    out.textures_delta.clear();
+    fn walk(s: egui::Shape, all: &mut Vec<egui::Shape>) {
+        match s {
+            egui::Shape::Vec(v) => v.into_iter().for_each(|s| walk(s, all)),
+            s => all.push(s),
+        }
+    }
+    let mut all = Vec::new();
+    out.shapes.into_iter().for_each(|c| walk(c.shape, &mut all));
+    all
+}
+
+/// Overlays show on any colour (#670): a rectangle being drawn has a
+/// black line on a white one over its outline, the selection handles
+/// are black with a white edge, and a node's control handle is dashed on
+/// a white line with a white-edged head.
+#[test]
+fn overlays_are_drawn_on_a_white_line() {
+    let (ctx, mut app, id) = setup();
+    // The selection handles: black boxes with a white edge.
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let handles = shapes
+        .iter()
+        .filter(|s| {
+            matches!(s, egui::Shape::Rect(r) if r.fill == egui::Color32::BLACK
+                && r.stroke.color == egui::Color32::WHITE && r.stroke.width >= 1.0)
+        })
+        .count();
+    assert!(handles >= 8, "{handles}");
+    // A rectangle being drawn.
+    app.select(Vec::new());
+    app.set_tool(Tool::Rectangle);
+    let a = app.view.to_screen(Point::new(80.0, 80.0));
+    let b = app.view.to_screen(Point::new(120.0, 110.0));
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(a)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(a, true, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    for i in 1..=3 {
+        let p = a + (b - a) * (i as f32 / 3.0);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(p)],
+            Modifiers::NONE,
+        );
+    }
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let line = |color: egui::Color32, width: f32| {
+        shapes.iter().position(|s| {
+            matches!(s, egui::Shape::LineSegment { points, stroke }
+                if stroke.color == color && (stroke.width - width).abs() < 1e-3
+                    && points.iter().all(|p| (p.x - b.x).abs() < 2.0 || (p.x - a.x).abs() < 2.0
+                        || (p.y - b.y).abs() < 2.0 || (p.y - a.y).abs() < 2.0))
+        })
+    };
+    let white = line(egui::Color32::WHITE, crate::canvas::HALO_WIDTH).expect("a white line");
+    let black = line(egui::Color32::BLACK, crate::canvas::HALO_INNER).expect("a black line");
+    assert!(black > white, "the black line over the white one");
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(b, false, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    // A curve's control handle with the Shape tool.
+    use tracedraw_core::geometry::BezPath;
+    let mut p = BezPath::new();
+    p.move_to((20.0, 120.0));
+    p.curve_to((40.0, 150.0), (70.0, 150.0), (90.0, 120.0));
+    let curve = app
+        .new_shape(ShapeKind::Path {
+            path: p,
+            closed: false,
+        })
+        .expect("curve");
+    let _ = id;
+    app.select(vec![curve]);
+    app.set_tool(Tool::Shape);
+    app.select_all_nodes();
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let heads = shapes
+        .iter()
+        .filter(|s| {
+            matches!(s, egui::Shape::Path(ps) if ps.closed && ps.points.len() == 3
+                && ps.stroke.color == egui::epaint::ColorMode::Solid(egui::Color32::WHITE))
+        })
+        .count();
+    assert!(heads >= 2, "{heads}");
+    assert!(shapes.iter().any(|s| matches!(s, egui::Shape::LineSegment { stroke, .. }
+        if stroke.color == egui::Color32::WHITE && (stroke.width - crate::canvas::HALO_WIDTH).abs() < 1e-3)));
+}
+
+/// An idle window asks for no frame (#616): once the start has settled,
+/// frames with no input request no repaint, with a drawing open (and its
+/// dockers) and on the Welcome Screen, the window's per-frame work (the
+/// preferences autosave, linked bitmaps) included. A frame asked for
+/// here keeps a slow computer drawing for nothing.
+#[test]
+fn an_idle_window_asks_for_no_frame() {
+    for welcome in [false, true] {
+        let (ctx, mut app, _) = setup();
+        app.show_welcome = welcome;
+        let mut delays = Vec::new();
+        for i in 0..40 {
+            // Time passes between the frames: animations end, and a
+            // preferences look or write that had to wait is due.
+            let back = |t: Option<web_time::Instant>| {
+                t.and_then(|t| t.checked_sub(std::time::Duration::from_secs(2)))
+            };
+            app.settings_looked = back(app.settings_looked);
+            if app.settings_pending {
+                app.settings_written = back(app.settings_written);
+            }
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(1600.0, 1000.0),
+                )),
+                time: Some(10.0 + i as f64 * 2.0),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                crate::ui::root(&mut app, ui);
+                app.autosave_settings(Some(ui.ctx()));
+                app.watch_linked_bitmaps(Some(ui.ctx()), web_time::Instant::now());
+            });
+            out.textures_delta.clear();
+            let delay = out
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .map(|v| v.repaint_delay)
+                .unwrap_or(std::time::Duration::MAX);
+            delays.push(delay);
+        }
+        let tail = &delays[delays.len() - 10..];
+        assert!(
+            tail.iter().all(|d| *d == std::time::Duration::MAX),
+            "welcome {welcome}: frames asked for while idle: {delays:?} ({:?})",
+            ctx.repaint_causes()
+        );
+    }
+}

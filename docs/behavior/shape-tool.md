@@ -15,8 +15,9 @@ A curve selected with the Shape tool shows its outline in the node
 colour (Options > Nodes and Handles, blue by default), its nodes as small
 markers by type (squares for cusps by default) and the first node of each
 subpath as a slightly larger triangle. A selected node's control
-handles are dashed lines from the node, each ending in a solid arrow head
-at its control point (the curve tools show the handles of the curve
+handles are dashed lines from the node on a white line twice as wide,
+each ending in a solid arrow head with a white edge at its control point
+(so they show on any colour, #670) (the curve tools show the handles of the curve
 being drawn the same way). The arrow showing the curve's
 direction is off by default (Options > Nodes and Handles).
 
@@ -136,6 +137,33 @@ step.
   the grabbed node and `dmax` the largest such distance; the grabbed node
   moves fully, the farthest one half as much.
 
+## Corner widgets
+
+A curve being edited shows a small white circle with a ring in the node
+colour inside each corner (a node where two segments meet at an angle,
+as the Corners panel counts them), 18 px from the node along the middle
+of the corner (#635).
+
+- With no node chosen every corner has one (a curve with more than 32
+  corners shows none, so a traced outline is not covered in them); with
+  nodes chosen only their corners do.
+- Dragging a widget into its corner rounds the corners with a fillet,
+  live: with no node chosen every corner of the curve, with nodes chosen
+  only theirs. The radius is the one whose arc's middle has moved into
+  the dragged corner as far as the pointer has moved along it
+  (`r = d / (1 / sin(theta / 2) - 1)` for a corner of angle `theta`), at
+  most the largest radius every rounded corner still fits (a side two
+  rounded corners share is split between them). Dragging back takes the
+  rounding back off. The status bar shows the radius.
+- Open curves round their inner corners the same way.
+- The drag is one undo step, "Fillet". The rounded corners become arcs
+  of the curve (nodes and segments, as the Corners panel makes them), so
+  a rounded corner no longer shows a widget; the chosen nodes are
+  cleared.
+- A click on a widget keeps the selection.
+- Checked by `pick_drag_tests::corner_widgets_round_every_corner_or_the_chosen_ones`
+  and `tracedraw_core` `corner_cut::tests::corners_and_the_largest_fillet_they_take`.
+
 ## Rectangles, ellipses and polygons
 
 | Action | Behaviour |
@@ -200,6 +228,9 @@ Reduce Nodes, Curve smoothness.
 
 ## Checks
 
+- `pick_drag_tests::corner_widgets_round_every_corner_or_the_chosen_ones`
+- `tracedraw_core` `corner_cut::tests::corners_and_the_largest_fillet_they_take`
+- `pick_drag_tests::overlays_are_drawn_on_a_white_line`
 - `pick_drag_tests::nodes_are_taken_within_the_pick_distance_and_a_near_miss_keeps_the_selection`
 - `pick_drag_tests::the_shape_tool_says_a_rectangle_is_still_a_rectangle`
 - `pick_drag_tests::a_right_click_in_the_shape_tool_takes_the_node_or_segment_under_it`

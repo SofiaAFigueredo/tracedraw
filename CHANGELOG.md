@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Dimensions: the Options menu on the bar can join the extension lines and the dimension line (or the arc of an angle) into one line with corners, and round those corners with a corner radius (#641).
+
 - Dimensions: the label can be edited in place, with a double click on it (Pick tool) or a click with the Text tool. Text typed around the measured value becomes the prefix and suffix and the number keeps following the size; text without the value stays as typed until Measured value on the bar brings it back; the label's font, size and colour are kept. Before, whatever was typed was lost at the next change. Break Apart now frees the lines, arrowheads and label as separate objects instead of doing nothing, and a new Options menu on the bar sets the extension lines' gap from the object and how far they run past the dimension line, the arrowhead size and a horizontal label (#644).
 
 - Convert to Curves (Ctrl+Q) and Break Apart (Ctrl+K) now make an envelope, perspective or distortion part of the curves. Convert to Curves did nothing on an enveloped curve, and Break Apart lost the warp. Enveloped text breaks into one curve per letter, each warped as the whole text was, holes kept; a group with an envelope stays a group of warped curves. A warp after a contour, blend or extrusion stays live, and bitmaps keep theirs (#647).

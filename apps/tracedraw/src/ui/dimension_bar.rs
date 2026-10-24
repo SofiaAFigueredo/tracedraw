@@ -153,7 +153,8 @@ fn length_field(
 
 /// More options (#644): the extension lines' gap from the object and how
 /// far they run past the dimension line, the arrowheads' size, a
-/// horizontal label; and the measured value back for a typed label.
+/// horizontal label, lines joined in rounded corners (#641); and the
+/// measured value back for a typed label.
 fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
     ui.menu_button(tr("dimension.options"), |ui| {
         length_field(
@@ -187,6 +188,24 @@ fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
         {
             app.set_dimension_style(|s| s.horizontal_text = horizontal);
         }
+        // Lines joined in corners, rounded (#641).
+        let mut joined = style.joined;
+        if ui
+            .checkbox(&mut joined, tr("dimension.join_lines"))
+            .changed()
+        {
+            app.set_dimension_style(|s| s.joined = joined);
+        }
+        ui.add_enabled_ui(style.joined, |ui| {
+            length_field(
+                app,
+                ui,
+                "dimension.corner_radius",
+                style.corner_radius,
+                100.0,
+                |s, v| s.corner_radius = v,
+            );
+        });
     })
     .response
     .rich_tip(tr("dimension.options"));

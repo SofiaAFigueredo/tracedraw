@@ -564,7 +564,7 @@ impl HostInner {
                         continue;
                     };
                     let mut copy = self.fresh_ids(s);
-                    copy.transform = Affine::translate((dx, dy)) * copy.transform;
+                    copy.transform_by(Affine::translate((dx, dy)));
                     out.push(copy.id.raw());
                     self.run(Command::AddShape { layer, shape: copy })?;
                 }

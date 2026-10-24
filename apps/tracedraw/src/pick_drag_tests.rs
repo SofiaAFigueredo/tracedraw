@@ -5655,3 +5655,132 @@ fn a_held_second_right_press_takes_the_copy_back_and_the_move_goes_on() {
     );
     assert_eq!(app.selection, vec![id]);
 }
+
+fn sym_center(app: &App, id: ShapeId) -> Point {
+    use tracedraw_core::live::Effect;
+    app.doc()
+        .find_shape(id)
+        .and_then(|s| {
+            s.effects.iter().find_map(|e| match e {
+                Effect::Symmetry { center, .. } => Some(*center),
+                _ => None,
+            })
+        })
+        .expect("a symmetry")
+}
+
+/// The rectangle with a symmetry about the upright line through its right
+/// side (60, 25), finished: the rectangle and its copy, 10..110 x 10..40.
+fn finished_symmetry() -> (egui::Context, App, ShapeId) {
+    let (ctx, mut app, id) = setup();
+    app.create_symmetry();
+    assert_eq!(app.symmetry_edit, Some(id));
+    app.finish_symmetry_edit();
+    assert_eq!(app.symmetry_edit, None);
+    assert_eq!(app.selection, vec![id]);
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let vb = app.selection_bounds().expect("bounds");
+    assert!(close(vb.x0, 10.0) && close(vb.x1, 110.0), "{vb:?}");
+    (ctx, app, id)
+}
+
+/// After Finish a drag on the copy moves the whole symmetry: the copy and
+/// the mirror line go with the rectangle (the copy used to mirror the
+/// move about the line left where it was, as while editing), and the
+/// outline shown during the drag is the whole symmetry's. One Undo.
+#[test]
+fn a_finished_symmetry_moves_whole_with_its_copies() {
+    let (ctx, mut app, id) = finished_symmetry();
+    let from = app.view.to_screen(Point::new(85.0, 25.0));
+    let to = from + egui::vec2(80.0, 0.0);
+    drag(&ctx, &mut app, from, to, Modifiers::NONE, vec![]);
+    assert_eq!(app.selection, vec![id], "the whole symmetry stays selected");
+    let d = app.view.to_page(to).x - app.view.to_page(from).x;
+    assert!(d > 5.0);
+    let vb = app.selection_bounds().expect("bounds");
+    assert!(
+        close(vb.x0, 10.0 + d) && close(vb.x1, 110.0 + d),
+        "{vb:?} {d}"
+    );
+    assert!(close(sym_center(&app, id).x, 60.0 + d));
+    assert!(close(sym_center(&app, id).y, 25.0));
+    app.undo();
+    assert!(close(sym_center(&app, id).x, 60.0), "one undo step");
+    assert!(close(bounds(&app, id).x0, 10.0));
+}
+
+/// After Finish the right handle stretches the whole symmetry: its left
+/// side stays and the copy's right side follows the handle.
+#[test]
+fn a_finished_symmetry_scales_whole_with_its_copies() {
+    let (ctx, mut app, id) = finished_symmetry();
+    let h = handle(&app, Handle::E);
+    let dx = app.view.to_screen(Point::new(160.0, 25.0)).x
+        - app.view.to_screen(Point::new(110.0, 25.0)).x;
+    drag(
+        &ctx,
+        &mut app,
+        h,
+        h + egui::vec2(dx, 0.0),
+        Modifiers::NONE,
+        vec![],
+    );
+    assert_eq!(app.selection, vec![id]);
+    let vb = app.selection_bounds().expect("bounds");
+    assert!(close(vb.x0, 10.0), "{vb:?}");
+    assert!((vb.x1 - 160.0).abs() < 0.5, "{vb:?}");
+}
+
+/// While the symmetry is edited, moving its object leaves the mirror line
+/// where it is (the copy mirrors the move), as before.
+#[test]
+fn editing_a_symmetry_a_drag_on_the_object_keeps_the_line() {
+    let (ctx, mut app, id) = setup();
+    app.create_symmetry();
+    assert_eq!(app.symmetry_edit, Some(id));
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let at = app.view.to_screen(Point::new(30.0, 25.0));
+    drag(
+        &ctx,
+        &mut app,
+        at,
+        at + egui::vec2(-40.0, 0.0),
+        Modifiers::NONE,
+        vec![],
+    );
+    assert!(bounds(&app, id).x0 < 9.0, "{:?}", bounds(&app, id));
+    assert!(close(sym_center(&app, id).x, 60.0) && close(sym_center(&app, id).y, 25.0));
+    // One undo step for the move.
+    app.undo();
+    assert!(close(bounds(&app, id).x0, 10.0));
+}
+
+/// A duplicate of a finished symmetry is a whole symmetry at the offset,
+/// its line moved with it; a symmetry inside a group moved with the group
+/// is measured where it is drawn.
+#[test]
+fn copies_and_groups_of_a_symmetry_take_its_line_along() {
+    let (_ctx, mut app, id) = finished_symmetry();
+    app.duplicate();
+    let copy = app.selection[0];
+    assert_ne!(copy, id);
+    let off = bounds(&app, copy).x0 - bounds(&app, id).x0;
+    let offy = bounds(&app, copy).y0 - bounds(&app, id).y0;
+    let c = sym_center(&app, copy);
+    assert!(close(c.x, 60.0 + off) && close(c.y, 25.0 + offy), "{c:?}");
+    // In a group moved 30 mm right: the symmetry's box as drawn.
+    app.select(vec![id]);
+    app.group_selection();
+    let g = app.selection[0];
+    app.run(tracedraw_core::Command::TransformShapes {
+        shapes: vec![g],
+        transform: Affine::translate((30.0, 0.0)),
+    });
+    let on_page = app.doc().shape_on_page(id).expect("on page");
+    let vb = on_page.visual_bounds();
+    assert!(close(vb.x0, 40.0) && close(vb.x1, 140.0), "{vb:?}");
+}

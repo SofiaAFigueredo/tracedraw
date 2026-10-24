@@ -1099,15 +1099,35 @@ pub fn draw_transform_outline(app: &App, painter: &Painter, t: Affine) {
     let line = EStroke::new(1.0, Tokens::DRAG_OUTLINE);
     for s in app.selected_rc().iter() {
         // What the release will make: rounded corners keep their size.
-        let path = s.page_path_after(t);
-        for (mut pts, closed) in flatten(&path, &app.view) {
-            if closed {
-                if let Some(first) = pts.first().copied() {
-                    pts.push(first);
+        let mut paths = vec![s.page_path_after(t)];
+        // A symmetry out of edit mode goes whole: its copies too.
+        if app.symmetry_edit != Some(s.id)
+            && s.effects
+                .iter()
+                .any(|e| matches!(e, tracedraw_core::live::Effect::Symmetry { .. }))
+        {
+            let mut moved = s.clone();
+            moved.transform_by(t);
+            moved
+                .effects
+                .retain(|e| matches!(e, tracedraw_core::live::Effect::Symmetry { .. }));
+            paths.extend(
+                tracedraw_core::live::evaluate(&moved)
+                    .above
+                    .iter()
+                    .map(|c| c.page_path()),
+            );
+        }
+        for path in &paths {
+            for (mut pts, closed) in flatten(path, &app.view) {
+                if closed {
+                    if let Some(first) = pts.first().copied() {
+                        pts.push(first);
+                    }
                 }
+                painter.add(egui::Shape::line(pts.clone(), halo));
+                painter.add(egui::Shape::line(pts, line));
             }
-            painter.add(egui::Shape::line(pts.clone(), halo));
-            painter.add(egui::Shape::line(pts, line));
         }
     }
 }

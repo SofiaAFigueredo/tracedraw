@@ -74,6 +74,23 @@ recomputed from it.
   it and a drag moves it all; a double click on it (or on an object
   inside it) goes back into editing it, instead of into focus mode
   (`pick_drag_tests::a_finished_symmetry_is_picked_whole_and_a_double_click_edits_it`).
+  Moving, scaling, turning, slanting or mirroring it (a drag, the
+  handles, the bars, the Transformations docker, Align, nudges) carries
+  its centre and mirror lines with the object, so the whole symmetry
+  takes the change and the drag's outline shows the copies too; so do
+  Duplicate, copies left by a right click or by Space during a drag,
+  Step and Repeat and a symmetry inside a group moved with the group.
+  The lines used to stay where they were: the copies mirrored the move
+  and a handle rearranged them, which looked like one object still being
+  edited (`pick_drag_tests::a_finished_symmetry_moves_whole_with_its_copies`,
+  `a_finished_symmetry_scales_whole_with_its_copies`,
+  `copies_and_groups_of_a_symmetry_take_its_line_along`, core test
+  `a_symmetry_is_carried_with_its_object`). A stretch carries the first
+  line through it; the others stay evenly spread. While the symmetry is
+  edited, moving its object leaves the lines where they are
+  (`editing_a_symmetry_a_drag_on_the_object_keeps_the_line`). Finish also
+  leaves a group entered while editing and the Shape tool a double click
+  on a member switched to.
 - Remove Symmetry (Alt+Shift+S) drops the effect; the copies disappear.
 - Break Symmetry Link (Alt+X) bakes the copies into objects of their own.
 
@@ -89,5 +106,6 @@ symmetry is edited (unless Show symmetry lines is off).
   defaults, then the evaluated `above` contains one copy spanning x 20..30.
 - Given two lines at 0 degrees through the origin, then there are three
   copies, one per other quadrant (core test `symmetry_two_lines`).
-- Given a symmetry object, when the original is moved, then the copies
-  move with it (they are recomputed, nothing is stored).
+- Given a symmetry object out of edit mode, when it is moved, then the
+  copies and the mirror lines move with it (the copies are recomputed
+  from the carried lines, nothing else is stored).

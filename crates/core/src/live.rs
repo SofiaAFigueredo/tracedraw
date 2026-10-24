@@ -399,7 +399,7 @@ impl Shape {
                     .iter()
                     .map(|c| {
                         let mut c = c.clone();
-                        c.transform = self.transform * c.transform;
+                        c.transform_by(self.transform);
                         c.visual_bounds()
                     })
                     .reduce(|a, b| a.union(b))
@@ -1124,6 +1124,30 @@ fn bevel(
     out
 }
 
+/// Carry the places an object's live effects hold with the object when
+/// `t` is applied to it (in the space its transform maps to): a
+/// symmetry's centre and the angle of its first mirror line, so its
+/// copies go with it. Left behind, the copies mirrored a move about the
+/// old centre and a scale or a turn rearranged them, as if the symmetry
+/// were still being edited. A move, a turn, a uniform scale and a mirror
+/// carry it exactly; a stretch carries the first line through it.
+pub fn carry_effects(effects: &mut [Effect], t: Affine) {
+    for e in effects {
+        if let Effect::Symmetry { center, angle, .. } = e {
+            let c = t * *center;
+            if !(c.x.is_finite() && c.y.is_finite()) {
+                continue;
+            }
+            let a = angle.to_radians();
+            let d = t * (*center + Vec2::new(a.cos(), a.sin())) - c;
+            if d.hypot() > 1e-12 && d.hypot().is_finite() {
+                *angle = d.y.atan2(d.x).to_degrees().rem_euclid(360.0);
+            }
+            *center = c;
+        }
+    }
+}
+
 /// Mirror copies for the Symmetry effect. With `n` lines through `center`
 /// the result is the dihedral orbit of the shape: reflections across each
 /// line and the rotations they generate (2n - 1 copies).
@@ -1321,6 +1345,79 @@ pub fn homography(src: &[Point; 4], dst: &[Point; 4]) -> Option<[f64; 8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A symmetry goes with its object: the centre and the first line are
+    /// carried by a move, a turn and a mirror, so the copies the object
+    /// makes are those of the transformed whole.
+    #[test]
+    fn a_symmetry_is_carried_with_its_object() {
+        let sym = |center: Point, angle: f64| Effect::Symmetry {
+            center,
+            angle,
+            lines: 2,
+        };
+        let angle_of = |e: &Effect| match e {
+            Effect::Symmetry { center, angle, .. } => (*center, *angle),
+            _ => unreachable!(),
+        };
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // A move: the centre moves, the line keeps its angle.
+        let mut fx = vec![sym(Point::new(10.0, 5.0), 30.0)];
+        carry_effects(&mut fx, Affine::translate((4.0, -2.0)));
+        let (c, a) = angle_of(&fx[0]);
+        assert!(
+            near(c.x, 14.0) && near(c.y, 3.0) && near(a, 30.0),
+            "{c:?} {a}"
+        );
+        // A quarter turn about the origin: the line turns with it.
+        carry_effects(&mut fx, Affine::rotate(std::f64::consts::FRAC_PI_2));
+        let (c, a) = angle_of(&fx[0]);
+        assert!(
+            near(c.x, -3.0) && near(c.y, 14.0) && near(a, 120.0),
+            "{c:?} {a}"
+        );
+        // A mirror across the upright axis: 120 degrees becomes 60.
+        carry_effects(&mut fx, Affine::scale_non_uniform(-1.0, 1.0));
+        let (c, a) = angle_of(&fx[0]);
+        assert!(
+            near(c.x, 3.0) && near(c.y, 14.0) && near(a, 60.0),
+            "{c:?} {a}"
+        );
+        // The copies of the carried symmetry are the transformed copies.
+        let mut s = Shape::new(
+            crate::ShapeId(1),
+            ShapeKind::Rect {
+                rect: Rect::new(0.0, 0.0, 4.0, 2.0),
+                radius: 0.0,
+                corners: None,
+            },
+        );
+        s.effects = vec![Effect::Symmetry {
+            center: Point::new(4.0, 1.0),
+            angle: 90.0,
+            lines: 1,
+        }];
+        let t = Affine::translate((10.0, 3.0)) * Affine::rotate(0.7);
+        let before: Vec<Rect> = evaluate(&s)
+            .above
+            .iter()
+            .map(|c| (t * c.page_path()).bounding_box())
+            .collect();
+        let mut moved = s.clone();
+        moved.transform_by(t);
+        let after: Vec<Rect> = evaluate(&moved)
+            .above
+            .iter()
+            .map(|c| c.page_path().bounding_box())
+            .collect();
+        assert_eq!(before.len(), after.len());
+        for (b, a) in before.iter().zip(&after) {
+            assert!(
+                near(b.x0, a.x0) && near(b.y0, a.y0) && near(b.x1, a.x1) && near(b.y1, a.y1),
+                "{b:?} {a:?}"
+            );
+        }
+    }
     use crate::geometry::Rect;
 
     fn rect_shape() -> Shape {

@@ -587,7 +587,7 @@ impl App {
             let id = self.engine.new_shape_id();
             let mut shape = crate::app::reid_pub(s, id, &mut self.engine);
             crate::styles::keep_links_to(&mut shape, &item.styles, &here);
-            shape.transform = Affine::translate(d) * shape.transform;
+            shape.transform_by(Affine::translate(d));
             ids.push(id);
             cmds.push(Command::AddShape { layer, shape });
         }

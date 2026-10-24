@@ -2710,6 +2710,15 @@ impl Shape {
     }
 
     /// Outline in page coordinates (transform applied).
+    /// Apply `t` to the object (in the space its transform maps to): its
+    /// transform, and the places its live effects hold, such as a
+    /// symmetry's mirror lines, which go with it (see
+    /// [`crate::live::carry_effects`]).
+    pub fn transform_by(&mut self, t: Affine) {
+        self.transform = t * self.transform;
+        crate::live::carry_effects(&mut self.effects, t);
+    }
+
     pub fn page_path(&self) -> BezPath {
         self.transform * self.local_path()
     }
@@ -3947,7 +3956,7 @@ impl Document {
         }
         let parent = self.parent_transform(id)?;
         let mut s = self.find_shape(id)?.clone();
-        s.transform = parent * s.transform;
+        s.transform_by(parent);
         Some(s)
     }
 

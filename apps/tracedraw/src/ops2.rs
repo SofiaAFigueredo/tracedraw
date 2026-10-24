@@ -737,6 +737,13 @@ impl App {
         if let Some(id) = self.symmetry_edit.take() {
             self.status.clear();
             self.raster.borrow_mut().invalidate();
+            // Nothing of the editing stays: a group entered by a double
+            // click on a member, or the Shape tool it switched to, would
+            // still pick a member of the symmetry instead of the whole.
+            self.exit_focus();
+            if self.tool == crate::tools::Tool::Shape {
+                self.set_tool(crate::tools::Tool::Pick);
+            }
             if self.doc().find_shape(id).is_some() {
                 self.select(vec![id]);
             }
@@ -2785,7 +2792,7 @@ impl App {
             for s in &shapes {
                 let mut c = s.clone();
                 c.id = self.engine.new_shape_id();
-                c.transform = Affine::translate((dx * k as f64, dy * k as f64)) * c.transform;
+                c.transform_by(Affine::translate((dx * k as f64, dy * k as f64)));
                 new_sel.push(c.id);
                 cmds.push(Command::AddShape { layer, shape: c });
             }

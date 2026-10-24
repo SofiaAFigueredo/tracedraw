@@ -537,7 +537,7 @@ fn fit_contents_to_page(page: &mut tracedraw_core::document::Page, all: bool) {
     for layer in page.layers.iter_mut() {
         for s in layer.shapes.iter_mut() {
             if shows(&s.bounds()) {
-                s.transform = t * s.transform;
+                s.transform_by(t);
             }
         }
     }

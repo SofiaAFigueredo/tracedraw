@@ -4556,7 +4556,7 @@ impl App {
                 Some(m) if smart => m,
                 _ => Affine::translate(self.duplicate_offset),
             };
-            shape.transform = step * shape.transform;
+            shape.transform_by(step);
             ids.push(id);
             pairs.push((s.id, id));
             copies.push(shape);
@@ -4920,12 +4920,24 @@ impl App {
             return;
         }
         let shapes = self.selection.clone();
+        // The symmetry being edited keeps its mirror lines where they are
+        // while its object is moved, scaled or turned; out of edit mode
+        // they go with the object (`Shape::transform_by`).
+        let keep_lines = self
+            .symmetry_edit
+            .filter(|id| shapes.contains(id))
+            .and_then(|id| self.doc().find_shape(id).map(|s| (id, s.effects.clone())));
         // Paragraph text takes a scale as a new frame (see text_frames.rs).
         if !self.transform_with_frames(&shapes, t) {
             self.run(Command::TransformShapes {
                 shapes: shapes.clone(),
                 transform: t,
             });
+        }
+        if let Some((shape, effects)) = keep_lines {
+            if let Err(e) = self.engine.amend(&Command::SetEffects { shape, effects }) {
+                self.status = e.to_string();
+            }
         }
         self.compensate_unlocked_clip_frames(&shapes, t);
         self.apply_hinting(&shapes);

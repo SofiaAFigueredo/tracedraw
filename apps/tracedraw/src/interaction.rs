@@ -275,7 +275,7 @@ impl App {
         let open = |children: &[tracedraw_core::Shape]| {
             children.iter().rev().filter(|c| c.visible).find_map(|c| {
                 let mut c = c.clone();
-                c.transform = s.transform * c.transform;
+                c.transform_by(s.transform);
                 self.leaf_at(&c, p, tol)
             })
         };
@@ -410,7 +410,7 @@ impl App {
             .filter(|c| c.visible && !c.locked)
             .map(|c| {
                 let mut c = c.clone();
-                c.transform = g.transform * c.transform;
+                c.transform_by(g.transform);
                 c
             })
             .filter(|c| {
@@ -808,7 +808,7 @@ impl App {
         for s in self.selected_shapes() {
             let id = self.engine.new_shape_id();
             let mut shape = crate::app::reid_pub(s, id, &mut self.engine);
-            shape.transform = t * shape.transform;
+            shape.transform_by(t);
             cmds.push(Command::AddShape { layer, shape });
         }
         if cmds.is_empty() {

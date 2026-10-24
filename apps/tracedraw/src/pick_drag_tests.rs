@@ -5989,3 +5989,46 @@ fn ctrl_q_bakes_an_envelope() {
     assert!(s.effects.is_empty(), "{:?}", s.effects);
     assert!(s.bounds().y1 > 41.0, "{:?}", s.bounds());
 }
+
+#[test]
+fn the_export_dialog_lists_only_the_presets_of_its_format() {
+    use crate::ui::dialogs::{presets_for, Dialog, ExportState};
+    let (ctx, mut app, _) = setup();
+    let f = &mut app.settings.formats;
+    for (name, format) in [("Web PNG", 2), ("Print JPG", 3), ("Big PNG", 2)] {
+        let st = ExportState {
+            format,
+            ..ExportState::default()
+        };
+        assert!(f.save_preset(name, &st));
+    }
+    let names = |st: &ExportState, app: &App| {
+        presets_for(&app.settings.formats.export_presets, st)
+            .into_iter()
+            .map(|p| p.name)
+            .collect::<Vec<_>>()
+    };
+    app.export();
+    // A PNG preset chosen, then the format changed to JPEG: the list holds
+    // only the JPEG preset and the PNG one is no longer chosen.
+    let Dialog::Export(st) = &mut app.dialog else {
+        panic!("no Export dialog");
+    };
+    st.format = 2;
+    st.preset = "Web PNG".into();
+    let png = st.clone();
+    assert_eq!(names(&png, &app), vec!["Web PNG", "Big PNG"]);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let Dialog::Export(st) = &mut app.dialog else {
+        panic!("no Export dialog");
+    };
+    assert_eq!(st.preset, "Web PNG", "a preset of the format stays chosen");
+    st.format = 3;
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let Dialog::Export(st) = &app.dialog else {
+        panic!("no Export dialog");
+    };
+    assert!(st.preset.is_empty(), "{:?}", st.preset);
+    let jpg = st.clone();
+    assert_eq!(names(&jpg, &app), vec!["Print JPG"]);
+}

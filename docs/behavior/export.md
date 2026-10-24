@@ -46,8 +46,10 @@ Office presets start with their own (see `options.md`).
 
 ## Presets
 
-Above the format: Preset, a list of the presets saved (each shown with
-its format, "(none)" first), "+" to save the dialog's choices under a
+Above the format: Preset, a list of the presets saved for the chosen
+format (each shown with its format, "(none)" first; a script filter
+lists none), and a preset chosen before the format changed is no longer
+chosen (#612), "+" to save the dialog's choices under a
 name (typed in a field that opens below, OK or Enter; the same name
 replaces that preset), a pencil to rename the chosen preset (a name
 another preset has is refused) and "−" to delete it. Choosing a preset
@@ -71,6 +73,7 @@ writes the lossless way (#592, `export::tests::webp_quality_shrinks_the_file`).
 - `export::tests::the_export_preview_shows_the_page_and_estimates_the_size`
 - `export::tests::sizes_read_in_kilobytes_and_megabytes`
 - `ui::dialogs::tests::a_pixel_size_sets_the_resolution_that_gives_it`
+- `pick_drag_tests::the_export_dialog_lists_only_the_presets_of_its_format`
 
 ## Format list and file properties
 

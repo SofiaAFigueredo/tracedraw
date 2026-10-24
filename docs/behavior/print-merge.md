@@ -128,9 +128,19 @@ at once (#437). From top to bottom:
   open drawing's own pages instead of making a new drawing: record 1 on
   the first page, record 2 on the second, and so on, as one undo step
   "Print Merge"; pages past the last record keep their fields, records
-  past the last page are left out, and a picture field whose cell is
-  empty keeps its placeholder picture (#618,
+  past the last page are left out, and a picture frame whose cell is
+  empty or whose picture does not load keeps the picture it holds (#618,
   `print_merge_docker::tests::on_every_page_merges_onto_the_drawings_own_pages`).
+  Frames that Place Inside Frame filled with On every page are marked
+  (object data `PrintMerge.Placed`) and keep their picture in such a
+  merge, so a drawing already merged and then given a stand-in on every
+  page is left as it is. The status bar says "Print merge filled {n}
+  page(s) of this drawing" (and how many records had no page left), or
+  "Pages already filled; no new drawing made" when nothing was left to
+  fill, with no undo step (#618,
+  `print_merge_docker::tests::on_every_page_a_merge_keeps_the_pictures_already_placed`).
+  Place Inside Frame with On every page leaves a frame on another page
+  that already holds something as it is, as on the page itself.
 - Update Field (when a placeholder is selected: a text holding only
   `<Field>`, or an object named `<Field>`): the selected placeholders
   take the chosen column, and with Image the Align and scale shown.
@@ -152,7 +162,8 @@ copies, then the fills).
 An object named `<Field>` of a picture field takes the record's picture
 inside it as a clip frame, placed by its Align and scale (placeholders
 without it fill it from the centre, as before); a clip frame's old
-contents, such as the placeholder picture, give way. On the page the
+contents, such as the placeholder picture, give way. An empty cell or a
+picture that does not load keeps the frame's current contents (#618). On the page the
 picture is placed inside the object; inside a group the object becomes,
 in place, a clip frame of its own outline holding the picture (#460). An object named `<Field>` of a QR field becomes the code, as
 large as its box allows.

@@ -668,7 +668,8 @@ fn fill_shape(
 /// for a picture field the picture goes inside it (a clip frame's old
 /// contents, such as the placeholder picture, give way), placed by its
 /// Align and scale; for a QR field the object becomes the code, as large
-/// as its box allows. Nothing happens for a picture that does not load.
+/// as its box allows. Nothing happens for a picture that does not load:
+/// the frame keeps what it holds.
 #[allow(clippy::too_many_arguments)]
 fn named_placeholder(
     st: &PrintMergeState,
@@ -681,6 +682,11 @@ fn named_placeholder(
 ) {
     match kind_of(st, i) {
         FieldKind::Image => {
+            // An empty cell or a picture that does not load keeps the
+            // frame's current picture (#618).
+            let Some(pic) = picture_in(value, &picture_dirs(st)) else {
+                return;
+            };
             if let ShapeKind::ClipFrame { contents, .. } = &s.kind {
                 if !contents.is_empty() {
                     cmds.push(Command::ExtractContents { clip: s.id });
@@ -689,9 +695,6 @@ fn named_placeholder(
                     });
                 }
             }
-            let Some(pic) = picture_in(value, &picture_dirs(st)) else {
-                return;
-            };
             let (scale, anchor) = placement_of(s);
             let rect = place(s.bounds(), pic.mm.0, pic.mm.1, scale, anchor);
             let id = new_id();
@@ -771,7 +774,8 @@ fn nested_picture_frame(
         shape.stroke = None;
         shape.fill = Fill::None;
         contents.push(shape);
-    } else if !matches!(s.kind, ShapeKind::ClipFrame { .. }) {
+    } else {
+        // No picture: the frame keeps its contents (#618).
         return;
     }
     cmds.push(Command::SetShapeKind {
@@ -852,16 +856,47 @@ pub fn perform(app: &mut App, st: &PrintMergeState) {
     }
 }
 
+/// Object data on a frame that Place Inside Frame filled with On every
+/// page: its picture is the user's, and a merge onto the drawing's own
+/// pages leaves it (#618).
+pub const PLACED_DATA: &str = "PrintMerge.Placed";
+
+/// What [`merge_onto_pages`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InPlaceMerge {
+    /// Pages that had fields to fill; 0 when everything was already filled.
+    pub filled: usize,
+    /// Records past the drawing's last page, left out.
+    pub left_out: usize,
+}
+
+/// `s` with the names of frames placed by Place Inside Frame on every
+/// page taken off, so they are no fields to fill.
+fn without_placed_frames(s: &mut Shape) {
+    if s.data.iter().any(|(k, _)| k == PLACED_DATA) {
+        s.name = None;
+    }
+    match &mut s.kind {
+        ShapeKind::Group { children } => children.iter_mut().for_each(without_placed_frames),
+        ShapeKind::ClipFrame { contents, .. } => {
+            contents.iter_mut().for_each(without_placed_frames)
+        }
+        _ => {}
+    }
+}
+
 /// Fill the drawing's own pages instead of copies (the docker's merge
 /// with On every page, #618): record k goes on the k-th page from the
 /// first, as one undo step; pages past the last record, and records past
-/// the last page, are left out. Returns the pages filled.
+/// the last page, are left out. Frames Place Inside Frame filled on every
+/// page keep their picture, and a field whose picture does not load keeps
+/// what it shows, so a drawing already filled is left as it is.
 pub fn merge_onto_pages(
     engine: &mut tracedraw_core::Engine,
     st: &PrintMergeState,
-) -> Result<usize, String> {
+) -> Result<InPlaceMerge, String> {
     let rows = values(st);
-    let pages: Vec<tracedraw_core::document::Page> = engine
+    let mut pages: Vec<tracedraw_core::document::Page> = engine
         .document()
         .pages
         .iter()
@@ -871,17 +906,28 @@ pub fn merge_onto_pages(
     if pages.is_empty() {
         return Err(crate::i18n::tr("merge.no_records"));
     }
+    for p in &mut pages {
+        for l in &mut p.layers {
+            l.shapes.iter_mut().for_each(without_placed_frames);
+        }
+    }
     let mut cmds = Vec::new();
+    let mut filled = 0;
     for (p, row) in pages.iter().zip(&rows) {
         let mut new_id = || engine.new_shape_id();
-        cmds.extend(fill_page(st, p, row, &mut new_id));
+        let page_cmds = fill_page(st, p, row, &mut new_id);
+        filled += usize::from(!page_cmds.is_empty());
+        cmds.extend(page_cmds);
     }
     if !cmds.is_empty() {
         engine
             .run_batch("Print Merge", &cmds)
             .map_err(|e| e.to_string())?;
     }
-    Ok(pages.len())
+    Ok(InPlaceMerge {
+        filled,
+        left_out: rows.len() - pages.len(),
+    })
 }
 
 /// The merged pages as a drawing of their own (the docker's Create

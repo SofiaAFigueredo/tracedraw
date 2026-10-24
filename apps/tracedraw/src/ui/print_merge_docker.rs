@@ -226,13 +226,10 @@ impl App {
                 shape: s.id,
                 name: Some(field.clone()),
             });
-            let mut data: Vec<(String, String)> = s
-                .data
-                .iter()
-                .filter(|(k, _)| k != SCALE_DATA && k != ANCHOR_DATA)
-                .cloned()
-                .collect();
-            data.extend(placement_data(d.scale, d.anchor));
+            let mut data = frame_data(s, &d);
+            if picture.is_none() {
+                data.retain(|(k, _)| k != crate::print_merge::PLACED_DATA);
+            }
             cmds.push(Command::SetObjectData { shape: s.id, data });
             // The stand-in picture, in a frame on the page.
             let on_page = self.doc().top_level_of(s.id) == Some(s.id);
@@ -354,17 +351,18 @@ impl App {
                     shape: target,
                     name: Some(field.to_string()),
                 });
-                let mut data: Vec<(String, String)> = s
-                    .data
-                    .iter()
-                    .filter(|(k, _)| k != SCALE_DATA && k != ANCHOR_DATA)
-                    .cloned()
-                    .collect();
-                data.extend(placement_data(d.scale, d.anchor));
                 cmds.push(Command::SetObjectData {
                     shape: target,
-                    data,
+                    data: frame_data(s, d),
                 });
+                // A frame there that already holds something keeps it,
+                // as on the page itself.
+                if shapes.iter().any(|o| {
+                    o.id == target
+                        && matches!(&o.kind, ShapeKind::ClipFrame { contents, .. } if !contents.is_empty())
+                }) {
+                    continue;
+                }
                 let mut pic = Shape::new(
                     pid,
                     ShapeKind::Bitmap {
@@ -483,8 +481,17 @@ impl App {
         // one per page, rather than into a new drawing (#618).
         if self.merge_docker.all_pages {
             match crate::print_merge::merge_onto_pages(&mut self.engine, &st) {
-                Ok(n) => {
-                    self.status = crate::i18n::trf("status.merge_done", &[("n", &n.to_string())]);
+                Ok(m) => {
+                    self.status = if m.filled == 0 {
+                        crate::i18n::tr("status.merge_nothing_to_fill")
+                    } else if m.left_out > 0 {
+                        crate::i18n::trf(
+                            "status.merge_filled_left_out",
+                            &[("n", &m.filled.to_string()), ("m", &m.left_out.to_string())],
+                        )
+                    } else {
+                        crate::i18n::trf("status.merge_filled", &[("n", &m.filled.to_string())])
+                    };
                     if print {
                         self.print();
                     }
@@ -505,6 +512,25 @@ impl App {
             Err(e) => self.status = e,
         }
     }
+}
+
+/// A frame's object data after Place Inside Frame: its own, with the
+/// docker's Align and scale, and with On every page the mark that keeps
+/// its picture out of a merge onto the drawing's pages (#618).
+fn frame_data(s: &Shape, d: &MergeDocker) -> Vec<(String, String)> {
+    let mut data: Vec<(String, String)> = s
+        .data
+        .iter()
+        .filter(|(k, _)| {
+            k != SCALE_DATA && k != ANCHOR_DATA && k != crate::print_merge::PLACED_DATA
+        })
+        .cloned()
+        .collect();
+    data.extend(placement_data(d.scale, d.anchor));
+    if d.all_pages {
+        data.push((crate::print_merge::PLACED_DATA.to_string(), "1".to_string()));
+    }
+    data
 }
 
 /// Align and scale as object data.
@@ -932,6 +958,115 @@ mod tests {
         app.undo();
         assert_eq!(text_on(&app, 0), "<Name>");
         assert_eq!(text_on(&app, 1), "<Name>");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The flow of the report's video (#618): a merged drawing whose
+    /// photo frames came from the pictures folder; the folder is cleared,
+    /// a stand-in goes into a second frame with Place Inside Frame on
+    /// every page; Create Merged Document with On every page then leaves
+    /// both frames on every page as they are, makes no new drawing and
+    /// says that nothing was left to fill.
+    #[test]
+    fn on_every_page_a_merge_keeps_the_pictures_already_placed() {
+        let dir = std::env::temp_dir().join(format!("td_merge_keep_{}", std::process::id()));
+        let pics = dir.join("pics");
+        std::fs::create_dir_all(&pics).unwrap();
+        for (name, side) in [("a.png", 30), ("b.png", 40)] {
+            image::RgbaImage::from_pixel(side, side, image::Rgba([0, 0, 200, 255]))
+                .save(pics.join(name))
+                .unwrap();
+        }
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([200, 0, 0, 255]))
+            .save(dir.join("stand_in.png"))
+            .unwrap();
+        let mut app = App::headless();
+        let mut st = data(&dir);
+        st.rows[0][1] = "a.png".into();
+        st.rows[1][1] = "b.png".into();
+        st.pictures = Some(pics.clone());
+        app.merge_state = Some(st);
+        let oval = |app: &mut App, x: f64| {
+            app.new_shape(ShapeKind::Ellipse {
+                rect: Rect::new(x, 10.0, x + 30.0, 40.0),
+                arc: None,
+            })
+            .expect("ellipse")
+        };
+        // The card: a name, the blue photo frame and a red circle.
+        app.merge_docker.kind = 0;
+        app.merge_docker.column = 0;
+        app.insert_merge_field();
+        let blue = oval(&mut app, 10.0);
+        oval(&mut app, 60.0);
+        app.merge_docker.kind = 1;
+        app.merge_docker.column = 1;
+        app.select(vec![blue]);
+        app.place_merge_field_inside();
+        app.create_merged_document(false);
+        let merged = app.active_doc;
+        assert_ne!(merged, 0, "the merged drawing");
+        assert_eq!(app.doc().pages.len(), 2);
+        let widths = |app: &App, k: usize, x: f64| -> Vec<u32> {
+            all_of(&app.doc().pages[k])
+                .iter()
+                .filter(|s| {
+                    matches!(s.kind, ShapeKind::ClipFrame { .. }) && (s.bounds().x0 - x).abs() < 0.5
+                })
+                .flat_map(|s| match &s.kind {
+                    ShapeKind::ClipFrame { contents, .. } => contents
+                        .iter()
+                        .filter_map(|c| match c.kind {
+                            ShapeKind::Bitmap { width_px, .. } => Some(width_px),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                })
+                .collect()
+        };
+        assert_eq!(widths(&app, 0, 10.0), vec![30]);
+        assert_eq!(widths(&app, 1, 10.0), vec![40]);
+        // In the merged drawing: clear the pictures folder, put the
+        // stand-in into the red circle on every page.
+        if let Some(st) = app.merge_state.as_mut() {
+            st.pictures = None;
+        }
+        app.merge_docker.placeholder = dir.join("stand_in.png").display().to_string();
+        app.merge_docker.all_pages = true;
+        app.page = app.doc().pages[0].id;
+        let red = all_of(&app.doc().pages[0])
+            .iter()
+            .find(|s| {
+                matches!(s.kind, ShapeKind::Ellipse { .. }) && (s.bounds().x0 - 60.0).abs() < 0.5
+            })
+            .map(|s| s.id)
+            .expect("red circle");
+        app.select(vec![red]);
+        app.place_merge_field_inside();
+        assert_eq!(widths(&app, 0, 60.0), vec![10]);
+        assert_eq!(widths(&app, 1, 60.0), vec![10]);
+        let before = app.doc().clone();
+        let docs = app.docs.len();
+        app.create_merged_document(false);
+        assert_eq!(app.active_doc, merged, "no new drawing");
+        assert_eq!(app.docs.len(), docs);
+        assert_eq!(app.doc(), &before, "both circles kept on every page");
+        assert_eq!(app.status, crate::i18n::tr("status.merge_nothing_to_fill"));
+        // With the pictures there again, the photo frames are filled from
+        // the records once more, and the red circles keep the stand-in.
+        if let Some(st) = app.merge_state.as_mut() {
+            st.pictures = Some(pics.clone());
+        }
+        app.create_merged_document(false);
+        assert_eq!(widths(&app, 0, 10.0), vec![30]);
+        assert_eq!(widths(&app, 1, 10.0), vec![40]);
+        assert_eq!(widths(&app, 0, 60.0), vec![10]);
+        assert_eq!(widths(&app, 1, 60.0), vec![10]);
+        assert_eq!(
+            app.status,
+            crate::i18n::trf("status.merge_filled", &[("n", "2")])
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

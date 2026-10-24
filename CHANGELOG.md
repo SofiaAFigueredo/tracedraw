@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Print Merge: a picture frame whose cell is empty or whose picture does not load keeps the picture it holds, and with On every page Create Merged Document leaves frames that Place Inside Frame filled on every page as they are; when nothing is left to fill it says so and changes nothing, and the status bar no longer says pages were created by a merge into the drawing's own pages (#618).
+
 - Browser version: the module is optimised for size with binaryen's wasm-opt and loses its name, debug and producer sections, 36.9 MB down to 31.6 MB (13.3 to 12.7 MB compressed). Nothing changes in what it does, and frame and script times stay the same.
 
 - The default palette's menu has Rows > 1 Row, 2 Rows, 3 Rows, and with more than one row the swatches fill line by line (the second line goes on where the first ends) and scroll one swatch at a time (#610).

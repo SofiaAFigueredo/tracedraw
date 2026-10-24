@@ -254,6 +254,8 @@ pub struct PrintState {
     pub printer: Option<String>,
     /// The printers the system has, as the dialog opened.
     pub printers: Vec<crate::printers::Printer>,
+    /// The printer list is still being read (#614).
+    pub looking_for_printers: bool,
     /// 0 as the pages are, 1 portrait, 2 landscape (fixed sheets).
     pub orientation: usize,
     /// 0 the whole drawing, 1 the current page, 2 the pages in `pages`,
@@ -487,6 +489,7 @@ impl Default for PrintState {
             destination: 0,
             printer: None,
             printers: Vec::new(),
+            looking_for_printers: false,
             orientation: 0,
             range: 0,
             pages: String::new(),
@@ -3275,6 +3278,10 @@ fn print_group(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui)) {
 
 fn print_dialog(app: &mut App, ctx: &Context, st: &mut PrintState, close: &mut bool) {
     take_saved_sheet(app, st);
+    if app.poll_printers(st) {
+        // Look again shortly while the list is read.
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
     window(ctx, tr("dialog.print")).show(ctx, |ui| {
         let issues = if app.settings.printing.preflight {
             st.preflight
@@ -3316,7 +3323,13 @@ fn print_dialog(app: &mut App, ctx: &Context, st: &mut PrintState, close: &mut b
                 4 => print_tab_prepress(app, ui, st),
                 5 => print_tab_postscript(ui, st),
                 6 => print_tab_issues(app, ui, &issues, close),
-                _ => print_tab_general(app, ui, st),
+                _ => {
+                    if let Some(p) = print_tab_general(app, ui, st) {
+                        if let Err(e) = crate::printers::open_properties(&p) {
+                            app.status = e;
+                        }
+                    }
+                }
             }
         });
         ui.separator();
@@ -3350,7 +3363,9 @@ fn print_dialog(app: &mut App, ctx: &Context, st: &mut PrintState, close: &mut b
     });
 }
 
-fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) {
+/// The General tab; the printer whose Properties button was clicked.
+fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) -> Option<String> {
+    let mut properties = None;
     print_group(ui, &tr("print.destination"), |ui| {
         egui::Grid::new("print_dest")
             .num_columns(2)
@@ -3365,27 +3380,53 @@ fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) {
                     (Some(p), 0) => p.clone(),
                     _ => tr(dests[st.destination.min(2)]),
                 };
-                egui::ComboBox::from_id_salt("print_destination")
-                    .selected_text(selected)
-                    .width(300.0)
-                    .show_ui(ui, |ui| {
-                        for p in st.printers.clone() {
-                            let is = on_printer && st.printer.as_deref() == Some(p.name.as_str());
-                            if ui.selectable_label(is, &p.name).clicked() {
-                                st.destination = 0;
-                                st.printer = Some(p.name.clone());
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("print_destination")
+                        .selected_text(selected)
+                        .width(300.0)
+                        .show_ui(ui, |ui| {
+                            if st.looking_for_printers && st.printers.is_empty() {
+                                ui.add_enabled(false, egui::Label::new(tr("print.looking")));
                             }
-                        }
-                        for (i, d) in dests.iter().enumerate() {
-                            let is = st.destination == i && (i != 0 || !on_printer);
-                            if ui.selectable_label(is, tr(d)).clicked() {
-                                st.destination = i;
-                                if i == 0 {
-                                    st.printer = None;
+                            for p in st.printers.clone() {
+                                let is =
+                                    on_printer && st.printer.as_deref() == Some(p.name.as_str());
+                                if ui.selectable_label(is, &p.name).clicked() {
+                                    st.destination = 0;
+                                    st.printer = Some(p.name.clone());
                                 }
                             }
-                        }
-                    });
+                            for (i, d) in dests.iter().enumerate() {
+                                let is = st.destination == i && (i != 0 || !on_printer);
+                                if ui.selectable_label(is, tr(d)).clicked() {
+                                    st.destination = i;
+                                    if i == 0 {
+                                        st.printer = None;
+                                    }
+                                }
+                            }
+                        });
+                    // The printer's own settings (#614).
+                    let gear = ui
+                        .add_enabled(
+                            on_printer,
+                            egui::Button::new("").min_size(egui::vec2(24.0, 22.0)),
+                        )
+                        .on_hover_text(tr("print.properties"));
+                    crate::ui::icons::draw_action(
+                        ui.painter(),
+                        egui::Rect::from_center_size(gear.rect.center(), egui::vec2(16.0, 16.0)),
+                        crate::ui::icons::Action::Options,
+                        if on_printer {
+                            Tokens::icon()
+                        } else {
+                            Tokens::icon_off()
+                        },
+                    );
+                    if gear.clicked() {
+                        properties = st.printer.clone();
+                    }
+                });
                 ui.end_row();
                 ui.label(tr("print.orientation"));
                 let ors = [
@@ -3405,6 +3446,21 @@ fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) {
                         }
                     });
                 ui.end_row();
+                // What the system says of the printer chosen (#614).
+                let chosen = st
+                    .printers
+                    .iter()
+                    .find(|p| on_printer && st.printer.as_deref() == Some(p.name.as_str()));
+                let rows = [
+                    ("print.status", chosen.map(|p| tr(p.state.key()))),
+                    ("print.location", chosen.map(|p| p.location.clone())),
+                    ("print.comment", chosen.map(|p| p.comment.clone())),
+                ];
+                for (key, value) in rows {
+                    ui.label(tr(key));
+                    ui.label(value.unwrap_or_default());
+                    ui.end_row();
+                }
             });
     });
     ui.add_space(6.0);
@@ -3453,6 +3509,7 @@ fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) {
     });
     // Keep the older "all pages" choice in step with the range.
     st.all_pages = st.range != 1;
+    properties
 }
 
 fn print_tab_color(ui: &mut Ui, st: &mut PrintState) {

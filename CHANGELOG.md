@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Print: the printer list is read off the interface's thread, so a slow print server no longer holds the window when the dialog opens; the printers are in name order with the default chosen where it stands, and the General tab shows the chosen printer's Status, Location and Comment, with a Properties button that opens the printer's own settings (#614).
+
 - Browser version: the module is optimised for size with binaryen's wasm-opt and loses its name, debug and producer sections, 36.9 MB down to 31.6 MB (13.3 to 12.7 MB compressed). Nothing changes in what it does, and frame and script times stay the same.
 
 - The default palette's menu has Rows > 1 Row, 2 Rows, 3 Rows, and with more than one row the swatches fill line by line (the second line goes on where the first ends) and scroll one swatch at a time (#610).

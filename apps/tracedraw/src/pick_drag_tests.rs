@@ -6781,3 +6781,100 @@ fn the_edge_of_the_shape_being_drawn_shows_over_a_wide_outline() {
         frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
     }
 }
+
+/// File > Print reads the printers off the interface's thread (#614): the
+/// dialog opens at once and says it is looking; then the list comes in
+/// name order with the default chosen where it stands, and the General
+/// tab shows the chosen printer's status, location and comment, next to a
+/// Properties button.
+#[test]
+fn the_print_dialog_reads_the_printers_off_the_interface_thread() {
+    use crate::printers::{Printer, PrinterState};
+    use crate::ui::dialogs::Dialog;
+    fn slow_list() -> Vec<Printer> {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        vec![
+            Printer {
+                name: "Oce TDS600".into(),
+                ..Default::default()
+            },
+            Printer {
+                name: "3-102. KONICA MINOLTA C220".into(),
+                default: true,
+                state: PrinterState::Ready,
+                location: "Room 3-102".into(),
+                comment: "Colour, A3".into(),
+            },
+            Printer {
+                name: "Adobe PDF".into(),
+                ..Default::default()
+            },
+        ]
+    }
+    fn texts(ctx: &egui::Context, app: &mut App) -> Vec<String> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+        out.textures_delta.clear();
+        fn walk(s: &egui::Shape, texts: &mut Vec<String>) {
+            match s {
+                egui::Shape::Text(t) => texts.push(t.galley.text().to_string()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, texts)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        out.shapes.iter().for_each(|c| walk(&c.shape, &mut texts));
+        texts
+    }
+    let (ctx, mut app, _) = setup();
+    app.printers_seen.clear();
+    app.print();
+    app.fetch_printers(slow_list);
+    texts(&ctx, &mut app);
+    let state = |app: &App| match &app.dialog {
+        Dialog::Print(st) => st.clone(),
+        other => panic!("no Print dialog: {other:?}"),
+    };
+    assert!(state(&app).looking_for_printers, "the dialog does not wait");
+    let mut shown = Vec::new();
+    for _ in 0..300 {
+        shown = texts(&ctx, &mut app);
+        if !state(&app).looking_for_printers {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let st = state(&app);
+    assert!(!st.looking_for_printers);
+    let names: Vec<&str> = st.printers.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["3-102. KONICA MINOLTA C220", "Adobe PDF", "Oce TDS600"]
+    );
+    assert_eq!(st.printer.as_deref(), Some("3-102. KONICA MINOLTA C220"));
+    shown.extend(texts(&ctx, &mut app));
+    for t in [
+        crate::i18n::tr("print.status"),
+        crate::i18n::tr("print.status_ready"),
+        crate::i18n::tr("print.location"),
+        "Room 3-102".to_string(),
+        crate::i18n::tr("print.comment"),
+        "Colour, A3".to_string(),
+    ] {
+        assert!(shown.contains(&t), "{t} not shown: {shown:?}");
+    }
+    // The next Print starts from the list read last.
+    app.dialog = Dialog::None;
+    app.print();
+    assert_eq!(state(&app).printers.len(), 3);
+    assert_eq!(
+        state(&app).printer.as_deref(),
+        Some("3-102. KONICA MINOLTA C220")
+    );
+}

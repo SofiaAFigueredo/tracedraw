@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Shape tool: two or more neighbouring nodes deleted together leave one curve between the nodes either side, fitted to the old outline, so it keeps its general shape. Line nodes deleted together left a straight line (#675).
+
 - Convert Outline to Object (Ctrl+Shift+Q) on an outline with round ends or round corners: each round end is now two real curves meeting at its tip, with nodes where it meets the sides, and each round corner a curve, instead of many tiny straight segments. Curved sides also get fewer nodes (#623).
 
 - File > Export now starts with the choices of the last export of the session (format, resolution, quality, transparency, pages and PDF settings; Selected only starts off again) instead of resetting them each time. To keep them for the next session too, turn on Options > Global > File Formats > Remember the settings of the last export, which new preferences now have on and which now keeps WebP lossless as well (#617).

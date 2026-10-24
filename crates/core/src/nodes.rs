@@ -620,6 +620,182 @@ pub fn delete_node(path: &BezPath, index: usize) -> BezPath {
     BezPath::from_vec(els)
 }
 
+/// Delete the nodes `indices` together. Two or more neighbouring nodes
+/// going at once become one curve between the nodes either side, fitted
+/// to the old segments, so the outline keeps its general shape even when
+/// every segment was a line (#675). A
+/// lone node goes as [`delete_node`] takes it.
+pub fn delete_nodes(path: &BezPath, indices: &[usize]) -> BezPath {
+    let els: Vec<PathEl> = normalize(path).elements().to_vec();
+    let gone = |i: usize| indices.contains(&i);
+    let rings: Vec<(Ring, bool)> = split_segments(path)
+        .iter()
+        .map(|sub| (ring(sub, &els), sub.closed))
+        .collect();
+    // With no two neighbouring nodes going between kept ones, one node at
+    // a time gives the same.
+    let runs = rings.iter().any(|((nodes, _), closed)| {
+        let n = nodes.len();
+        let kept = |k: usize| !gone(nodes[k].0);
+        if *closed {
+            (0..n).any(kept) && (0..n).any(|k| !kept(k) && !kept((k + 1) % n))
+        } else {
+            (1..n.saturating_sub(2))
+                .any(|k| !kept(k) && !kept(k + 1) && (0..k).any(kept) && (k + 2..n).any(kept))
+        }
+    });
+    if !runs {
+        let mut sorted = indices.to_vec();
+        sorted.sort_unstable_by(|a, b| b.cmp(a));
+        sorted.dedup();
+        return sorted.iter().fold(path.clone(), |p, &i| delete_node(&p, i));
+    }
+    let mut out = BezPath::new();
+    for ((nodes, implicit_close), closed) in &rings {
+        rebuild_without(nodes, *closed, *implicit_close, &gone, &mut out);
+    }
+    out
+}
+
+/// A subpath's nodes in order, each with its index, place and the segment
+/// arriving at it (a closed subpath's start: its closing segment), and
+/// whether that closing segment is the ClosePath's own line.
+type Ring = (Vec<(usize, Point, Option<PathEl>)>, bool);
+
+fn ring(sub: &Segs, els: &[PathEl]) -> Ring {
+    let mut nodes: Vec<(usize, Point, Option<PathEl>)> = vec![(sub.start_index, sub.start, None)];
+    let mut implicit_close = false;
+    for &(el, _, to, own) in &sub.segs {
+        if sub.closed && to == sub.start_index {
+            nodes[0].2 = Some(el);
+            implicit_close = matches!(els.get(own), Some(PathEl::ClosePath));
+        } else {
+            nodes.push((to, seg_end(&el), Some(el)));
+        }
+    }
+    (nodes, implicit_close)
+}
+
+/// Append the subpath `nodes` without those `gone` takes to `out` (see
+/// [`delete_nodes`]).
+fn rebuild_without(
+    nodes: &[(usize, Point, Option<PathEl>)],
+    closed: bool,
+    implicit_close: bool,
+    gone: &dyn Fn(usize) -> bool,
+    out: &mut BezPath,
+) {
+    let n = nodes.len();
+    let kept: Vec<usize> = (0..n).filter(|&k| !gone(nodes[k].0)).collect();
+    let Some(&first) = kept.first() else {
+        return;
+    };
+    if !closed && kept.len() < 2 {
+        return;
+    }
+    out.move_to(nodes[first].1);
+    let mut ends: Vec<usize> = kept[1..].to_vec();
+    if closed {
+        ends.push(first);
+    }
+    let mut a = first;
+    for (i, &c) in ends.iter().enumerate() {
+        // The segments from kept node `a` to the next kept one.
+        let mut segs = Vec::new();
+        let mut k = a;
+        loop {
+            k = (k + 1) % n;
+            if let Some(el) = nodes[k].2 {
+                segs.push(el);
+            }
+            if k == c {
+                break;
+            }
+        }
+        let start = nodes[a].1;
+        let end = nodes[c].1;
+        let el = match segs.as_slice() {
+            [one] => *one,
+            [seg_a, seg_b] => joined_segment(start, *seg_a, *seg_b).unwrap_or(PathEl::LineTo(end)),
+            _ => fitted_run(start, &segs).unwrap_or(PathEl::LineTo(end)),
+        };
+        // An untouched closing line stays the ClosePath's own.
+        let own_close = closed && i + 1 == ends.len() && implicit_close && first == 0;
+        if !(own_close && segs.len() == 1) {
+            out.push(el);
+        }
+        a = c;
+    }
+    if closed {
+        out.close_path();
+    }
+}
+
+/// One cubic from `a` through the segments `segs` (lines or cubics, each
+/// from the end of the one before), its two handles fitted freely to their
+/// shape: the deleted nodes' corner or bump is kept as a curve, even
+/// between two ends whose segments ran the same way.
+fn fitted_run(a: Point, segs: &[PathEl]) -> Option<PathEl> {
+    use kurbo::ParamCurveNearest;
+    let mut pts = Vec::new();
+    let mut from = a;
+    for (k, el) in segs.iter().enumerate() {
+        let c = element_cubic(from, *el)?;
+        from = c.p3;
+        sample_cubic(c, 8, k > 0, &mut pts);
+    }
+    let end = from;
+    // Chord-length parameters, then a couple of passes moving each onto
+    // the nearest point of the fit.
+    let mut u = Vec::with_capacity(pts.len());
+    let mut acc = 0.0;
+    for (k, p) in pts.iter().enumerate() {
+        if k > 0 {
+            acc += (*p - pts[k - 1]).hypot();
+        }
+        u.push(acc);
+    }
+    if acc <= 1e-9 {
+        return None;
+    }
+    for x in u.iter_mut() {
+        *x /= acc;
+    }
+    let mut handles = (a.lerp(end, 1.0 / 3.0), a.lerp(end, 2.0 / 3.0));
+    for pass in 0..3 {
+        let (mut c11, mut c12, mut c22) = (0.0, 0.0, 0.0);
+        let (mut r1, mut r2) = (Vec2::ZERO, Vec2::ZERO);
+        for (pt, &t) in pts.iter().zip(u.iter()) {
+            let s = 1.0 - t;
+            let (b0, b1, b2, b3) = (s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t);
+            let r = pt.to_vec2() - a.to_vec2() * b0 - end.to_vec2() * b3;
+            c11 += b1 * b1;
+            c12 += b1 * b2;
+            c22 += b2 * b2;
+            r1 += r * b1;
+            r2 += r * b2;
+        }
+        let det = c11 * c22 - c12 * c12;
+        if det.abs() < 1e-12 {
+            break;
+        }
+        let h1 = (r1 * c22 - r2 * c12) / det;
+        let h2 = (r2 * c11 - r1 * c12) / det;
+        if !(h1.x.is_finite() && h1.y.is_finite() && h2.x.is_finite() && h2.y.is_finite()) {
+            break;
+        }
+        handles = (h1.to_point(), h2.to_point());
+        if pass == 2 {
+            break;
+        }
+        let cubic = kurbo::CubicBez::new(a, handles.0, handles.1, end);
+        for (pt, t) in pts.iter().zip(u.iter_mut()) {
+            *t = cubic.nearest(*pt, 1e-6).t;
+        }
+    }
+    Some(PathEl::CurveTo(handles.0, handles.1, end))
+}
+
 /// Split the segment ending at `index` at parameter `t`, inserting a node.
 pub fn add_node(path: &BezPath, index: usize, t: f64) -> BezPath {
     let n = normalize(path);
@@ -1658,6 +1834,87 @@ mod tests {
             let d = nearest_segment(&back, q).unwrap().2;
             assert!(d < 0.3, "off by {d} at t={t}");
         }
+    }
+
+    fn square() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((0.0, 10.0));
+        p.close_path();
+        p
+    }
+
+    /// Two neighbouring line nodes deleted together become one curve
+    /// fitted to the old corner, keeping the outer directions (#675).
+    #[test]
+    fn neighbouring_line_nodes_deleted_together_become_a_curve() {
+        let q = delete_nodes(&square(), &[1, 2]);
+        let els = q.elements();
+        assert_eq!(nodes(&q).len(), 2, "{els:?}");
+        assert_eq!(els[0], PathEl::MoveTo(Point::new(0.0, 0.0)));
+        let PathEl::CurveTo(c1, c2, end) = els[1] else {
+            panic!("a curve: {els:?}");
+        };
+        assert_eq!(end, Point::new(0.0, 10.0));
+        // The curve reaches out towards the old right side.
+        assert!(c1.x > 5.0 && c2.x > 5.0, "{c1:?} {c2:?}");
+        let b = kurbo::Shape::bounding_box(&q);
+        assert!(b.x1 > 6.0 && b.x1 < 12.0, "{b:?}");
+        // The closing line is still the ClosePath's own.
+        assert_eq!(els.len(), 3);
+        assert_eq!(els[2], PathEl::ClosePath);
+        // Deleting them one at a time, or one alone, keeps straight lines.
+        let one = delete_nodes(&square(), &[1]);
+        assert_eq!(one, delete_node(&square(), 1));
+        assert!(!one
+            .elements()
+            .iter()
+            .any(|e| matches!(e, PathEl::CurveTo(..))));
+    }
+
+    /// A run through a closed curve's start goes the same way: the curve
+    /// starts at the next node kept.
+    #[test]
+    fn a_run_through_the_start_of_a_closed_curve_becomes_a_curve() {
+        let q = delete_nodes(&square(), &[0, 3]);
+        let els = q.elements();
+        assert_eq!(nodes(&q).len(), 2, "{els:?}");
+        assert_eq!(els[0], PathEl::MoveTo(Point::new(10.0, 0.0)));
+        assert_eq!(els[1], PathEl::LineTo(Point::new(10.0, 10.0)));
+        let PathEl::CurveTo(c1, c2, end) = els[2] else {
+            panic!("a curve: {els:?}");
+        };
+        assert_eq!(end, Point::new(10.0, 0.0));
+        assert!(c1.x < 7.0 && c2.x < 7.0, "{c1:?} {c2:?}");
+        assert_eq!(els[3], PathEl::ClosePath);
+    }
+
+    /// On an open curve the run between the ends becomes one curve; a run
+    /// at an end only shortens it.
+    #[test]
+    fn runs_on_an_open_curve() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((20.0, 10.0));
+        p.line_to((30.0, 0.0));
+        p.line_to((40.0, 0.0));
+        let q = delete_nodes(&p, &[1, 2, 3]);
+        assert_eq!(q.elements().len(), 2, "{q:?}");
+        let PathEl::CurveTo(_, _, end) = q.elements()[1] else {
+            panic!("a curve: {q:?}");
+        };
+        assert_eq!(end, Point::new(40.0, 0.0));
+        assert!(kurbo::Shape::bounding_box(&q).y1 > 2.0, "{q:?}");
+        // The last two nodes: the curve ends at the third.
+        let q = delete_nodes(&p, &[3, 4]);
+        assert_eq!(nodes(&q).len(), 3, "{q:?}");
+        assert_eq!(
+            q.elements().last(),
+            Some(&PathEl::LineTo(Point::new(20.0, 10.0)))
+        );
     }
 
     #[test]

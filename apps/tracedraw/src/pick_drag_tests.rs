@@ -6063,6 +6063,127 @@ fn save_as_starts_at_the_cdr_type_and_version_the_options_set() {
     assert_eq!(save_as(&ctx, &mut app), (true, 15));
 }
 
+/// One frame; the texts drawn and where.
+fn texts_drawn(
+    ctx: &egui::Context,
+    app: &mut App,
+    events: Vec<Event>,
+) -> Vec<(String, egui::Rect)> {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        events,
+        ..Default::default()
+    };
+    let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+    out.textures_delta.clear();
+    fn walk(s: &egui::Shape, texts: &mut Vec<(String, egui::Rect)>) {
+        match s {
+            egui::Shape::Text(t) => texts.push((
+                t.galley.text().to_string(),
+                t.galley.rect.translate(t.pos.to_vec2()),
+            )),
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, texts)),
+            _ => {}
+        }
+    }
+    let mut texts = Vec::new();
+    out.shapes.iter().for_each(|c| walk(&c.shape, &mut texts));
+    texts
+}
+
+/// The centre of the last text `label` drawn in a frame, if any.
+fn text_at(texts: &[(String, egui::Rect)], label: &str) -> Option<Pos2> {
+    texts
+        .iter()
+        .rev()
+        .find(|(t, _)| t == label)
+        .map(|(_, r)| r.center())
+}
+
+/// The steps of the report's recording (#613): Options > Global > File
+/// Formats, the version list set to v15, OK; the preferences written and
+/// read back as at the next start; Save As then offers v15 for a new
+/// drawing, and a drawing opened from a v20 file starts at v20.
+#[test]
+fn the_cdr_version_chosen_in_options_survives_a_restart_and_starts_save_as() {
+    use crate::ui::dialogs::Dialog;
+    use crate::ui::options::OptionsPage;
+    let (ctx, mut app, _) = setup();
+    app.dialog = Dialog::Options;
+    app.options_page = OptionsPage::FileFormats;
+    let newest = crate::ui::save_as::version_label(tracedraw_cdr::write::NEWEST_VERSION);
+    let wanted = crate::ui::save_as::version_label(15);
+    let mut texts = Vec::new();
+    for _ in 0..4 {
+        texts = texts_drawn(&ctx, &mut app, Vec::new());
+    }
+    let combo = text_at(&texts, &newest).expect("the version list shows v27");
+    click_at(&ctx, &mut app, combo, Modifiers::NONE);
+    // The list opens; scroll it down until v15 shows.
+    let mut item = None;
+    for _ in 0..20 {
+        texts = texts_drawn(&ctx, &mut app, Vec::new());
+        item = text_at(&texts, &wanted);
+        if item.is_some() {
+            break;
+        }
+        let over = text_at(&texts, &newest).unwrap_or(combo) + egui::vec2(0.0, 60.0);
+        texts_drawn(
+            &ctx,
+            &mut app,
+            vec![
+                Event::PointerMoved(over),
+                Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, -3.0),
+                    phase: egui::TouchPhase::Move,
+                    modifiers: Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    let item = item.expect("v15 in the list");
+    click_at(&ctx, &mut app, item, Modifiers::NONE);
+    assert_eq!(app.settings.formats.cdr_version, 15);
+    texts = texts_drawn(&ctx, &mut app, Vec::new());
+    assert!(
+        texts
+            .iter()
+            .any(|(t, _)| t == &crate::i18n::tr("options.cdr_version_hint")),
+        "the hint under the list"
+    );
+    let ok = text_at(&texts, &crate::i18n::tr("dialog.ok")).expect("OK");
+    click_at(&ctx, &mut app, ok, Modifiers::NONE);
+    assert!(matches!(app.dialog, Dialog::None), "{:?}", app.dialog);
+    // The preferences as the next start reads them.
+    let saved = serde_json::to_string(&app.settings).expect("saved");
+    app.settings = serde_json::from_str::<crate::settings::Settings>(&saved)
+        .expect("read back")
+        .upgrade();
+    let save_as = |ctx: &egui::Context, app: &mut App| {
+        frame(
+            ctx,
+            app,
+            vec![key(egui::Key::S, Modifiers::COMMAND | Modifiers::SHIFT)],
+            Modifiers::COMMAND | Modifiers::SHIFT,
+        );
+        frame(ctx, app, Vec::new(), Modifiers::NONE);
+        let v = match &app.dialog {
+            Dialog::SaveAs(st) => st.version,
+            other => panic!("no Save Drawing dialog: {other:?}"),
+        };
+        app.dialog = Dialog::None;
+        v
+    };
+    assert_eq!(save_as(&ctx, &mut app), 15);
+    // A drawing opened from a version 20 file keeps its version.
+    app.cdr_version = Some(20);
+    assert_eq!(save_as(&ctx, &mut app), 20);
+}
+
 #[test]
 fn the_options_dialogs_are_tabs_of_one_window() {
     use crate::ui::dialogs::{Dialog, OptionsPage};

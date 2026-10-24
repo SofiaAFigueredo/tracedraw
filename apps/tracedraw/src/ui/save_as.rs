@@ -109,11 +109,16 @@ impl SaveAsState {
             dir: dir.clone(),
             name: String::new(),
             cdr,
-            // The version Options > Global > File Formats sets (#613).
-            version: app.settings.formats.cdr_version.clamp(
-                tracedraw_cdr::write::CHECKED_SINCE,
-                tracedraw_cdr::write::NEWEST_VERSION,
-            ),
+            // A drawing opened from a .cdr file starts at its own version,
+            // as Save keeps it; any other at the version Options > Global >
+            // File Formats sets (#613).
+            version: app
+                .cdr_version
+                .unwrap_or(app.settings.formats.cdr_version)
+                .clamp(
+                    tracedraw_cdr::write::CHECKED_SINCE,
+                    tracedraw_cdr::write::NEWEST_VERSION,
+                ),
             tdraw_version: TDRAW_FORMAT_VERSION,
             // The drawing's CMYK profile, else the one Colour Management
             // loaded (it goes into the file when the drawing has none).
@@ -651,7 +656,14 @@ fn fields(ui: &mut Ui, st: &mut SaveAsState) {
             st.set_cdr(cdr);
         }
         ui.end_row();
-        row_label(ui, &tr("dialog.cdr_version"));
+        // With one .tdraw format version there is nothing to choose or to
+        // tell: the row stays, empty, so the dialog keeps its size.
+        let one_tdraw = !st.cdr && tdraw_version_choices().len() == 1;
+        if one_tdraw {
+            ui.label("");
+        } else {
+            row_label(ui, &tr("dialog.cdr_version"));
+        }
         ui.horizontal(|ui| {
             if st.cdr {
                 combo(
@@ -662,10 +674,7 @@ fn fields(ui: &mut Ui, st: &mut SaveAsState) {
                     version_label,
                     260.0,
                 );
-            } else if tdraw_version_choices().len() == 1 {
-                // One format version: nothing to choose.
-                ui.label(tdraw_version_label(st.tdraw_version));
-            } else {
+            } else if !one_tdraw {
                 combo(
                     ui,
                     "save_as_tdraw_version",

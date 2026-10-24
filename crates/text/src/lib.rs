@@ -549,7 +549,7 @@ fn right_to_left(c: char) -> bool {
 /// start. Text with right-to-left letters stays whole: it is shaped as
 /// one run as before.
 fn script_runs(text: &str) -> Vec<Range<usize>> {
-    let whole = || vec![0..text.len()];
+    let whole = || std::iter::once(0..text.len()).collect::<Vec<_>>();
     if text.is_ascii() || text.chars().any(right_to_left) {
         return whole();
     }

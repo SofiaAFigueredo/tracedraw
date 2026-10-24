@@ -2415,6 +2415,51 @@ fn select_all_in_right_to_left_text_highlights_all_of_it() {
     );
 }
 
+/// Arabic typed after an English word in the same line runs right to
+/// left to the right of it, its first letter at its right end, and
+/// selecting all shades both words (#628).
+#[test]
+fn right_to_left_typed_after_english_runs_right_to_left() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.settings.autocorrect.enabled = false;
+    app.start_text(Point::new(30.0, 50.0), None);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    for typed in ["Asasa ", "\u{645}\u{631}\u{62D}\u{628}\u{627}"] {
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::Text(typed.into())],
+            Modifiers::NONE,
+        );
+    }
+    let Some((layout, _)) = app
+        .text_edit
+        .as_ref()
+        .and_then(|te| app.text_layout_of(te.shape))
+    else {
+        panic!("a layout");
+    };
+    if layout.glyphs == 0 {
+        return;
+    }
+    let line = &layout.lines[0];
+    // The Arabic letters from the right, all right of "Asasa ".
+    assert!(line.starts[6..].windows(2).all(|w| w[1] < w[0]), "{line:?}");
+    assert!(
+        line.starts[6..].iter().all(|x| *x >= line.ends[5] - 1e-6),
+        "{line:?}"
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::A, Modifiers::COMMAND)],
+        Modifiers::COMMAND,
+    );
+    let (_, _, quads) = app.text_caret_geometry().expect("caret");
+    assert_eq!(quads.len(), 1, "{quads:?}");
+}
+
 /// With alignment guides on (and every other snapping off), a move of the
 /// rectangle near another one lands its top edge on the other's top and
 /// shows the line while the button is down; a scale handle lines up the

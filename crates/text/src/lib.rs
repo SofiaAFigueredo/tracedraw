@@ -547,6 +547,29 @@ fn right_to_left(c: char) -> bool {
     matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF)
 }
 
+/// `text` cut into runs of one direction, in the order they are seen,
+/// each with whether it runs right to left: the Unicode bidirectional
+/// algorithm, the text's first strong letter setting its direction. Text
+/// without right-to-left letters is one left-to-right run.
+fn bidi_runs(text: &str) -> Vec<(Range<usize>, bool)> {
+    if !text.chars().any(right_to_left) {
+        return vec![(0..text.len(), false)];
+    }
+    let info = unicode_bidi::BidiInfo::new(text, None);
+    let mut out = Vec::new();
+    for para in &info.paragraphs {
+        let (levels, runs) = info.visual_runs(para, para.range.clone());
+        for run in runs {
+            let rtl = levels.get(run.start).is_some_and(|l| l.is_rtl());
+            out.push((run, rtl));
+        }
+    }
+    if out.is_empty() {
+        out.push((0..text.len(), false));
+    }
+    out
+}
+
 /// `text` cut where its script changes (see [`script_of`]); what the
 /// scripts share goes with the run before it, or the first one at the
 /// start. Text with right-to-left letters stays whole: it is shaped as
@@ -1825,22 +1848,37 @@ impl FontSystem {
         } else {
             text
         };
-        for (range, face) in self.coverage_runs(id, text, span.bold, span.italic) {
-            // Each script on its own: one buffer takes the script of its
-            // first letter, so Hindi after a Latin word lost its half
-            // forms and conjuncts (#599).
-            for part in script_runs(&text[range.clone()]) {
-                let part = range.start + part.start..range.start + part.end;
-                let before = text[..part.start].chars().count();
-                out.extend(self.shape_with(
-                    face,
-                    span,
-                    span_idx,
-                    &text[part],
-                    size_scale,
-                    char_base + before,
-                    para,
-                ));
+        // The runs of each direction, in the order they are seen (#628).
+        for (run, rtl) in bidi_runs(text) {
+            let mut faces = self.coverage_runs(id, &text[run.clone()], span.bold, span.italic);
+            if rtl {
+                // Right to left the later characters come first.
+                faces.reverse();
+            }
+            for (range, face) in faces {
+                let range = run.start + range.start..run.start + range.end;
+                // Each script on its own: one buffer takes the script of
+                // its first letter, so Hindi after a Latin word lost its
+                // half forms and conjuncts (#599).
+                let parts: Vec<Range<usize>> = if rtl {
+                    std::iter::once(0..range.len()).collect()
+                } else {
+                    script_runs(&text[range.clone()])
+                };
+                for part in parts {
+                    let part = range.start + part.start..range.start + part.end;
+                    let before = text[..part.start].chars().count();
+                    out.extend(self.shape_with(
+                        face,
+                        span,
+                        span_idx,
+                        &text[part],
+                        size_scale,
+                        char_base + before,
+                        para,
+                        rtl,
+                    ));
+                }
             }
         }
         out
@@ -1990,6 +2028,7 @@ impl FontSystem {
         size_scale: f64,
         char_base: usize,
         para: &ParagraphStyle,
+        rtl: bool,
     ) -> Vec<Glyph> {
         let mut out = Vec::new();
         let Some((data, index)) = self.face_data(id) else {
@@ -2056,7 +2095,13 @@ impl FontSystem {
         let mut buffer = rustybuzz::UnicodeBuffer::new();
         buffer.push_str(text);
         buffer.guess_segment_properties();
-        let rtl = buffer.direction() == rustybuzz::Direction::RightToLeft;
+        // The direction the bidirectional runs gave, whatever the script
+        // (digits and spaces inside right-to-left text included).
+        buffer.set_direction(if rtl {
+            rustybuzz::Direction::RightToLeft
+        } else {
+            rustybuzz::Direction::LeftToRight
+        });
         let glyphs = rustybuzz::shape(&hb, &features, buffer);
         let infos = glyphs.glyph_infos();
         let positions = glyphs.glyph_positions();
@@ -2715,8 +2760,14 @@ impl FontSystem {
                         *e = Some(x.max(next));
                     }
                 }
-                if let Some(e) = edges.get_mut(to - line.start_char) {
-                    *e = b;
+                // After the last character, unless the next one has a
+                // glyph of its own placed elsewhere (where the direction
+                // changes).
+                let after = to - line.start_char;
+                if !starts.get(after).is_some_and(|s| s.is_some()) {
+                    if let Some(e) = edges.get_mut(after) {
+                        *e = b;
+                    }
                 }
             };
             // The first pen x of the right-to-left cluster being placed,
@@ -2724,11 +2775,15 @@ impl FontSystem {
             // as one.
             let mut rtl_cluster: Option<(usize, f64)> = None;
             for (gi, g) in glyphs.iter().enumerate() {
-                let next_idx = glyphs
-                    .get(gi + 1)
-                    .map(|n| n.char_idx)
-                    .unwrap_or(end_char)
-                    .max(g.char_idx + 1);
+                // The next glyph's character, or this cluster's end where
+                // a right-to-left run follows (its first glyph holds its
+                // last character).
+                let next_idx = match glyphs.get(gi + 1) {
+                    Some(n) if n.char_idx > g.char_idx && !n.rtl => n.char_idx,
+                    Some(_) => g.char_end,
+                    None => end_char,
+                }
+                .max(g.char_idx + 1);
                 if g.ch == '\t' {
                     let rel = pen - col_start;
                     let next = next_tab(rel, &ps.tabs);
@@ -3425,6 +3480,93 @@ mod tests {
         );
         assert_eq!(line.starts[..], line.edges[..3]);
         assert_eq!(line.ends[..], line.edges[1..]);
+    }
+
+    /// Text mixing directions is cut into runs of one direction, in the
+    /// order they are seen; the first strong letter sets the text's own
+    /// direction (#628).
+    #[test]
+    fn mixed_text_is_cut_into_runs_of_one_direction() {
+        let runs = |t: &str| -> Vec<(String, bool)> {
+            bidi_runs(t)
+                .into_iter()
+                .map(|(r, rtl)| (t[r].to_string(), rtl))
+                .collect()
+        };
+        assert_eq!(runs("plain text"), [("plain text".into(), false)]);
+        let ar = "\u{645}\u{631}\u{62D}\u{628}\u{627}";
+        assert_eq!(runs(ar), [(ar.into(), true)]);
+        assert_eq!(
+            runs(&format!("Asasa {ar}")),
+            [("Asasa ".into(), false), (ar.into(), true)]
+        );
+        // Right to left first: the Latin word is seen at the left.
+        assert_eq!(
+            runs(&format!("{ar} Asasa")),
+            [("Asasa".into(), false), (format!("{ar} "), true)]
+        );
+        // Digits inside right-to-left text read left to right.
+        assert_eq!(
+            runs(&format!("{ar} 123")),
+            [("123".into(), false), (format!("{ar} "), true)]
+        );
+    }
+
+    /// A right-to-left word typed after a left-to-right one is shaped and
+    /// laid out right to left, to the right of it: its first letter at its
+    /// right end, as on its own; and the other way round (#628).
+    #[test]
+    fn mixed_directions_lay_each_run_its_own_way() {
+        if !has_fonts() {
+            return;
+        }
+        let lay = |t: &str| {
+            fonts().layout(&TextRequest {
+                spans: &[span(t)],
+                frame: None,
+                align: TextAlign::Left,
+                para: &ParagraphStyle::default(),
+                on_path: None,
+            })
+        };
+        let ar = "\u{645}\u{631}\u{62D}\u{628}\u{627}";
+        let alone = lay(ar);
+        if alone.glyphs == 0 {
+            return;
+        }
+        let word = alone.lines[0].x_range();
+        let mixed = lay(&format!("Asasa {ar}"));
+        let line = &mixed.lines[0];
+        // "Asasa " left to right from 0, then the Arabic word.
+        assert!(
+            line.edges[..7].windows(2).take(5).all(|w| w[1] > w[0]),
+            "{:?}",
+            line.edges
+        );
+        let start = line.ends[5];
+        assert!(
+            (line.edges[6] - (start + word.1 - word.0)).abs() < 1e-6,
+            "{:?}",
+            line.edges
+        );
+        assert!(
+            line.edges[6..].windows(2).all(|w| w[1] < w[0]),
+            "{:?}",
+            line.edges
+        );
+        assert!((line.edges[11] - start).abs() < 1e-6, "{:?}", line.edges);
+        // Each letter where it is on its own, moved by the Latin word.
+        for i in 0..5 {
+            let shifted = alone.lines[0].starts[i] + start;
+            assert!((line.starts[6 + i] - shifted).abs() < 1e-6, "{i}");
+        }
+        // Right to left first: the Latin word at the left, the Arabic to
+        // its right, the caret before the Latin word at its left.
+        let other = lay(&format!("{ar} Asasa"));
+        let line = &other.lines[0];
+        assert!(line.edges[0] > line.edges[5], "{:?}", line.edges);
+        assert!(line.edges[6].abs() < 1e-6, "{:?}", line.edges);
+        assert!(line.starts[5] >= line.ends[10] - 1e-6, "{:?}", line);
     }
 
     fn span(text: &str) -> TextSpan {

@@ -61,6 +61,7 @@ impl App {
             from,
             grab,
             begun,
+            still,
         } = self.drag.clone()
         else {
             return;
@@ -68,13 +69,19 @@ impl App {
         let mut d = p - from;
         let horizontal = (mods.ctrl || mods.command).then_some(d.x.abs() >= d.y.abs());
         let exclude: Vec<ShapeId> = start.iter().map(|c| c.shape).collect();
-        d = self.snapped_node_move(grab, d, horizontal, &exclude);
+        // The rest of the curve being edited stays put: the node snaps to
+        // its other nodes and segments too (#673).
+        let still =
+            still.unwrap_or_else(|| std::rc::Rc::new(crate::snap::StillGeometry::of(&start)));
+        let own = self.still_near(&still, grab + d);
+        d = self.snapped_node_move(grab, d, horizontal, &exclude, &own);
         self.move_start_nodes(&start, d, grab, begun);
         self.drag = Drag::NodeMove {
             start,
             from,
             grab,
             begun: true,
+            still: Some(still),
         };
     }
 
@@ -99,23 +106,25 @@ impl App {
             from: p,
             grab,
             begun: false,
+            still: None,
         };
         true
     }
 
     /// The move of a grabbed node by `d` (page space): the node snaps to
-    /// the grid, the page, guidelines and other objects, and the move
-    /// follows it. `horizontal` keeps the move on one axis, before and
-    /// after snapping.
+    /// the grid, the page, guidelines, other objects and `own` (what stays
+    /// put of its own curve), and the move follows it. `horizontal` keeps
+    /// the move on one axis, before and after snapping.
     pub(crate) fn snapped_node_move(
         &self,
         grab: Point,
         mut d: Vec2,
         horizontal: Option<bool>,
         exclude: &[ShapeId],
+        own: &[crate::snap_points::Geo],
     ) -> Vec2 {
         constrain_axis(&mut d, horizontal);
-        let target = self.snap_point_excluding(grab + d, exclude);
+        let target = self.snap_point_with(grab + d, exclude, own);
         let mut snapped = target - grab;
         constrain_axis(&mut snapped, horizontal);
         snapped
@@ -434,6 +443,7 @@ impl App {
                         from: p,
                         grab,
                         begun: false,
+                        still: None,
                     };
                     return;
                 }
@@ -514,6 +524,7 @@ impl App {
                     from: p,
                     grab,
                     begun: false,
+                    still: None,
                 };
                 return;
             }
@@ -1607,7 +1618,7 @@ mod constrain_tests {
     fn a_grabbed_node_snaps_to_a_guideline_and_the_move_follows_it() {
         let app = app_with_guide();
         // The node at x = 45 moved by 4.5 mm lands at 49.5, which snaps to 50.
-        let d = app.snapped_node_move(Point::new(45.0, 20.0), Vec2::new(4.5, 0.0), None, &[]);
+        let d = app.snapped_node_move(Point::new(45.0, 20.0), Vec2::new(4.5, 0.0), None, &[], &[]);
         assert!((d.x - 5.0).abs() < 1e-9, "{d:?}");
         assert!(d.y.abs() < 1e-9, "{d:?}");
     }
@@ -1616,7 +1627,13 @@ mod constrain_tests {
     fn a_constrained_node_move_stays_on_its_axis_after_snapping() {
         let app = app_with_guide();
         // Horizontal: the guideline pulls x, y stays put.
-        let d = app.snapped_node_move(Point::new(45.0, 20.0), Vec2::new(4.5, 3.0), Some(true), &[]);
+        let d = app.snapped_node_move(
+            Point::new(45.0, 20.0),
+            Vec2::new(4.5, 3.0),
+            Some(true),
+            &[],
+            &[],
+        );
         assert!((d.x - 5.0).abs() < 1e-9 && d.y == 0.0, "{d:?}");
     }
 

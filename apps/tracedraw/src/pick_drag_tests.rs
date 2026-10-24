@@ -1457,6 +1457,30 @@ fn join_of_the_two_ends_of_one_curve_closes_it_at_one_node() {
     ));
 }
 
+/// A node dragged with the Shape tool snaps to the other nodes of its own
+/// curve, not only to other objects (#673).
+#[test]
+fn a_dragged_node_snaps_to_another_node_of_its_own_curve() {
+    let (ctx, mut app, id) = setup();
+    app.convert_to_curves();
+    app.set_tool(Tool::Shape);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    // The top right corner dropped 3 px off the bottom left one.
+    let from = app.view.to_screen(Point::new(60.0, 10.0));
+    let to = app.view.to_screen(Point::new(10.0, 40.0)) + egui::vec2(3.0, -3.0);
+    click_at(&ctx, &mut app, from, Modifiers::NONE);
+    drag(&ctx, &mut app, from, to, Modifiers::NONE, Vec::new());
+    let p = match app.doc().find_shape(id).map(|s| s.kind.clone()) {
+        Some(ShapeKind::Path { path, .. }) => path,
+        other => panic!("not a curve: {other:?}"),
+    };
+    let on_corner = tracedraw_core::nodes::nodes(&p)
+        .iter()
+        .filter(|n| (n.pos - Point::new(10.0, 40.0)).hypot() < 1e-6)
+        .count();
+    assert_eq!(on_corner, 2, "{p:?}");
+}
+
 #[test]
 fn dropping_an_end_node_on_another_end_node_joins_them() {
     let (ctx, mut app, id) = setup();

@@ -60,6 +60,12 @@ guidelines, the grids, the page and the other objects' boxes. A scale
 handle being dragged snaps like the pointer of a drawing tool, leaving
 out the selection's own points.
 
+A node dragged with the Shape tool (or by node tracking with the Pick
+tool) snaps to other objects and also to what stays put of its own
+curve: its other nodes and the segments between two of them, with every
+mode (the nodes being dragged and the segments they bend are left out,
+#673).
+
 A guideline being dragged (or dragged out of a ruler) and the ruler origin
 snap to everything except guidelines.
 
@@ -71,6 +77,10 @@ snap to everything except guidelines.
 - `snap::tests::drawing_tools_snap_to_object_points_and_show_the_mark`
 - `snap::tests::snapping_to_objects_turns_off_but_the_page_stays`
 - `snap::tests::a_move_carries_its_snap_point_onto_another_object`
+- Given a rectangle converted to curves, when its top right node is
+  dragged with the Shape tool to 3 px off its bottom left node, then it
+  lands on that node
+  (`pick_drag_tests::a_dragged_node_snaps_to_another_node_of_its_own_curve`).
 - `snap::tests::lines_snap_to_tangent_and_perpendicular_points_from_their_start`
 - `snap_points::tests` (each mode, the page, priorities)
 

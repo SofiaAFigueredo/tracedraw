@@ -6,7 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
-- Export: the Preset list now shows only the presets saved for the chosen format, and changing the format leaves a preset of another format unchosen (#612).
+- Export: the Preset list now shows only the presets saved for the chosen format, and changing the format leaves a preset of another format unchosen. Each format has its own preset names, so saving a preset under a name another format's preset uses no longer replaces that one (#612).
 
 ## 0.17.0 (2026-10-24)
 

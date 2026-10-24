@@ -258,6 +258,13 @@ impl Default for ExportPreset {
 }
 
 impl ExportPreset {
+    /// The preset belongs to the export format `format`: it was saved for
+    /// it, or for a format this version does not know, which every format
+    /// lists so it can still be deleted (#612).
+    pub fn fits(&self, format: usize) -> bool {
+        self.format == format || self.format >= EXPORT_FORMATS.len()
+    }
+
     /// The choices of the Export dialog as they stand, named `name`.
     pub fn from_state(name: &str, st: &ExportState) -> ExportPreset {
         ExportPreset {
@@ -305,27 +312,42 @@ impl ExportPreset {
 
 impl FormatPrefs {
     /// Save the dialog's choices as the preset `name`, replacing one of
-    /// that name; false for an empty name.
+    /// that name and format (presets of other formats are left alone,
+    /// #612); false for an empty name.
     pub fn save_preset(&mut self, name: &str, st: &ExportState) -> bool {
         let p = ExportPreset::from_state(name, st);
         if p.name.is_empty() {
             return false;
         }
-        match self.export_presets.iter_mut().find(|q| q.name == p.name) {
+        match self
+            .export_presets
+            .iter_mut()
+            .find(|q| q.name == p.name && q.fits(p.format))
+        {
             Some(q) => *q = p,
             None => self.export_presets.push(p),
         }
         true
     }
 
-    /// Rename the preset `from` to `to`; false when `to` is empty or
-    /// taken by another preset.
-    pub fn rename_preset(&mut self, from: &str, to: &str) -> bool {
+    /// Rename the preset `from` of the export format `format` to `to`;
+    /// false when `to` is empty or taken by another preset of that format.
+    pub fn rename_preset(&mut self, from: &str, to: &str, format: usize) -> bool {
         let to = to.trim();
-        if to.is_empty() || (to != from && self.export_presets.iter().any(|q| q.name == to)) {
+        if to.is_empty()
+            || (to != from
+                && self
+                    .export_presets
+                    .iter()
+                    .any(|q| q.name == to && q.fits(format)))
+        {
             return false;
         }
-        match self.export_presets.iter_mut().find(|q| q.name == from) {
+        match self
+            .export_presets
+            .iter_mut()
+            .find(|q| q.name == from && q.fits(format))
+        {
             Some(q) => {
                 q.name = to.to_string();
                 true
@@ -334,9 +356,11 @@ impl FormatPrefs {
         }
     }
 
-    pub fn delete_preset(&mut self, name: &str) -> bool {
+    /// Delete the preset `name` of the export format `format`.
+    pub fn delete_preset(&mut self, name: &str, format: usize) -> bool {
         let before = self.export_presets.len();
-        self.export_presets.retain(|q| q.name != name);
+        self.export_presets
+            .retain(|q| !(q.name == name && q.fits(format)));
         self.export_presets.len() != before
     }
 
@@ -562,13 +586,49 @@ mod tests {
         assert!(f.save_preset("jpeg web 40%", &st));
         assert_eq!(f.export_presets.len(), 2);
         assert_eq!(f.export_presets[1].quality, 45);
-        assert!(!f.rename_preset("jpeg web 40%", "WebP Web 80%"), "taken");
-        assert!(f.rename_preset("jpeg web 40%", "JPEG 45"));
+        // A name is taken only by a preset of the same format.
+        assert!(f.save_preset("jpeg other", &st));
+        assert!(!f.rename_preset("jpeg web 40%", "jpeg other", 3), "taken");
+        assert!(f.delete_preset("jpeg other", 3));
+        assert!(f.rename_preset("jpeg web 40%", "JPEG 45", 3));
         let json = serde_json::to_string(&f).expect("json");
         let back: FormatPrefs = serde_json::from_str(&json).expect("back");
         assert_eq!(back.export_presets, f.export_presets);
-        assert!(f.delete_preset("JPEG 45"));
+        assert!(!f.delete_preset("JPEG 45", 6), "another format's");
+        assert!(f.delete_preset("JPEG 45", 3));
         assert_eq!(f.export_presets.len(), 1);
+        // The same name in two formats: two presets, each saved, renamed
+        // and deleted on its own (#612).
+        let mut g = FormatPrefs::default();
+        let jpeg = ExportState {
+            format: 3,
+            quality: 70,
+            ..Default::default()
+        };
+        let png = ExportState {
+            format: 2,
+            dpi: 72.0,
+            ..Default::default()
+        };
+        assert!(g.save_preset("Web", &jpeg));
+        assert!(g.save_preset("Web", &png));
+        assert_eq!(g.export_presets.len(), 2, "the JPEG one is kept");
+        assert_eq!(g.export_presets[0].quality, 70);
+        assert!(g.rename_preset("Web", "Web small", 2));
+        assert_eq!(g.export_presets[0].name, "Web");
+        assert!(g.rename_preset("Web", "Web small", 3), "free in JPEG");
+        assert!(g.delete_preset("Web small", 2));
+        assert_eq!(g.export_presets.len(), 1);
+        assert_eq!(g.export_presets[0].format, 3);
+        // A preset of a format this version does not know shows with every
+        // format and can be deleted.
+        let mut unknown = g.export_presets[0].clone();
+        unknown.format = 999;
+        unknown.name = "Future".into();
+        g.export_presets.push(unknown);
+        assert!(g.export_presets[1].fits(2) && g.export_presets[1].fits(3));
+        assert!(g.delete_preset("Future", 2));
+        assert_eq!(g.export_presets.len(), 1);
         // Preferences from before have none.
         let old: FormatPrefs = serde_json::from_str("{}").expect("old");
         assert!(old.export_presets.is_empty());

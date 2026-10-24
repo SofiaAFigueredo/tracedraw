@@ -6031,4 +6031,10 @@ fn the_export_dialog_lists_only_the_presets_of_its_format() {
     assert!(st.preset.is_empty(), "{:?}", st.preset);
     let jpg = st.clone();
     assert_eq!(names(&jpg, &app), vec!["Print JPG"]);
+    // Saving a PNG preset under the hidden JPEG preset's name keeps the
+    // JPEG one: each format has its own names.
+    assert!(app.settings.formats.save_preset("Print JPG", &png));
+    assert_eq!(names(&jpg, &app), vec!["Print JPG"]);
+    assert_eq!(names(&png, &app), vec!["Web PNG", "Big PNG", "Print JPG"]);
+    assert_eq!(app.settings.formats.export_presets.len(), 4);
 }

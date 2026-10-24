@@ -47,12 +47,16 @@ Office presets start with their own (see `options.md`).
 ## Presets
 
 Above the format: Preset, a list of the presets saved for the chosen
-format (each shown with its format, "(none)" first; a script filter
-lists none), and a preset chosen before the format changed is no longer
-chosen (#612), "+" to save the dialog's choices under a
+format by name ("(none)" first; a script filter lists none; a preset
+of a format this version does not know shows with every format), and a
+preset chosen before the format changed is no longer chosen. Each format
+has its own names: saving, renaming and deleting act on the presets of
+the chosen format only, so a preset of another format with the same
+name is kept (#612,
+`prefs::tests::export_presets_save_apply_rename_and_delete`), "+" to save the dialog's choices under a
 name (typed in a field that opens below, OK or Enter; the same name
 replaces that preset), a pencil to rename the chosen preset (a name
-another preset has is refused) and "−" to delete it. Choosing a preset
+another preset of the format has is refused) and "−" to delete it. Choosing a preset
 puts back its format, resolution, quality, transparent background,
 selection only, all pages and the PDF choices (standard, bleed, output
 condition). Presets are kept in the preferences

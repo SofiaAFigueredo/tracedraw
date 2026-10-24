@@ -2738,10 +2738,8 @@ fn export_presets_row(app: &mut App, ui: &mut Ui, st: &mut ExportState) {
     ui.horizontal(|ui| {
         ui.label(tr("dialog.export_preset"));
         let presets = presets_for(&app.settings.formats.export_presets, st);
-        let label = |p: &crate::prefs::ExportPreset| {
-            let fmt = EXPORT_FORMATS.get(p.format).map(|f| f.0).unwrap_or("?");
-            format!("{} ({fmt})", p.name)
-        };
+        // Every preset listed is of the chosen format: its name says it.
+        let label = |p: &crate::prefs::ExportPreset| p.name.clone();
         let shown = presets
             .iter()
             .find(|p| p.name == st.preset)
@@ -2783,7 +2781,7 @@ fn export_presets_row(app: &mut App, ui: &mut Ui, st: &mut ExportState) {
             .on_hover_text(tr("dialog.export_preset_delete"))
             .clicked()
         {
-            app.settings.formats.delete_preset(&st.preset);
+            app.settings.formats.delete_preset(&st.preset, st.format);
             st.preset.clear();
         }
     });
@@ -2811,7 +2809,9 @@ fn export_presets_row(app: &mut App, ui: &mut Ui, st: &mut ExportState) {
         if let (true, Some((name, renaming))) = (ok, st.preset_name.clone()) {
             let name = name.trim().to_string();
             let saved = if renaming {
-                app.settings.formats.rename_preset(&st.preset, &name)
+                app.settings
+                    .formats
+                    .rename_preset(&st.preset, &name, st.format)
             } else {
                 app.settings.formats.save_preset(&name, st)
             };
@@ -2826,7 +2826,7 @@ fn export_presets_row(app: &mut App, ui: &mut Ui, st: &mut ExportState) {
 /// Whether the Export dialog lists `p`: it was saved for the format
 /// chosen (a script filter has none).
 fn preset_fits(p: &crate::prefs::ExportPreset, st: &ExportState) -> bool {
-    st.script.is_none() && p.format == st.format
+    st.script.is_none() && p.fits(st.format)
 }
 
 /// The presets the Export dialog lists for its chosen format.

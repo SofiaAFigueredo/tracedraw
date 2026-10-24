@@ -29,7 +29,13 @@ the node marker reaches). A segment of a selected curve is taken a
 pixel further out. Distances are measured on the page, so a curve with
 a scale of its own (text converted to curves, for one) is picked like
 any other
-(`pick_drag_tests::the_shape_tool_takes_the_nearest_node_of_a_scaled_curve`). A click that
+(`pick_drag_tests::the_shape_tool_takes_the_nearest_node_of_a_scaled_curve`).
+A control handle comes before the node or segment under it: a click on
+a handle keeps the chosen nodes as they are (it does not choose the
+segment the handle lies on), and a drag on it moves only the handle,
+the node staying where it is. A segment chosen by a click shows its two
+handles (its start node's outgoing one and its end node's incoming
+one), and they drag the same way (#639). A click that
 takes nothing but lands within three pick distances of a node or a
 handle of the selected curves (or a node of a selected rectangle,
 ellipse or polygon) is a near miss: the selection stays. Only a click
@@ -213,6 +219,9 @@ Reduce Nodes, Curve smoothness.
 - `node_edit::tests::a_freehand_marquee_picks_the_nodes_inside`
 - `node_edit::tests::extend_to_close_and_smoothness`
 - `kind_nodes::tests::dragging_a_corner_rounds_all_corners_or_one`
+- `pick_drag_tests::a_handle_clicked_then_dragged_leaves_its_node_in_place`
+  (#639)
+- `pick_drag_tests::a_chosen_segments_handles_drag` (#639)
 - `kind_nodes::tests::rounded_corners_grow_by_the_same_amount`
 - `kind_nodes::tests::corners_drag_in_page_units_on_scaled_rectangles`
 - `kind_nodes::tests::the_ellipse_node_opens_a_pie_inside_and_an_arc_outside`

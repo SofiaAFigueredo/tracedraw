@@ -309,26 +309,42 @@ impl App {
             .find_map(|s| crate::kind_nodes::spline_with_point(&s, p, tol).map(|pts| (s.id, pts)))
     }
 
-    /// Control handle under the pointer, for selected nodes only.
+    /// Control handle under the pointer, for selected nodes only, or one
+    /// of the two handles a chosen segment shows (its start node's
+    /// outgoing handle and its end node's incoming one).
     pub(crate) fn ctrl_handle_at(&self, p: Point) -> Option<(ShapeId, usize, Which)> {
         // The nearest handle within the pick distance, on the page.
         let tol = self.settings.nodes.pick_px() / self.view.zoom as f64;
         let mut best: Option<((ShapeId, usize, Which), f64)> = None;
-        for (id, index) in &self.node_selection {
-            let Some((path, _, t)) = self.path_of(*id) else {
+        let both = [Which::In, Which::Out];
+        let shown: Vec<(ShapeId, usize, &[Which])> = match self.chosen_segment() {
+            Some((id, index)) if index > 0 => {
+                vec![(id, index - 1, &both[1..]), (id, index, &both[..1])]
+            }
+            _ => self
+                .node_selection
+                .iter()
+                .map(|&(id, index)| (id, index, &both[..]))
+                .collect(),
+        };
+        for (id, index, kinds) in shown {
+            let Some((path, _, t)) = self.path_of(id) else {
                 continue;
             };
             let Some(n) = nodes::nodes(&(t * path))
                 .into_iter()
-                .find(|n| n.index == *index)
+                .find(|n| n.index == index)
             else {
                 continue;
             };
             for (c, which) in [(n.ctrl_in, Which::In), (n.ctrl_out, Which::Out)] {
+                if !kinds.contains(&which) {
+                    continue;
+                }
                 let Some(c) = c else { continue };
                 let d = (c - p).hypot();
                 if d <= tol && best.as_ref().is_none_or(|b| d < b.1) {
-                    best = Some(((*id, *index, which), d));
+                    best = Some(((id, index, which), d));
                 }
             }
         }
@@ -753,6 +769,12 @@ impl App {
                 }
                 return;
             }
+            // A click on a control handle keeps the nodes chosen, so the
+            // handle can be dragged next; the segment or node under it is
+            // not taken instead (#639).
+            if self.ctrl_handle_at(p).is_some() {
+                return;
+            }
             if let Some(hit) = self.node_at(p) {
                 self.segment_spot = None;
                 self.click_node((hit.shape, hit.index), mods);
@@ -768,13 +790,10 @@ impl App {
                 return;
             }
             self.segment_spot = None;
-            // A press on a control handle, or a near miss of a node or a
-            // handle of the selected curves, keeps the selection: only a
-            // click clearly on empty canvas deselects.
-            if self.ctrl_handle_at(p).is_some()
-                || self.near_selected_nodes(p)
-                || self.spline_polygon_at(p).is_some()
-            {
+            // A near miss of a node or a handle of the selected curves
+            // keeps the selection: only a click clearly on empty canvas
+            // deselects.
+            if self.near_selected_nodes(p) || self.spline_polygon_at(p).is_some() {
                 return;
             }
             match self.hit_test(p) {

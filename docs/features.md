@@ -74,6 +74,7 @@ Counts: works 189, partial 6 (`.cdr` content coverage; CMX import; print preview
 | Focus mode: double-click a group or clip frame (or Bring into Focus) to edit its members with the rest faded; breadcrumb, Esc goes up, visibility setting | works (see `behavior/focus-mode.md`) |
 | Join Curves panel: Extend, Chamfer, Fillet, Bezier Curve joints, gap tolerance, nearest ends first, closes subpaths | works (see `behavior/corners-and-joins.md`) |
 | Corners panel: fillet, scallop, chamfer (A and B distances) the corners of curves or of chosen nodes, with preview; corners that do not fit are skipped | works (see `behavior/corners-and-joins.md`) |
+| Shape tool corner widgets: drag a widget inside a corner to round every corner of a curve, or the chosen nodes' corners, live; open curves too | works (see `behavior/shape-tool.md`, Corner widgets) |
 | Coordinates panel: rectangle, square, ellipse, circle, polygon, regular polygon, star, complex star, 2-point line and multipoint curve from typed coordinates (origin point, size, angle, bounding box, bounding circle, points list), set interactively by clicking or dragging, live preview, Create object and Replace object | works (see `behavior/coordinates.md`) |
 | Convert to curves (tables and symbol instances as groups of curves, clip frames keep their contents as curves, envelopes, perspective and distortions become part of the curves, bitmaps left as they are; see `behavior/convert-to-curves.md`), Convert outline to object (fitted to few lines and curves; see `behavior/convert-outline-to-object.md`) | works |
 | Painterly Brush tool: freehand strokes painted with 12 brushes in three groups (dry media, wet media, textures), size and transparency on the property bar, applied to selected outlines, Clear Brushstroke; drawn, exported to SVG and PDF, kept in `.tdraw` | works (see `behavior/painterly-brushes.md`) |
@@ -183,7 +184,7 @@ Counts: works 189, partial 6 (`.cdr` content coverage; CMX import; print preview
 | Colour modes: 1-bit, grayscale, RGB, CMYK | works |
 | Bitmap colour mask | works |
 | Inflate bitmap: Auto Inflate Bitmap switch, Manually Inflate Bitmap (Inflate to pixels, Inflate by percent, Maintain aspect ratio) | works (see `behavior/bitmap-effects.md`) |
-| Bitmap tracing: quick, centreline, outline; presets; smoothing, detail, colour count; before and after preview in the dialog (see `behavior/bitmap-tracing.md`) | works |
+| Bitmap tracing: quick, centreline, outline; presets; smoothing, detail, corner smoothness, colour count; outlines fitted with Bezier curves, sharp corners kept, specks removed; before and after preview in the dialog (see `behavior/bitmap-tracing.md`) | works |
 | Edit bitmap in the system editor, linked bitmaps (update from link, break link, and a linked file's changes read in by themselves while the drawing is open); Save Bitmap As (context menu: the pixels, effects included, to a PNG file) | works (see `behavior/bitmap-import.md`) |
 
 ## 9. Layout and document
@@ -191,7 +192,7 @@ Counts: works 189, partial 6 (`.cdr` content coverage; CMX import; print preview
 | Capability | Status |
 |---|---|
 | Multiple pages, insert/duplicate (before or after, layers only or with their contents)/rename/delete/move, go to page, page sorter | works (see `behavior/pages.md`) |
-| Page size presets and orientation, custom sizes, bleed, printable area | works |
+| Page size presets and orientation, custom sizes, bleed, printable area; View > Page > Mask Outside Page (the desktop drawn over what lies outside the page while editing, see `behavior/drawing-window.md`) | works |
 | Page background: solid or bitmap | works |
 | Master layers (all, odd, even pages; their objects selectable on the pages they show on), layer visibility, lock, printable | works |
 | Objects panel: the page and the Master Page (master layers, guides, document grid) as a tree; layers with collapse arrow, eye, printer, padlock and layer icon; the active layer in bold, picked by a click (new objects go there; a click on an object makes its layer active); objects by name (or what they are) with a fill and outline swatch; groups open to their objects; double-click renames the page, a layer or an object; New Layer, New Master Layer (all, odd or even pages) and Delete at the bottom (see `behavior/objects-panel.md`) | works |

@@ -267,3 +267,83 @@ fn the_canvas_asks_for_the_input_method_while_text_is_typed() {
         .expect("the input method is allowed");
     assert!(ime.cursor_rect.contains(egui::pos2(100.0, 100.0)));
 }
+
+/// Bounds of `ids` together, as they are drawn on the page.
+fn drawn_bounds(app: &App, ids: &[ShapeId]) -> Rect {
+    ids.iter()
+        .filter_map(|id| app.doc().shape_on_page(*id))
+        .map(|s| s.visual_bounds())
+        .reduce(|a, b| a.union(b))
+        .expect("drawn")
+}
+
+fn near_rect(a: Rect, b: Rect, tol: f64) -> bool {
+    (a.x0 - b.x0).abs() < tol
+        && (a.y0 - b.y0).abs() < tol
+        && (a.x1 - b.x1).abs() < tol
+        && (a.y1 - b.y1).abs() < tol
+}
+
+/// Convert to Curves of an enveloped text gives the curve drawn as the
+/// text was, its envelope part of it (#647).
+#[test]
+fn convert_to_curves_bakes_the_envelope_of_text() {
+    let mut app = App::headless();
+    let id = text(&mut app, Point::new(20.0, 100.0), "ABC");
+    app.select(vec![id]);
+    app.apply_envelope_preset(crate::envelope_edit::Preset::Arch);
+    let drawn = drawn_bounds(&app, &[id]);
+    app.convert_to_curves();
+    let s = app.doc().shape_on_page(id).expect("shape");
+    assert!(matches!(s.kind, ShapeKind::Path { .. }), "{:?}", s.kind);
+    assert!(s.effects.is_empty(), "{:?}", s.effects);
+    assert_eq!(s.fill, Fill::Solid(Color::rgb8(200, 30, 30)));
+    assert!(
+        near_rect(s.bounds(), drawn, 0.05),
+        "{:?} {drawn:?}",
+        s.bounds()
+    );
+}
+
+/// Break Apart of an enveloped text gives one curve per letter, each
+/// warped as the whole text was and keeping its holes (#647); one undo
+/// brings the text and its envelope back.
+#[test]
+fn break_apart_bakes_the_envelope_into_letter_curves() {
+    let mut app = App::headless();
+    let id = text(&mut app, Point::new(20.0, 100.0), "OBO");
+    app.select(vec![id]);
+    app.apply_envelope_preset(crate::envelope_edit::Preset::Arch);
+    let drawn = drawn_bounds(&app, &[id]);
+    app.break_apart();
+    let pieces = app.selection.clone();
+    assert_eq!(pieces.len(), 3, "{pieces:?}");
+    assert!(pieces.contains(&id));
+    let mut spans = Vec::new();
+    for p in &pieces {
+        let s = app.doc().shape_on_page(*p).expect("piece");
+        let ShapeKind::Path { path, .. } = &s.kind else {
+            panic!("a curve: {:?}", s.kind);
+        };
+        assert!(s.effects.is_empty(), "{:?}", s.effects);
+        assert_eq!(s.fill, Fill::Solid(Color::rgb8(200, 30, 30)));
+        let parts = tracedraw_core::effects::subpaths(path);
+        assert!(parts.len() >= 2, "the holes stay: {}", parts.len());
+        spans.push((s.bounds().x0, s.bounds().x1));
+    }
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for w in spans.windows(2) {
+        assert!(w[1].0 > w[0].1 - 0.5, "{spans:?}");
+    }
+    let got = drawn_bounds(&app, &pieces);
+    assert!(near_rect(got, drawn, 0.05), "{got:?} {drawn:?}");
+    assert_eq!(app.engine.undo_label(), Some("Break Apart"));
+    app.undo();
+    let s = app.doc().find_shape(id).expect("text");
+    assert!(matches!(s.kind, ShapeKind::Text { .. }));
+    assert!(s
+        .effects
+        .iter()
+        .any(|e| matches!(e, Effect::Envelope { .. })));
+    assert!(app.doc().find_shape(pieces[2]).is_none() || pieces[2] == id);
+}

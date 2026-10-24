@@ -2569,11 +2569,38 @@ impl Shape {
     /// [`Shape::converts_to_curves`], looking inside groups.
     fn converts_to_curves_deep(&self, depth: usize) -> bool {
         match &self.kind {
-            ShapeKind::Group { children } if depth < 16 => children
-                .iter()
-                .any(|c| c.converts_to_curves_deep(depth + 1)),
-            _ => self.converts_to_curves(),
+            ShapeKind::Group { children } if depth < 16 => {
+                self.has_outline_warp()
+                    || children
+                        .iter()
+                        .any(|c| c.converts_to_curves_deep(depth + 1))
+            }
+            _ => self.converts_to_curves() || self.has_outline_warp(),
         }
+    }
+
+    /// The object converted to curves (Convert to Curves): its kind as
+    /// [`Shape::curves_kind`] makes it, then its envelope, perspective and
+    /// distortion made part of the curves, the other effects kept (#647).
+    /// `None` when it stays as it is.
+    pub fn converted_to_curves(
+        &self,
+        symbols: &[Symbol],
+        next_id: &mut dyn FnMut() -> ShapeId,
+    ) -> Option<Shape> {
+        let mut out = self.clone();
+        let mut changed = false;
+        if let Some(kind) = self.curves_kind(symbols, next_id) {
+            out.kind = kind;
+            out.node_types.clear();
+            out.spline = None;
+            changed = true;
+        }
+        if let Some(baked) = crate::live::bake_outline_warps(&out) {
+            out = baked;
+            changed = true;
+        }
+        changed.then_some(out)
     }
 
     /// The kind this object takes when converted to curves, or `None` when
@@ -2644,6 +2671,12 @@ impl Shape {
         if depth > 16 {
             return;
         }
+        // A group's warps first, then its objects', as they are drawn.
+        if matches!(self.kind, ShapeKind::Group { .. }) {
+            if let Some(b) = crate::live::bake_outline_warps(self) {
+                *self = b;
+            }
+        }
         match &mut self.kind {
             ShapeKind::Group { children } => {
                 for c in children {
@@ -2655,6 +2688,9 @@ impl Shape {
                     self.kind = kind;
                     self.node_types.clear();
                     self.spline = None;
+                }
+                if let Some(b) = crate::live::bake_outline_warps(self) {
+                    *self = b;
                 }
             }
         }
@@ -2669,6 +2705,11 @@ impl Shape {
         depth: usize,
     ) {
         self.id = next_id();
+        if matches!(self.kind, ShapeKind::Group { .. }) {
+            if let Some(b) = crate::live::bake_outline_warps(self) {
+                *self = b;
+            }
+        }
         match &mut self.kind {
             ShapeKind::Group { children } => {
                 for c in children {
@@ -2688,6 +2729,9 @@ impl Shape {
                     self.kind = kind;
                     self.node_types.clear();
                     self.spline = None;
+                }
+                if let Some(b) = crate::live::bake_outline_warps(self) {
+                    *self = b;
                 }
             }
         }

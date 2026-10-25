@@ -71,7 +71,9 @@ version decides who can open a file:
 
 - Save As starts at the drawing's own version when it was opened from
   (or saved to) a `.cdr` file, as Save keeps it; any other drawing starts
-  at the version set in Options > Global > File Formats (27 at first).
+  at the version set in Options > Global > File Formats (27 at first),
+  a drawing started from a template (`.cdt`, `.cdrt`) too, whatever
+  version the template was written in.
   The hint under that version says so (#613,
   `pick_drag_tests::the_cdr_version_chosen_in_options_survives_a_restart_and_starts_save_as`).
 - The version chosen stays with the drawing: Save writes the same

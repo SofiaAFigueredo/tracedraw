@@ -6069,29 +6069,16 @@ fn texts_drawn(
     app: &mut App,
     events: Vec<Event>,
 ) -> Vec<(String, egui::Rect)> {
-    let input = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            Pos2::ZERO,
-            egui::vec2(1600.0, 1000.0),
-        )),
-        events,
-        ..Default::default()
-    };
-    let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
-    out.textures_delta.clear();
-    fn walk(s: &egui::Shape, texts: &mut Vec<(String, egui::Rect)>) {
-        match s {
-            egui::Shape::Text(t) => texts.push((
+    frame_shapes(ctx, app, events)
+        .into_iter()
+        .filter_map(|s| match s {
+            egui::Shape::Text(t) => Some((
                 t.galley.text().to_string(),
                 t.galley.rect.translate(t.pos.to_vec2()),
             )),
-            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, texts)),
-            _ => {}
-        }
-    }
-    let mut texts = Vec::new();
-    out.shapes.iter().for_each(|c| walk(&c.shape, &mut texts));
-    texts
+            _ => None,
+        })
+        .collect()
 }
 
 /// The centre of the last text `label` drawn in a frame, if any.
@@ -6180,8 +6167,20 @@ fn the_cdr_version_chosen_in_options_survives_a_restart_and_starts_save_as() {
     };
     assert_eq!(save_as(&ctx, &mut app), 15);
     // A drawing opened from a version 20 file keeps its version.
-    app.cdr_version = Some(20);
+    let dir = std::env::temp_dir().join(format!("td_613_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("folder");
+    let v20 = dir.join("v20.cdr");
+    let doc = app.doc().clone();
+    std::fs::write(
+        &v20,
+        tracedraw_cdr::write::document_to_cdr_version(&doc, 20),
+    )
+    .expect("written");
+    app.open_path(v20);
+    assert_eq!(app.cdr_version, Some(20));
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
     assert_eq!(save_as(&ctx, &mut app), 20);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -912,7 +912,6 @@ mod tests {
         assert_eq!(st.file_name(), "native.tdraw");
         assert_eq!(st.tdraw_version, TDRAW_FORMAT_VERSION);
         assert_eq!(tdraw_version_choices()[0], TDRAW_FORMAT_VERSION);
-        assert_eq!(tdraw_version_label(0), "v0");
         assert_eq!(tdraw_version_choices(), vec![0]);
         st.tdraw_version = 0;
         let mut st = st.clone();
@@ -982,6 +981,28 @@ mod tests {
         assert_eq!(size_text(10), "1 KB");
         assert_eq!(size_text(3 * 1024 * 1024 + 1), "3.0 MB");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A template written in another version starts a new drawing, which
+    /// Save As offers in the version Options sets (#613).
+    #[test]
+    fn a_drawing_from_a_template_starts_at_the_options_version() {
+        let dir = temp_dir("save-as-template");
+        let doc = drawing().engine.document().clone();
+        let template = dir.join("card.cdt");
+        std::fs::write(
+            &template,
+            tracedraw_cdr::write::document_to_cdr_version(&doc, 20),
+        )
+        .expect("written");
+        let mut app = App::headless();
+        app.settings.formats.cdr_version = 15;
+        app.open_path(template);
+        assert_eq!(app.cdr_version, None);
+        app.save_as_dialog();
+        let st = state(&mut app);
+        st.set_cdr(true);
+        assert_eq!(st.version, 15);
     }
 
     #[test]

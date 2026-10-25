@@ -594,7 +594,12 @@ pub fn warped_letters(shape: &Shape) -> Option<Vec<BezPath>> {
     if !layout.rest.elements().is_empty() {
         letters.push(layout.rest.clone());
     }
-    letters.retain(|p| !p.elements().is_empty());
+    // Curves fill with the even-odd rule, text with nonzero (#800).
+    let letters: Vec<BezPath> = letters
+        .iter()
+        .filter(|p| !p.elements().is_empty())
+        .map(crate::shaping::nonzero_as_even_odd)
+        .collect();
     Some(warp.apply_parts(&letters))
 }
 

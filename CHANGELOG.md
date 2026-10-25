@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Convert to Curves of a text keeps every letter filled: the strokes of a glyph that cross each other, as in many Chinese fonts, left hollow holes where they met once the text was curves; Break Apart of a warped text does the same (#800).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

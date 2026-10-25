@@ -6,6 +6,9 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Options > Customization > Commands has a Toolbar buttons list: every button of the Standard and Zoom toolbars (Zoom to Page, Fullscreen, Snap To and the others, and the separator). A button dragged off a bar can be dragged back from there; before, only Reset brought it back (#836).
+- A right click anywhere on the Standard or Property bar, on its buttons and boxes too, opens the bar's menu, as on the toolbox (#835).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

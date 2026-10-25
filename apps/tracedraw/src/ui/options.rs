@@ -3333,7 +3333,10 @@ mod tests {
         use crate::ui::bar_items::{apply_drop, items, ItemBar, ItemDrag};
         let mut app = app_with_commands();
         let zoom = items(&app, ItemBar::Zoom);
-        let i = zoom.iter().position(|x| x == "zoom_page").expect("on the bar");
+        let i = zoom
+            .iter()
+            .position(|x| x == "zoom_page")
+            .expect("on the bar");
         // Dragged off the bar.
         apply_drop(
             &mut app,

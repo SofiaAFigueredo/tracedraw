@@ -490,6 +490,12 @@ pub fn restart_with(next: Mode, args: &[String]) -> bool {
     std::process::Command::new(exe).args(rest).status().is_ok()
 }
 
+/// The patched eframe's context fallback with its tests, run here: the
+/// copy in vendor/ is outside the workspace (vendor/README.md, #616).
+#[cfg(test)]
+#[path = "../../../vendor/eframe/src/native/first_context.rs"]
+mod eframe_context_fallback;
+
 #[cfg(test)]
 mod tests {
     use super::*;

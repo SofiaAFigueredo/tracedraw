@@ -16,5 +16,11 @@ change marked `TraceDraw:` in a comment.
   eframe 0.37.0. 0.36.2 stopped after OpenGL ES, which WGL cannot make on
   older Intel drivers, so a card with OpenGL 2.1 only (Intel HD Graphics
   Ironlake, #616) could not open the window with `--renderer=gl`.
+- `create_first_context` sits in `native/first_context.rs` (0.37 has it in
+  `glow_integration.rs`) with its tests, so that TraceDraw's tests include
+  and run it (`gpu::eframe_context_fallback::tests`); the copy's own tests
+  run in no gate. The licence texts, which the published crate leaves
+  out, are egui's `LICENSE-MIT` and `LICENSE-APACHE` at tag 0.36.2.
 - Drop the copy and the `[patch.crates-io]` entry when the workspace moves
-  to egui/eframe 0.37 or later (0.37 needs Rust 1.95).
+  to egui/eframe 0.37 or later: what holds that back is the egui 0.37
+  API migration across the app.

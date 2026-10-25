@@ -5105,7 +5105,13 @@ impl App {
         self.reflow_chains_of(&shapes);
     }
 
+    /// Move the selection by `d`; with no object selected, the selected
+    /// guidelines that are not locked (#781).
     pub fn nudge(&mut self, d: Vec2) {
+        if self.selection.is_empty() {
+            self.transform_selected_guides(Affine::translate(d), 0, "Nudge Guidelines");
+            return;
+        }
         self.transform_selection(Affine::translate(d));
     }
 

@@ -248,40 +248,46 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
     }
     if let Some(c) = app.curve.as_ref().filter(|c| c.smooth && !c.bspline) {
         // Pen and Bezier: the segments placed in the outline the curve
-        // will get, the Pen's dashed preview to the pointer, the nodes
-        // and the last node's handles (see `pen_look`).
+        // will get, the segment being shaped, the Pen's preview to the
+        // pointer, the nodes and the last node's handles (see `pen_look`).
         let ctrl = painter.ctx().input(|i| app.constrain_held(&i.modifiers));
         let pointer = app
             .pointer_page
             .map(|p| app.curve_point(app.snap_point(p), ctrl));
         let preview = app.tool == crate::tools::Tool::Pen && app.settings.curves.pen_preview;
-        let outline = app.default_stroke().map(|s| to_color32(s.color));
+        let outline = app.default_stroke().map(|s| (to_color32(s.color), s.width));
         let look = crate::pen_look::curve_look(c, pointer, preview, outline);
+        // The placed segments in the outline the curve will get, as wide
+        // as it will be drawn (#670): plain segments for a thin outline,
+        // a path shape (with joins) only when it is wide enough for the
+        // segments' ends to show.
+        let width = (look.placed_width as f32 * view.zoom).max(1.0);
+        let stroke = EStroke::new(width, look.placed_color);
         for (pts, _) in flatten(&look.placed, view) {
-            if pts.len() > 1 {
-                painter.add(epaint::PathShape::line(
-                    pts,
-                    EStroke::new(1.0, look.placed_color),
-                ));
+            if pts.len() < 2 {
+                continue;
+            }
+            if width > 2.0 {
+                painter.add(epaint::PathShape::line(pts, stroke));
+            } else {
+                for w in pts.windows(2) {
+                    painter.line_segment([w[0], w[1]], stroke);
+                }
             }
         }
-        if let Some(seg) = &look.preview {
-            // A white line under the dashes keeps the preview one line
-            // over any colour, as in the reference program (#489): as wide
-            // as the dashes, so it only shows in their short gaps (#560).
-            // Plain segments: a path shape here cost a third of the Pen's
-            // frame and the preview lagged behind the pointer (#560).
+        // The segment a drag is shaping: black on a white line, over any
+        // outline (#670).
+        if let Some(seg) = &look.drawing {
             for (pts, _) in flatten(seg, view) {
-                for w in pts.windows(2) {
-                    painter.line_segment([w[0], w[1]], EStroke::new(1.0, Color32::WHITE));
-                }
-                dashed_polyline(
-                    painter,
-                    &pts,
-                    EStroke::new(1.0, look.preview_color),
-                    5.0,
-                    2.0,
-                );
+                haloed_polyline(painter, &pts, false, Color32::BLACK);
+            }
+        }
+        // The preview to the pointer: blue on a white line twice as wide,
+        // in plain segments (a path shape here cost a third of the Pen's
+        // frame and the preview lagged behind the pointer, #560).
+        if let Some(seg) = &look.preview {
+            for (pts, _) in flatten(seg, view) {
+                haloed_polyline(painter, &pts, false, look.preview_color);
             }
         }
         for (node, h) in &look.handles {
@@ -293,12 +299,24 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
             );
         }
         for (p, mark) in &look.nodes {
-            let r = ERect::from_center_size(view.to_screen(*p), egui::vec2(5.0, 5.0));
+            let c = view.to_screen(*p);
             match mark {
                 crate::pen_look::NodeLook::Current => {
-                    painter.rect_filled(r.expand(0.5), 0.0, look.preview_color);
+                    // A blue diamond with a white edge (#670).
+                    let h = 4.5;
+                    painter.add(epaint::PathShape::convex_polygon(
+                        vec![
+                            c + egui::vec2(0.0, -h),
+                            c + egui::vec2(h, 0.0),
+                            c + egui::vec2(0.0, h),
+                            c + egui::vec2(-h, 0.0),
+                        ],
+                        look.preview_color,
+                        EStroke::new(1.0, Color32::WHITE),
+                    ));
                 }
                 crate::pen_look::NodeLook::Placed => {
+                    let r = ERect::from_center_size(c, egui::vec2(5.0, 5.0));
                     painter.rect_filled(r, 0.0, Color32::WHITE);
                     painter.rect_stroke(
                         r,
@@ -687,19 +705,21 @@ fn clip_segment(a: Pos2, b: Pos2, r: ERect) -> Option<(Pos2, Pos2)> {
     ))
 }
 
-/// The marquee's and the lasso's line: blue dashes on a white line so it
-/// shows on any drawing.
+/// The marquee's and the lasso's line: [`dashed_overlay`] in the
+/// selection blue.
 fn dashed_selection_line(painter: &Painter, pts: &[Pos2]) {
-    painter.add(epaint::PathShape::line(
-        pts.to_vec(),
-        EStroke::new(1.0, Color32::from_white_alpha(200)),
-    ));
-    painter.extend(egui::Shape::dashed_line(
-        pts,
-        EStroke::new(1.0, Tokens::SELECTION),
-        4.0,
-        3.0,
-    ));
+    dashed_overlay(painter, pts, Tokens::SELECTION);
+}
+
+/// The one dashed overlay line of handle lines, the marquee, the node
+/// marquee and the lasso: dashes in `color` on a white line as wide as
+/// they are, so it shows on any colour (#670). Plain segments, cheap in
+/// an overlay redrawn every frame.
+pub(crate) fn dashed_overlay(painter: &Painter, pts: &[Pos2], color: Color32) {
+    for w in pts.windows(2) {
+        painter.line_segment([w[0], w[1]], EStroke::new(HALO_INNER, Color32::WHITE));
+    }
+    dashed_polyline(painter, pts, EStroke::new(HALO_INNER, color), 4.0, 3.0);
 }
 
 /// Outline of the shape a 3-point tool would create for base `a -> b` and third point `c`.
@@ -1407,19 +1427,64 @@ fn draw_selection(app: &App, painter: &Painter, preview: Option<Affine>) {
         app.tool,
         Tool::Pick | Tool::FreeformPick | Tool::InteractiveFill | Tool::Text
     );
+    // The Pick tools mark the selection's own nodes: small white markers
+    // with a black edge, round on a curve's smooth nodes (#670). Gathered
+    // once per change, the ones in view drawn as one mesh: thousands of
+    // separate shapes made a frame of a large selection slow.
+    // The mesh is kept with the selection until the view or the clip
+    // changes, so a pointer move over a heavy selection only hands it on.
+    if matches!(app.tool, Tool::Pick | Tool::FreeformPick) {
+        let seen = painter.clip_rect().expand(4.0);
+        let key = overlay_key(
+            [
+                view.zoom,
+                view.origin.x,
+                view.origin.y,
+                seen.min.x,
+                seen.min.y,
+                seen.max.x,
+                seen.max.y,
+            ],
+            &[],
+        );
+        if let Some(mesh) = app.selected_marks_mesh(key, |marks| node_marks_mesh(view, seen, marks))
+        {
+            painter.add(egui::Shape::Mesh(mesh));
+        }
+    }
     if app.rotate_mode && pick {
         // Rotation arrows at corners, skew arrows at edges, the centre of
-        // rotation (it can be moved).
+        // rotation (it can be moved): built once for where they stand.
         let c = app
             .rotation_center()
             .map(|c| app.view.to_screen(c))
             .unwrap_or(r.center());
-        // The centre of rotation: a ring with a dot.
-        painter.circle_stroke(c, 8.0, EStroke::new(2.0, Color32::BLACK));
-        painter.circle_filled(c, 2.0, Color32::BLACK);
-        for (h, p) in app.handle_positions(bounds) {
-            draw_rotate_handle(painter, p, h);
-        }
+        let handles = app.handle_positions(bounds);
+        let key = overlay_key(
+            [c.x, c.y]
+                .into_iter()
+                .chain(handles.iter().flat_map(|(_, p)| [p.x, p.y])),
+            &[],
+        );
+        cached_overlay(app, painter, "rotate_handles", key, |out| {
+            // The centre of rotation: a ring with a dot, on a white edge
+            // so it shows on any colour (#670).
+            out.push(egui::Shape::circle_stroke(
+                c,
+                8.0,
+                EStroke::new(4.0, Color32::WHITE),
+            ));
+            out.push(egui::Shape::circle_filled(c, 3.0, Color32::WHITE));
+            out.push(egui::Shape::circle_stroke(
+                c,
+                8.0,
+                EStroke::new(2.0, Color32::BLACK),
+            ));
+            out.push(egui::Shape::circle_filled(c, 2.0, Color32::BLACK));
+            for (h, p) in &handles {
+                rotate_handle_shapes(out, *p, *h);
+            }
+        });
     } else {
         // Eight square handles just outside the selection box, which has
         // no frame of its own, so the objects' outlines stay in view.
@@ -1458,21 +1523,124 @@ fn draw_selection(app: &App, painter: &Painter, preview: Option<Affine>) {
     );
 }
 
+/// A key for an overlay cache: the numbers the overlay was built from
+/// and any other values it depends on.
+pub(crate) fn overlay_key(numbers: impl IntoIterator<Item = f32>, extra: &[u64]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for n in numbers {
+        n.to_bits().hash(&mut h);
+    }
+    extra.hash(&mut h);
+    h.finish()
+}
+
+/// Paint the overlay `name`: the mesh kept for `key`, or the shapes
+/// `build` gives tessellated once into one mesh and kept, so an overlay
+/// redrawn unchanged every frame costs one mesh handed on.
+fn cached_overlay(
+    app: &App,
+    painter: &Painter,
+    name: &'static str,
+    key: u64,
+    build: impl FnOnce(&mut Vec<egui::Shape>),
+) {
+    let ppp = painter.ctx().pixels_per_point();
+    let key = key ^ u64::from(ppp.to_bits()).rotate_left(29);
+    let kept = app.overlay_cache.try_borrow().ok().and_then(|c| {
+        c.get(name)
+            .filter(|(k, _)| *k == key)
+            .map(|(_, m)| m.clone())
+    });
+    let mesh = match kept {
+        Some(m) => m,
+        None => {
+            let mut shapes = Vec::new();
+            build(&mut shapes);
+            let mut t = epaint::Tessellator::new(ppp, Default::default(), [1, 1], Vec::new());
+            let mut mesh = epaint::Mesh::default();
+            for s in shapes {
+                t.tessellate_shape(s, &mut mesh);
+            }
+            let m = std::sync::Arc::new(mesh);
+            if let Ok(mut c) = app.overlay_cache.try_borrow_mut() {
+                c.insert(name, (key, m.clone()));
+            }
+            m
+        }
+    };
+    if !mesh.is_empty() {
+        painter.add(egui::Shape::Mesh(mesh));
+    }
+}
+
+/// The Pick tool's node marks, `marks` in page space with whether each
+/// is round, as one mesh: a black square (an octagon when round) 5 px
+/// across with a white one 3 px across inside, on whole pixels, for the
+/// marks within `seen`.
+fn node_marks_mesh(view: &View, seen: ERect, marks: &[(Point, bool)]) -> epaint::Mesh {
+    // The corners of a square and of an octagon around the centre, one
+    // pixel in radius.
+    const SQUARE: [(f32, f32); 4] = [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
+    const OCTAGON: [(f32, f32); 8] = [
+        (0.924, 0.383),
+        (0.383, 0.924),
+        (-0.383, 0.924),
+        (-0.924, 0.383),
+        (-0.924, -0.383),
+        (-0.383, -0.924),
+        (0.383, -0.924),
+        (0.924, -0.383),
+    ];
+    let mut mesh = epaint::Mesh::default();
+    // Two polygons a mark: at most 16 corners and 12 triangles.
+    mesh.reserve_vertices(marks.len() * 16);
+    mesh.reserve_triangles(marks.len() * 12);
+    let mut poly = |c: Pos2, r: f32, corners: &[(f32, f32)], color: Color32| {
+        let base = mesh.vertices.len() as u32;
+        let n = corners.len() as u32;
+        for &(x, y) in corners {
+            mesh.colored_vertex(c + egui::vec2(x, y) * r, color);
+        }
+        for k in 1..n - 1 {
+            mesh.add_triangle(base, base + k, base + k + 1);
+        }
+    };
+    for &(p, round) in marks {
+        let c = view.to_screen(p);
+        if !seen.contains(c) {
+            continue;
+        }
+        let c = Pos2::new(c.x.round() + 0.5, c.y.round() + 0.5);
+        let (corners, r): (&[(f32, f32)], f32) = if round {
+            (&OCTAGON, 2.5)
+        } else {
+            (&SQUARE, 2.5)
+        };
+        poly(c, r, corners, Color32::BLACK);
+        poly(c, r - 1.0, corners, Color32::WHITE);
+    }
+    mesh
+}
+
 /// A rotate mode handle at `p`: a curved double arrow around each
 /// corner, a straight double arrow along each side (sideways at the top
 /// and bottom, up and down at the left and right). Black, 2 points thick,
-/// with solid heads.
-fn draw_rotate_handle(painter: &Painter, p: Pos2, h: Handle) {
+/// with solid heads, on a white edge so they show on any colour (#670).
+/// The shapes go to `out`.
+fn rotate_handle_shapes(out: &mut Vec<egui::Shape>, p: Pos2, h: Handle) {
     let ink = Color32::BLACK;
     let stroke = EStroke::new(2.0, ink);
-    // A solid head with its tip at `tip`, pointing along `dir`.
+    let edge = EStroke::new(4.0, Color32::WHITE);
+    // A solid head with its tip at `tip`, pointing along `dir`, edged in
+    // white.
     let head = |tip: Pos2, dir: egui::Vec2| {
         let d = dir.normalized();
         let n = egui::vec2(-d.y, d.x);
         epaint::PathShape::convex_polygon(
             vec![tip, tip - d * 4.5 + n * 3.0, tip - d * 4.5 - n * 3.0],
             ink,
-            EStroke::NONE,
+            EStroke::new(1.0, Color32::WHITE),
         )
     };
     if h.is_corner() {
@@ -1498,11 +1666,12 @@ fn draw_rotate_handle(painter: &Painter, p: Pos2, h: Handle) {
         let arc: Vec<Pos2> = (0..=12)
             .map(|i| at(a0 + trim + (a1 - a0 - 2.0 * trim) * i as f32 / 12.0))
             .collect();
-        painter.add(epaint::PathShape::line(arc, stroke));
+        out.push(epaint::PathShape::line(arc.clone(), edge).into());
+        out.push(epaint::PathShape::line(arc, stroke).into());
         // Each head points on along the turn.
         let tangent = |a: f32| egui::vec2(-a.sin(), a.cos());
-        painter.add(head(at(a1), tangent(a1)));
-        painter.add(head(at(a0), -tangent(a0)));
+        out.push(head(at(a1), tangent(a1)).into());
+        out.push(head(at(a0), -tangent(a0)).into());
     } else {
         let d = if matches!(h, Handle::N | Handle::S) {
             egui::vec2(8.0, 0.0)
@@ -1510,9 +1679,10 @@ fn draw_rotate_handle(painter: &Painter, p: Pos2, h: Handle) {
             egui::vec2(0.0, 8.0)
         };
         let u = d.normalized() * 4.0;
-        painter.line_segment([p - d + u, p + d - u], stroke);
-        painter.add(head(p + d, d));
-        painter.add(head(p - d, -d));
+        out.push(egui::Shape::line_segment([p - d + u, p + d - u], edge));
+        out.push(egui::Shape::line_segment([p - d + u, p + d - u], stroke));
+        out.push(head(p + d, d).into());
+        out.push(head(p - d, -d).into());
     }
 }
 
@@ -1810,14 +1980,7 @@ fn draw_control_handle(painter: &Painter, node: Pos2, ctrl: Pos2, color: Color32
     if len > head {
         // Dashes on a white line and a head with a white edge, so the
         // handle shows on any colour (#670).
-        painter.line_segment([node, base], EStroke::new(HALO_WIDTH, Color32::WHITE));
-        dashed_polyline(
-            painter,
-            &[node, base],
-            EStroke::new(HALO_INNER, color),
-            4.0,
-            3.0,
-        );
+        dashed_overlay(painter, &[node, base], color);
     }
     painter.add(epaint::PathShape::convex_polygon(
         vec![ctrl, base + n * 3.5, base - n * 3.5],
@@ -1846,6 +2009,21 @@ fn start_node_marker(
         fill.unwrap_or(Color32::TRANSPARENT),
         EStroke::new(1.0, outline),
     ));
+}
+
+/// The fill and edge of a node marker, `selected` or not: black with a
+/// white edge, or white (hollow with Options > Nodes and Handles > Show
+/// unselected nodes with fill off) with a black edge, so a node shows on
+/// any colour (#670).
+fn marker_colors(prefs: &crate::settings::NodePrefs, selected: bool) -> (Option<Color32>, Color32) {
+    if selected {
+        (Some(Color32::BLACK), Color32::WHITE)
+    } else {
+        (
+            prefs.unselected_filled.then_some(Color32::WHITE),
+            Color32::BLACK,
+        )
+    }
 }
 
 fn node_marker(
@@ -1966,13 +2144,57 @@ fn draw_nodes(app: &App, painter: &Painter) {
     let [r, g, b] = prefs.secondary_rgb;
     let secondary = Color32::from_rgb(r, g, b);
     let size = prefs.size.px();
+    let shapes = app.shape_tool_shapes();
+    // The outlines of the objects being edited, built once per change of
+    // the drawing or the view: a B-spline's and a curve's in the node
+    // colour, a rectangle's, ellipse's or polygon's in blue dashes
+    // (#670).
+    let mut ids: Vec<u64> = vec![
+        app.engine.instance(),
+        app.engine.revision(),
+        u64::from(u32::from_be_bytes([0, main.r(), main.g(), main.b()])),
+    ];
+    ids.extend(shapes.iter().map(|s| s.id.0));
+    let key = overlay_key([view.zoom, view.origin.x, view.origin.y], &ids);
+    cached_overlay(app, painter, "shape_tool_outlines", key, |out| {
+        for s in &shapes {
+            let dashed = match &s.kind {
+                ShapeKind::Path { .. } => false,
+                _ if s.spline.is_some() => false,
+                ShapeKind::Rect { .. } | ShapeKind::Ellipse { .. } | ShapeKind::Polygon { .. } => {
+                    if crate::kind_nodes::nodes(s).is_empty() {
+                        continue;
+                    }
+                    true
+                }
+                _ => continue,
+            };
+            for (mut pts, closed) in flatten(&s.page_path(), view) {
+                if closed {
+                    if let Some(first) = pts.first().copied() {
+                        pts.push(first);
+                    }
+                }
+                if dashed {
+                    dash_segments(&pts, 6.0, 4.0, |a, b| {
+                        out.push(egui::Shape::line_segment(
+                            [a, b],
+                            EStroke::new(1.0, Tokens::SELECTION),
+                        ));
+                    });
+                } else {
+                    out.push(egui::Shape::line(pts, EStroke::new(1.0, main)));
+                }
+            }
+        }
+    });
     // A clip frame shows its frame's nodes.
-    for s in app.shape_tool_shapes() {
+    for s in shapes {
         // A picture shows a node at each corner; dragging one crops it.
         if let Some(corners) = crate::shape_tool::bitmap_corners(&s) {
             for p in corners {
-                let fill = prefs.unselected_filled.then_some(Color32::WHITE);
-                node_marker(painter, view.to_screen(p), size, prefs.cusp, fill, main);
+                let (fill, edge) = marker_colors(&prefs, false);
+                node_marker(painter, view.to_screen(p), size, prefs.cusp, fill, edge);
             }
             continue;
         }
@@ -2000,9 +2222,6 @@ fn draw_nodes(app: &App, painter: &Painter) {
         // A B-spline: its outline, the control polygon dashed and the
         // control points as nodes; the curve's own nodes do not show.
         if s.spline.is_some() {
-            for (pts, _) in flatten(&s.page_path(), view) {
-                painter.add(egui::Shape::line(pts, EStroke::new(1.0, main)));
-            }
             let own = crate::kind_nodes::nodes(&s);
             let poly: Vec<Pos2> = own.iter().map(|(_, p)| view.to_screen(*p)).collect();
             let closed = matches!(s.kind, ShapeKind::Path { closed: true, .. });
@@ -2020,18 +2239,16 @@ fn draw_nodes(app: &App, painter: &Painter) {
                 ));
             }
             for (index, p) in poly.into_iter().enumerate() {
-                // Chosen control points are filled, as chosen nodes are.
-                let fill = if app.node_selection.contains(&(s.id, index)) {
-                    Some(main)
-                } else {
-                    prefs.unselected_filled.then_some(Color32::WHITE)
-                };
-                node_marker(painter, p, size, prefs.cusp, fill, main);
+                // Chosen control points look as chosen nodes do.
+                let chosen = app.node_selection.contains(&(s.id, index));
+                let (fill, edge) = marker_colors(&prefs, chosen);
+                node_marker(painter, p, size, prefs.cusp, fill, edge);
             }
             continue;
         }
         let ShapeKind::Path { path, .. } = &s.kind else {
-            // Rectangles, ellipses and polygons show their own nodes.
+            // Rectangles, ellipses and polygons show their own nodes on
+            // their outline in blue dashes (#670).
             let own = crate::kind_nodes::nodes(&s);
             if own.is_empty() {
                 painter.rect_stroke(
@@ -2041,32 +2258,21 @@ fn draw_nodes(app: &App, painter: &Painter) {
                     epaint::StrokeKind::Outside,
                 );
             }
+            // No corner chosen: a corner's drag changes all four, so all
+            // four show chosen (#670).
+            let none_chosen = !app.rect_corners_selected.iter().any(|(id, _)| *id == s.id);
             for (node, p) in own {
-                let chosen = matches!(
-                    node,
-                    crate::kind_nodes::KindNode::Corner { corner, .. }
-                        if app.rect_corners_selected.contains(&(s.id, corner))
-                );
-                let fill = if chosen {
-                    Some(main)
-                } else if prefs.unselected_filled {
-                    Some(Color32::WHITE)
-                } else {
-                    None
+                let chosen = match node {
+                    crate::kind_nodes::KindNode::Corner { corner, .. } => {
+                        none_chosen || app.rect_corners_selected.contains(&(s.id, corner))
+                    }
+                    _ => false,
                 };
-                node_marker(painter, view.to_screen(p), size, prefs.cusp, fill, main);
+                let (fill, edge) = marker_colors(&prefs, chosen);
+                node_marker(painter, view.to_screen(p), size, prefs.cusp, fill, edge);
             }
             continue;
         };
-        // The curve being edited shows its outline in the node colour.
-        for (mut pts, closed) in flatten(&s.page_path(), view) {
-            if closed {
-                if let Some(first) = pts.first().copied() {
-                    pts.push(first);
-                }
-            }
-            painter.add(egui::Shape::line(pts, EStroke::new(1.0, main)));
-        }
         let all = nodes::nodes(path);
         if prefs.show_direction {
             // A small arrow head just after the first node, along the
@@ -2109,19 +2315,13 @@ fn draw_nodes(app: &App, painter: &Painter) {
                 nodes::NodeType::Smooth => prefs.smooth,
                 nodes::NodeType::Symmetrical => prefs.symmetrical,
             };
-            let fill = if selected {
-                Some(main)
-            } else if prefs.unselected_filled {
-                Some(Color32::WHITE)
-            } else {
-                None
-            };
+            let (fill, edge) = marker_colors(&prefs, selected);
             if n.is_start {
                 // The first node of a subpath: a triangle a little larger
                 // than the other nodes.
-                start_node_marker(painter, p, size + 3.0, fill, main);
+                start_node_marker(painter, p, size + 3.0, fill, edge);
             } else {
-                node_marker(painter, p, size, shape, fill, main);
+                node_marker(painter, p, size, shape, fill, edge);
             }
         }
     }
@@ -2173,24 +2373,22 @@ fn draw_nodes(app: &App, painter: &Painter) {
             painter.circle_filled(c, 1.2, Tokens::HANDLE);
         }
     }
+    // The node lasso and marquee: the Pick marquee's dashes on a white
+    // line (#670).
     if let Drag::NodeLasso { points } = &app.drag {
         let pts: Vec<Pos2> = points.iter().map(|p| view.to_screen(*p)).collect();
-        dashed_polyline(
-            painter,
-            &pts,
-            EStroke::new(1.0, Tokens::SELECTION),
-            4.0,
-            3.0,
-        );
+        dashed_overlay(painter, &pts, Tokens::SELECTION);
     }
     if let Drag::NodeMarquee { start, current } = &app.drag {
         let r = view.rect_to_screen(Rect::from_points(*start, *current));
-        painter.rect_stroke(
-            r,
-            0.0,
-            EStroke::new(1.0, Tokens::SELECTION),
-            epaint::StrokeKind::Outside,
-        );
+        let pts = [
+            r.left_top(),
+            r.right_top(),
+            r.right_bottom(),
+            r.left_bottom(),
+            r.left_top(),
+        ];
+        dashed_overlay(painter, &pts, Tokens::SELECTION);
     }
     crate::corner_widgets::draw(app, painter, main);
 }
@@ -2413,6 +2611,14 @@ pub fn draw_docker_preview(app: &App, painter: &Painter) {
 
 /// A polyline drawn in dashes of `on` px with `off` px gaps.
 fn dashed_polyline(painter: &Painter, pts: &[Pos2], stroke: EStroke, on: f32, off: f32) {
+    dash_segments(pts, on, off, |a, b| {
+        painter.line_segment([a, b], stroke);
+    });
+}
+
+/// The dashes of a polyline, `on` px with `off` px gaps, each given to
+/// `f` as its two ends.
+fn dash_segments(pts: &[Pos2], on: f32, off: f32, mut f: impl FnMut(Pos2, Pos2)) {
     let period = on + off;
     let mut walked = 0.0f32;
     for w in pts.windows(2) {
@@ -2427,7 +2633,7 @@ fn dashed_polyline(painter: &Painter, pts: &[Pos2], stroke: EStroke, on: f32, of
             let phase = (walked + t) % period;
             if phase < on {
                 let end = (t + (on - phase)).min(len);
-                painter.line_segment([a + dir * t, a + dir * end], stroke);
+                f(a + dir * t, a + dir * end);
                 t = end;
             } else {
                 t += period - phase;

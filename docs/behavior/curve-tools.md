@@ -93,18 +93,22 @@ meets the start) `Path` objects with the toolbox defaults.
   nib instead of the cross hair (#362): black on a white halo, leaning
   up and to the right, with a dot at its tip; the tip is the hot spot,
   where the node goes. The same signs show below the nib.
-- While drawing (code: `pen_look.rs`), the segments placed so far are a
-  hairline in the colour of the outline new objects get (black without
-  one), as the curve will look; nodes placed before are small hollow
-  squares and the last node a filled blue one; the last node's handles
-  are blue dashed lines ending in arrow tips (a cusp shows its incoming
-  handle as it was frozen). While the first node is dragged to close,
-  the closing segment shows dashed in blue with its handle.
-- Preview mode (Pen, on by default): while the button is up a dashed blue
-  segment (5 px dashes, 2 px gaps, over a white line as thin as the dashes
-  that shows in the gaps, so it reads over any colour, #489; plain line
-  segments, so the preview costs nothing noticeable in a frame:
-  `frame_times_of_the_pen_preview`, #560) runs from the last node to the pointer (as the next node would
+- While drawing (code: `pen_look.rs`), the segments placed so far are
+  drawn in the outline new objects get, its colour and width at the
+  zoom (at least one pixel; a black hairline without one), as the curve
+  will look; nodes placed before are small hollow squares and the last
+  node a blue diamond with a white edge (#670); the last node's handles
+  are blue dashed lines on a white line as wide as the dashes, ending in
+  blue arrow tips with a white edge (a cusp shows its incoming handle as
+  it was frozen). While a node's handle is pulled, the segment into that
+  node is the one being shaped: a black line on a white line twice as
+  wide, over any outline (#670). While the
+  first node is dragged to close, the closing segment shows the same way
+  with its handle.
+- Preview mode (Pen, on by default): while the button is up a solid blue
+  line on a white line twice as wide (so it reads over any colour, #489,
+  #670; plain line segments, so the preview costs nothing noticeable in
+  a frame: `frame_times_of_the_pen_preview`, #560) runs from the last node to the pointer (as the next node would
   take it, snapped and with Ctrl's steps), curved by the last node's
   outgoing handle, so the next segment shows before the click. The
   Bezier tool and the Pen with Preview mode off show nothing past the

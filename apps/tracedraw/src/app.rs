@@ -1046,6 +1046,12 @@ pub struct App {
     /// and the selection they were gathered for (see
     /// [`App::selected_rc`]).
     pub selected_cache: std::cell::RefCell<Option<SelectedCache>>,
+    /// Overlays redrawn every frame, tessellated once and kept by name
+    /// with the key of what they were built from (see
+    /// `canvas::cached_overlay`).
+    pub overlay_cache: std::cell::RefCell<
+        std::collections::HashMap<&'static str, (u64, std::sync::Arc<egui::epaint::Mesh>)>,
+    >,
     /// Where the canvas began on screen when it was last drawn, so the
     /// drawing stays put in its window when the window moves (see
     /// `App::anchor_view`).
@@ -1860,6 +1866,9 @@ impl DockerTab {
     }
 }
 
+/// The most nodes the Pick tool marks on the selection.
+pub const SELECTED_NODE_MARKS: usize = 4000;
+
 /// The selected objects as [`App::selected_rc`] gathered them: the
 /// drawing's engine, its revision and the page, and the selection.
 #[derive(Debug, Clone)]
@@ -1871,6 +1880,12 @@ pub struct SelectedCache {
     shapes: std::rc::Rc<Vec<Shape>>,
     /// Their visual bounds, once asked for.
     bounds: std::cell::RefCell<Option<std::rc::Rc<Vec<Rect>>>>,
+    /// Their nodes as the Pick tool marks them, once asked for (see
+    /// [`App::selected_node_marks`]).
+    nodes: std::cell::RefCell<Option<std::rc::Rc<Vec<(Point, bool)>>>>,
+    /// Those marks as drawn, with the key of the view and clip they were
+    /// built for (see [`App::selected_marks_mesh`]).
+    marks_mesh: std::cell::RefCell<Option<(u64, std::sync::Arc<egui::epaint::Mesh>)>>,
 }
 
 /// An action Edit > Repeat can repeat.
@@ -2159,6 +2174,7 @@ impl App {
             visual_cache: std::cell::RefCell::new((u64::MAX, Default::default())),
             fill_preview: false,
             selected_cache: std::cell::RefCell::new(None),
+            overlay_cache: Default::default(),
             view_anchor: None,
             window_layout: Default::default(),
             window_layout_seen: None,
@@ -3823,6 +3839,8 @@ impl App {
                 selection: self.selection.clone(),
                 shapes: shapes.clone(),
                 bounds: Default::default(),
+                nodes: Default::default(),
+                marks_mesh: Default::default(),
             });
         }
         shapes
@@ -3945,6 +3963,95 @@ impl App {
             }
         }
         b
+    }
+
+    /// The nodes of the selected objects in page space, as the Pick tool
+    /// marks them (#670): a curve's nodes, round when smooth or
+    /// symmetrical, and the nodes of rectangles, ellipses and polygons.
+    /// Gathered once with the selection, and no more than
+    /// [`SELECTED_NODE_MARKS`], so a heavy selection keeps the frame fast.
+    pub fn selected_node_marks(&self) -> std::rc::Rc<Vec<(Point, bool)>> {
+        let shapes = self.selected_rc();
+        let cached = |c: &SelectedCache| {
+            std::rc::Rc::ptr_eq(&c.shapes, &shapes)
+                .then(|| c.nodes.borrow().clone())
+                .flatten()
+        };
+        if let Ok(cache) = self.selected_cache.try_borrow() {
+            if let Some(n) = cache.as_ref().and_then(cached) {
+                return n;
+            }
+        }
+        let mut marks = Vec::new();
+        for s in shapes.iter() {
+            if marks.len() >= SELECTED_NODE_MARKS {
+                break;
+            }
+            match &s.kind {
+                ShapeKind::Path { path, .. } if s.spline.is_none() => {
+                    use tracedraw_core::nodes;
+                    marks.extend(nodes::nodes(path).iter().map(|n| {
+                        let round =
+                            nodes::node_type_of_with(n, &s.node_types) != nodes::NodeType::Cusp;
+                        (s.transform * n.pos, round)
+                    }));
+                }
+                ShapeKind::Path { .. }
+                | ShapeKind::Rect { .. }
+                | ShapeKind::Ellipse { .. }
+                | ShapeKind::Polygon { .. } => {
+                    marks.extend(
+                        crate::kind_nodes::nodes(s)
+                            .into_iter()
+                            .map(|(_, p)| (p, false)),
+                    );
+                }
+                _ => {}
+            }
+        }
+        marks.truncate(SELECTED_NODE_MARKS);
+        let marks = std::rc::Rc::new(marks);
+        if let Ok(cache) = self.selected_cache.try_borrow() {
+            if let Some(c) = cache
+                .as_ref()
+                .filter(|c| std::rc::Rc::ptr_eq(&c.shapes, &shapes))
+            {
+                *c.nodes.borrow_mut() = Some(marks.clone());
+            }
+        }
+        marks
+    }
+
+    /// [`Self::selected_node_marks`] as one mesh, built by `build` for
+    /// the view and clip `key` stands for and kept with the gathered
+    /// selection, so a frame where neither changed (a pointer move over
+    /// a heavy selection) only hands the mesh over. `None` without marks.
+    pub fn selected_marks_mesh(
+        &self,
+        key: u64,
+        build: impl FnOnce(&[(Point, bool)]) -> egui::epaint::Mesh,
+    ) -> Option<std::sync::Arc<egui::epaint::Mesh>> {
+        let marks = self.selected_node_marks();
+        if marks.is_empty() {
+            return None;
+        }
+        let shapes = self.selected_rc();
+        let cache = self.selected_cache.try_borrow().ok();
+        let Some(c) = cache
+            .as_ref()
+            .and_then(|c| c.as_ref())
+            .filter(|c| std::rc::Rc::ptr_eq(&c.shapes, &shapes))
+        else {
+            return Some(std::sync::Arc::new(build(&marks)));
+        };
+        if let Some((k, mesh)) = c.marks_mesh.borrow().as_ref() {
+            if *k == key {
+                return Some(mesh.clone());
+            }
+        }
+        let mesh = std::sync::Arc::new(build(&marks));
+        *c.marks_mesh.borrow_mut() = Some((key, mesh.clone()));
+        Some(mesh)
     }
 
     /// The bounds of what `s` (in page space) draws, its live effects

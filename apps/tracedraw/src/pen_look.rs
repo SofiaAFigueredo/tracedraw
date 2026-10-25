@@ -1,8 +1,9 @@
 //! The Pen and Bezier tools while a curve is being drawn: what the canvas
 //! shows (the segments placed in the outline the curve will get, the
-//! Pen's dashed preview segment to the pointer, the nodes and the last
-//! node's handles), and the Pen's automatic adding and deleting of nodes
-//! on the curve being drawn. Pure functions, so tests can check them.
+//! segment a drag is shaping, the Pen's preview segment to the pointer,
+//! the nodes and the last node's handles), and the Pen's automatic adding
+//! and deleting of nodes on the curve being drawn. Pure functions, so
+//! tests can check them.
 
 use crate::app::{App, CurveInProgress};
 use crate::tools::Tool;
@@ -14,21 +15,27 @@ use tracedraw_core::geometry::{BezPath, Point};
 pub enum NodeLook {
     /// A node placed before: a small hollow square.
     Placed,
-    /// The last node, the one the next segment leaves: a filled square in
-    /// the selection blue.
+    /// The last node, the one the next segment leaves: a diamond in the
+    /// selection blue with a white edge (#670).
     Current,
 }
 
 /// What the canvas draws for a Pen or Bezier curve being drawn.
 #[derive(Debug, Clone)]
 pub struct CurveLook {
-    /// The segments placed so far, drawn as a hairline in `placed_color`.
+    /// The segments placed so far, drawn in the outline new objects get:
+    /// `placed_color`, `placed_width` mm wide (0 for a hairline).
     pub placed: BezPath,
     /// The colour of the outline new objects get (black without one).
     pub placed_color: Color32,
+    pub placed_width: f64,
+    /// The segment a drag is shaping: the one into the node whose handle
+    /// is pulled, or the closing segment while the first node is
+    /// dragged. Drawn black on a white line, over any outline (#670).
+    pub drawing: Option<BezPath>,
     /// Pen preview: the next segment, from the last node to the pointer
-    /// (curved by the last node's outgoing handle), or the closing segment
-    /// while the first node is dragged; dashed in `preview_color`.
+    /// (curved by the last node's outgoing handle); a line in
+    /// `preview_color` on a white one twice as wide.
     pub preview: Option<BezPath>,
     pub preview_color: Color32,
     /// Every node with its mark.
@@ -41,12 +48,12 @@ pub struct CurveLook {
 
 /// The look of `c` with the pointer (as the next node would take it) at
 /// `pointer`: `preview` is the Pen's preview mode, `outline` the colour
-/// of the outline new objects get.
+/// and width (mm) of the outline new objects get.
 pub fn curve_look(
     c: &CurveInProgress,
     pointer: Option<Point>,
     preview: bool,
-    outline: Option<Color32>,
+    outline: Option<(Color32, f64)>,
 ) -> CurveLook {
     let blue = crate::theme::Tokens::SELECTION;
     let last = c.nodes.len().checked_sub(1);
@@ -77,6 +84,8 @@ pub fn curve_look(
         }
     }
     let mut preview_path = None;
+    let mut drawing = None;
+    let mut placed = c.path(None);
     if c.closing.is_some() {
         // The closing segment being shaped from the first node.
         if let (Some((first, _)), Some((end, end_out))) =
@@ -90,7 +99,7 @@ pub fn curve_look(
             } else {
                 seg.line_to(first);
             }
-            preview_path = Some(seg);
+            drawing = Some(seg);
             if let Some(h) = into {
                 handles.push((first, h));
             }
@@ -99,7 +108,12 @@ pub fn curve_look(
                 n.1 = NodeLook::Current;
             }
         }
-    } else if preview && !c.dragging_handle {
+    } else if c.dragging_handle {
+        // The segment into the node being dragged is still being shaped.
+        if c.nodes.len() > 1 {
+            drawing = split_last(&mut placed);
+        }
+    } else if preview {
         if let (Some(p), Some((end, end_out))) = (pointer, c.nodes.last().copied()) {
             if (p - end).hypot() > 1e-9 {
                 let mut seg = BezPath::new();
@@ -112,14 +126,39 @@ pub fn curve_look(
             }
         }
     }
+    let (placed_color, placed_width) = outline.unwrap_or((Color32::BLACK, 0.0));
     CurveLook {
-        placed: c.path(None),
-        placed_color: outline.unwrap_or(Color32::BLACK),
+        placed,
+        placed_color,
+        placed_width,
+        drawing,
         preview: preview_path,
         preview_color: blue,
         nodes,
         handles,
     }
+}
+
+/// Take the last segment off `path` and give it on its own (no copy of
+/// the rest: the Pen calls this every frame of a handle drag).
+fn split_last(path: &mut BezPath) -> Option<BezPath> {
+    use tracedraw_core::geometry::PathEl;
+    let els = path.elements();
+    let n = els.len();
+    if n < 2 || matches!(els[n - 1], PathEl::MoveTo(_) | PathEl::ClosePath) {
+        return None;
+    }
+    let from = match els[n - 2] {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => {
+            p
+        }
+        PathEl::ClosePath => return None,
+    };
+    let last = path.pop()?;
+    let mut seg = BezPath::new();
+    seg.move_to(from);
+    seg.push(last);
+    Some(seg)
 }
 
 /// What a Pen click on the curve being drawn does with automatic adding
@@ -365,8 +404,10 @@ mod tests {
     fn placed_segments_take_the_outline_and_only_the_last_node_is_filled() {
         let c = sample();
         let red = Color32::from_rgb(200, 0, 0);
-        let look = curve_look(&c, None, true, Some(red));
+        let look = curve_look(&c, None, true, Some((red, 0.5)));
         assert_eq!(look.placed_color, red);
+        assert_eq!(look.placed_width, 0.5);
+        assert!(look.drawing.is_none(), "no drag, nothing being shaped");
         assert_eq!(look.preview_color, crate::theme::Tokens::SELECTION);
         assert_eq!(look.placed.segments().count(), 2);
         // No outline for new objects: a black hairline.
@@ -390,7 +431,8 @@ mod tests {
         let mut c = sample();
         c.closing = Some(pt(-10.0, -10.0));
         let look = curve_look(&c, Some(pt(-10.0, -10.0)), true, None);
-        let segs: Vec<PathSeg> = look.preview.expect("closing").segments().collect();
+        assert!(look.preview.is_none(), "{:?}", look.preview);
+        let segs: Vec<PathSeg> = look.drawing.expect("closing").segments().collect();
         match segs[0] {
             PathSeg::Cubic(k) => {
                 assert!(close(k.p0, pt(60.0, 0.0)));
@@ -402,6 +444,28 @@ mod tests {
         }
         assert_eq!(look.nodes[0].1, NodeLook::Current);
         assert!(look.handles.iter().any(|h| close(h.1, pt(-10.0, -10.0))));
+    }
+
+    /// While a node's handle is pulled, the segment into it is the one
+    /// being shaped (black on white); the segments before it are placed,
+    /// in the real outline (#670).
+    #[test]
+    fn the_segment_into_the_dragged_node_is_drawn_apart() {
+        let mut c = sample();
+        c.dragging_handle = true;
+        let look = curve_look(&c, Some(pt(90.0, 20.0)), true, None);
+        assert!(look.preview.is_none());
+        assert_eq!(look.placed.segments().count(), 1);
+        let seg: Vec<PathSeg> = look.drawing.expect("drawing").segments().collect();
+        assert_eq!(seg.len(), 1);
+        assert!(close(seg[0].eval(0.0), pt(30.0, 0.0)), "{seg:?}");
+        assert!(close(seg[0].eval(1.0), pt(60.0, 0.0)), "{seg:?}");
+        // The first node's handle pulled: nothing placed yet.
+        let mut one = sample();
+        one.nodes.truncate(1);
+        one.dragging_handle = true;
+        let look = curve_look(&one, None, true, None);
+        assert!(look.drawing.is_none());
     }
 
     #[test]

@@ -7,7 +7,7 @@
 | Ctrl+click | the object inside a group or a clip frame, one level further in at each click (the first level inside the topmost group, then the group or object inside that, down to the innermost object; a clip frame's contents count only inside the frame, where they show); its handles are round, and moving, scaling, colouring or deleting it changes that object only (a group left empty goes); Ctrl+Shift+click adds one more; a group and an object inside it are never selected together |
 | Alt+click | the object beneath the selected one under the pointer, round to the top again after the bottom one (dig); with nothing there selected, the topmost; Ctrl+Alt digs through the objects inside groups and clip frames (a clip frame comes after its contents); Shift+Alt adds it |
 | Click on a selected object (any of a selection), or on the centre mark | toggle the rotate/skew handles: curved arrows at the corners, straight double arrows at the sides, the centre of rotation in the middle |
-| Drag on empty | marquee (a dashed blue frame); objects wholly inside are selected; with Alt held when the drag ends, every object the frame touches: its outline crosses or lies in the frame, or the frame lies in its fill (text, bitmaps, tables and clip frames anywhere in their box; a group when one of its objects counts); Shift keeps the selection and turns over the objects the frame takes (selected ones are deselected, the others added; the Freehand Pick lasso too, #401); Ctrl keeps the marquee square; with Options > Tools > Pick, Marquee selects touched objects, Alt works the other way round |
+| Drag on empty | marquee (a frame of blue dashes on a white line as wide as they are, the style of handle lines, #670); objects wholly inside are selected; with Alt held when the drag ends, every object the frame touches: its outline crosses or lies in the frame, or the frame lies in its fill (text, bitmaps, tables and clip frames anywhere in their box; a group when one of its objects counts); Shift keeps the selection and turns over the objects the frame takes (selected ones are deselected, the others added; the Freehand Pick lasso too, #401); Ctrl keeps the marquee square; with Options > Tools > Pick, Marquee selects touched objects, Alt works the other way round |
 | Drag the centre mark (the "x") | moves the selection, also where the mark lies on nothing (an outline-only ring) |
 | Drag object | move with the pointer (snapped); Ctrl keeps the move horizontal or vertical, whichever is longer; Space drops a copy where the selection is and the move goes on (also while scaling, turning or slanting: the copy takes the transform reached); let go over the document palette to add the objects' colours to it instead of moving them |
 | Corner handle | scale proportionally from the opposite corner, by where the pointer falls along the box's diagonal: `s = (|sx| w² + |sy| h²) / (w² + h²)` with `sx`, `sy` the two sides' own ratios (each keeps its sign, for mirroring), so the corner follows the pointer and a wide, low box such as a line of text does not grow at the short side's pace (#383); the handle follows the pointer from the frame the drag starts, not in a jump of the few pixels before a press becomes a drag; Shift from the centre; Ctrl in whole steps of 100 % (crossing the other side gives the mirror image at the same size); Alt scales freely |
@@ -62,12 +62,21 @@ across, stand just outside it: their centres 6.5 points out from the box
 (a gap of 1.5 points). A corner or side handle scales from where it was
 grabbed, so the box follows the pointer without a jump. Objects chosen
 inside a group show round handles. The centre mark is a small cross.
+The selected objects' own nodes show as small white markers with a
+black edge, squares (round on a curve's smooth and symmetrical nodes),
+in both modes (#670): a curve's nodes and the nodes of rectangles,
+ellipses and polygons, gathered once per change of the drawing, at most
+4000 of them, the ones in view built into one mesh that is kept until
+the view changes, so a pointer move over a heavy selection only hands
+it on.
 
 In rotate mode the handles are black arrows 2 points thick with solid
 heads, their centres 9 points out from the box: a curved double arrow
 around each corner, bulging outwards, and a straight double arrow along
 each side. The centre of rotation is a ring 8 points in radius with a
-dot in the middle.
+dot in the middle. Arrows, heads and centre lie on a white edge, so
+they show on a dark drawing (#670); they are built once into one mesh
+for where they stand.
 
 ## Large selections
 

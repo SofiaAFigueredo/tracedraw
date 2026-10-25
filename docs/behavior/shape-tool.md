@@ -14,8 +14,17 @@ Node counts in the status bar and the Objects panel count it once.
 A curve selected with the Shape tool shows its outline in the node
 colour (Options > Nodes and Handles, blue by default), its nodes as small
 markers by type (squares for cusps by default) and the first node of each
-subpath as a slightly larger triangle. A selected node's control
-handles are dashed lines from the node on a white line twice as wide,
+subpath as a slightly larger triangle. A rectangle, ellipse or polygon
+shows its outline as blue dashes (6 px on, 4 off) under its own nodes
+(#670). Node markers are black and white, so they show on any colour:
+chosen nodes black with a white edge, the others white with a black
+edge (hollow with Show unselected nodes with fill off). A rectangle
+with no corner chosen shows all four corners chosen, since a corner's
+drag then changes all four. The outlines are built once per change of
+the drawing or the view and kept as one mesh. The node marquee and the freehand
+marquee are blue dashes on a white line, like the Pick marquee. A
+selected node's control handles are dashed lines from the node on a
+white line as wide as the dashes,
 each ending in a solid arrow head with a white edge at its control point
 (so they show on any colour, #670) (the curve tools show the handles of the curve
 being drawn the same way). The arrow showing the curve's

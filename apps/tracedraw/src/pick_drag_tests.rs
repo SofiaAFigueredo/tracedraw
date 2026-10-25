@@ -6567,8 +6567,405 @@ fn overlays_are_drawn_on_a_white_line() {
         })
         .count();
     assert!(heads >= 2, "{heads}");
+    // The handle line: dashes on a white line as wide as they are.
     assert!(shapes.iter().any(|s| matches!(s, egui::Shape::LineSegment { stroke, .. }
-        if stroke.color == egui::Color32::WHITE && (stroke.width - crate::canvas::HALO_WIDTH).abs() < 1e-3)));
+        if stroke.color == egui::Color32::WHITE && (stroke.width - crate::canvas::HALO_INNER).abs() < 1e-3)));
+}
+
+/// Line segments of `color` and `width` in `shapes`.
+fn segments_of(shapes: &[egui::Shape], color: egui::Color32, width: f32) -> Vec<[Pos2; 2]> {
+    shapes
+        .iter()
+        .filter_map(|s| match s {
+            egui::Shape::LineSegment { points, stroke }
+                if stroke.color == color && (stroke.width - width).abs() < 1e-3 =>
+            {
+                Some(*points)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether segment `s` lies within `d` px of the line through `a` and `b`
+/// and between them.
+fn along(s: [Pos2; 2], a: Pos2, b: Pos2, d: f32) -> bool {
+    let ab = b - a;
+    let len = ab.length().max(1e-3);
+    s.iter().all(|p| {
+        let t = (*p - a).dot(ab) / (len * len);
+        let off = ((*p - a).x * ab.y - (*p - a).y * ab.x).abs() / len;
+        (-0.05..=1.05).contains(&t) && off <= d
+    })
+}
+
+/// The Pen as the reference program draws it (#670): the preview to the
+/// pointer is a solid blue line on a white one twice as wide; the last
+/// node is a blue diamond with a white edge; while a node's handle is
+/// pulled, the segments placed before are drawn in the real outline and
+/// only the segment into the dragged node is black on white.
+#[test]
+fn the_pen_draws_its_preview_and_segments_like_the_reference() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.set_tool(Tool::Pen);
+    app.settings.curves.pen_preview = true;
+    let a = app.view.to_screen(Point::new(100.0, 150.0));
+    let b = app.view.to_screen(Point::new(160.0, 150.0));
+    let c = app.view.to_screen(Point::new(160.0, 200.0));
+    click_at(&ctx, &mut app, a, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(b)],
+        Modifiers::NONE,
+    );
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let blue = crate::theme::Tokens::SELECTION;
+    let white = segments_of(&shapes, egui::Color32::WHITE, crate::canvas::HALO_WIDTH);
+    let inner = segments_of(&shapes, blue, crate::canvas::HALO_INNER);
+    assert!(
+        white.iter().any(|s| along(*s, a, b, 1.0)),
+        "a white line: {white:?}"
+    );
+    // Solid: the blue covers the whole way, not dashes.
+    let covered: f32 = inner
+        .iter()
+        .filter(|s| along(**s, a, b, 1.0))
+        .map(|s| s[0].distance(s[1]))
+        .sum();
+    assert!(
+        covered > a.distance(b) * 0.95,
+        "{covered} of {}",
+        a.distance(b)
+    );
+    let diamond = |shapes: &[egui::Shape]| {
+        shapes.iter().any(|s| {
+            matches!(s, egui::Shape::Path(ps) if ps.closed && ps.points.len() == 4
+                && ps.fill == blue
+                && ps.stroke.color == egui::epaint::ColorMode::Solid(egui::Color32::WHITE)
+                && ps.points.iter().any(|p| p.distance(a) < 6.0))
+        })
+    };
+    assert!(diamond(&shapes), "the current node is a blue diamond");
+    // A second node placed by a click, then a third pulled.
+    click_at(&ctx, &mut app, b, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(c)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(c, true, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    for i in 1..=3 {
+        let p = c + egui::vec2(10.0 * i as f32, 0.0);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(p)],
+            Modifiers::NONE,
+        );
+    }
+    assert!(app.curve.as_ref().is_some_and(|k| k.dragging_handle));
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let outline = app.default_stroke().expect("new objects get an outline");
+    let width = (outline.width as f32 * app.view.zoom).max(1.0);
+    let color = crate::canvas::to_color32(outline.color);
+    let placed = shapes.iter().any(|s| match s {
+        egui::Shape::LineSegment { points, stroke } => {
+            stroke.color == color
+                && (stroke.width - width).abs() < 1e-3
+                && along(*points, a, b, 1.0)
+        }
+        egui::Shape::Path(ps) => {
+            ps.stroke.width == width && ps.points.iter().all(|p| along([*p, *p], a, b, 1.0))
+        }
+        _ => false,
+    });
+    assert!(
+        placed,
+        "the placed segment in the real outline ({width} px)"
+    );
+    let black = segments_of(&shapes, egui::Color32::BLACK, crate::canvas::HALO_INNER);
+    let halo = segments_of(&shapes, egui::Color32::WHITE, crate::canvas::HALO_WIDTH);
+    assert!(
+        black.iter().any(|s| s.iter().any(|p| p.distance(c) < 3.0)),
+        "{black:?}"
+    );
+    assert!(
+        halo.iter().any(|s| s.iter().any(|p| p.distance(c) < 3.0)),
+        "{halo:?}"
+    );
+    assert!(
+        !black.iter().any(|s| along(*s, a, b, 0.5)),
+        "the placed segment gets no black and white preview"
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(c, false, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+}
+
+/// The Pick tool marks the selection's own nodes as small white squares
+/// with a black edge, and the rotate arrows and centre have a white edge
+/// (#670).
+#[test]
+fn the_pick_tool_marks_the_nodes_and_edges_the_rotate_arrows() {
+    let (ctx, mut app, id) = setup();
+    let r = app.view.rect_to_screen(bounds(&app, id));
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    // One mesh: a black square with a white one inside for each node.
+    let vertices: Vec<egui::epaint::Vertex> = shapes
+        .iter()
+        .filter_map(|s| match s {
+            egui::Shape::Mesh(m) => Some(m.vertices.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let near = |color: egui::Color32, c: Pos2, from: f32, to: f32| {
+        vertices
+            .iter()
+            .any(|v| v.color == color && v.pos.distance(c) >= from && v.pos.distance(c) <= to)
+    };
+    for corner in [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+    ] {
+        assert!(
+            near(egui::Color32::WHITE, corner, 0.0, 3.5),
+            "a white node at {corner:?}"
+        );
+        assert!(
+            near(egui::Color32::BLACK, corner, 2.5, 5.0),
+            "a black edge at {corner:?}"
+        );
+    }
+    // A pointer move hands on the same mesh, not one built again.
+    let marks_mesh = |shapes: &[egui::Shape]| {
+        shapes.iter().find_map(|s| match s {
+            egui::Shape::Mesh(m)
+                if m.vertices.iter().any(|v| {
+                    v.color == egui::Color32::WHITE && v.pos.distance(r.left_top()) < 3.0
+                }) =>
+            {
+                Some(m.clone())
+            }
+            _ => None,
+        })
+    };
+    let first = marks_mesh(&shapes).expect("the marks");
+    let shapes = frame_shapes(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(r.center() + egui::vec2(5.0, 3.0))],
+    );
+    let second = marks_mesh(&shapes).expect("the marks");
+    assert!(std::sync::Arc::ptr_eq(&first, &second), "kept");
+    // Rotate mode: the arrows and the centre on a white edge, built once
+    // into one mesh.
+    app.toggle_rotate_mode();
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let centre = r.center();
+    let handles: Vec<Pos2> = app
+        .handle_positions(bounds(&app, id))
+        .into_iter()
+        .map(|(_, p)| p)
+        .collect();
+    assert_eq!(handles.len(), 8);
+    for p in handles.iter().chain([&centre]) {
+        for color in [egui::Color32::WHITE, egui::Color32::BLACK] {
+            assert!(painted_at(&shapes, color, *p, 14.0), "{color:?} near {p:?}");
+        }
+    }
+    let kept = app
+        .overlay_cache
+        .borrow()
+        .get("rotate_handles")
+        .map(|(_, m)| m.clone())
+        .expect("kept");
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(centre + egui::vec2(3.0, 0.0))],
+        Modifiers::NONE,
+    );
+    let again = app
+        .overlay_cache
+        .borrow()
+        .get("rotate_handles")
+        .map(|(_, m)| m.clone())
+        .expect("kept");
+    assert!(std::sync::Arc::ptr_eq(&kept, &again), "not built again");
+    app.toggle_rotate_mode();
+    // Nothing marked when the Shape tool shows the nodes itself.
+    app.set_tool(Tool::Shape);
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert!(
+        !shapes.iter().any(|s| matches!(s, egui::Shape::Mesh(m)
+            if m.vertices.iter().any(|v| v.color == egui::Color32::WHITE
+                && v.pos.distance(r.left_top()) < 2.0))),
+        "no Pick tool marks in the Shape tool"
+    );
+}
+
+/// Whether a mesh of `shapes` paints `color` within `reach` px of `p`:
+/// a triangle of that colour, its three corners in reach.
+fn painted_at(shapes: &[egui::Shape], color: egui::Color32, p: Pos2, reach: f32) -> bool {
+    shapes.iter().any(|s| match s {
+        egui::Shape::Mesh(m) => m.indices.chunks(3).any(|t| {
+            t.iter().all(|i| {
+                m.vertices
+                    .get(*i as usize)
+                    .is_some_and(|v| v.color == color && v.pos.distance(p) <= reach)
+            })
+        }),
+        _ => false,
+    })
+}
+
+/// The Shape tool on a rectangle (#670): its outline in blue dashes, its
+/// chosen nodes black with a white edge (all four while none is chosen,
+/// since a drag then moves them all) and the others white with a black
+/// edge, whatever the main colour, and the node marquee in the Pick
+/// marquee's dashes on a white line.
+#[test]
+fn the_shape_tool_dashes_a_rectangle_and_marks_its_nodes_in_black_and_white() {
+    let (ctx, mut app, id) = setup();
+    app.set_tool(Tool::Shape);
+    let r = app.view.rect_to_screen(bounds(&app, id));
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let blue = crate::theme::Tokens::SELECTION;
+    // Along the top, blue dashes (6 px with 4 px gaps): the mesh has
+    // vertices at the ends of each dash, a solid line only at its ends.
+    let mut xs: Vec<f32> = shapes
+        .iter()
+        .filter_map(|s| match s {
+            egui::Shape::Mesh(m) => Some(m),
+            _ => None,
+        })
+        .flat_map(|m| m.vertices.iter())
+        .filter(|v| v.color == blue && (v.pos.y - r.top()).abs() < 1.5)
+        .filter(|v| v.pos.x > r.left() + 3.0 && v.pos.x < r.right() - 3.0)
+        .map(|v| v.pos.x)
+        .collect();
+    xs.sort_by(f32::total_cmp);
+    xs.dedup_by(|a, b| (*a - *b).abs() < 1.5);
+    let dashes = r.width() / 10.0;
+    assert!(
+        xs.len() as f32 > dashes,
+        "{} dash ends for about {dashes} dashes",
+        xs.len()
+    );
+    // The corners with a marker filled `fill` and edged `edge`.
+    let markers = |shapes: &[egui::Shape], fill: egui::Color32, edge: egui::Color32| {
+        let near = |c: &Pos2, rs: &egui::epaint::RectShape| c.distance(rs.rect.center()) < 1.5;
+        [
+            r.left_top(),
+            r.right_top(),
+            r.right_bottom(),
+            r.left_bottom(),
+        ]
+        .iter()
+        .filter(|c| {
+            shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::Rect(rs) if rs.fill == fill && near(c, rs)))
+                && shapes.iter().any(|s| {
+                    matches!(s, egui::Shape::Rect(rs) if rs.stroke.color == edge
+                            && rs.rect.width() < 12.0 && near(c, rs))
+                })
+        })
+        .count()
+    };
+    // No corner chosen: a drag moves all four, so all four show chosen,
+    // black with a white edge.
+    assert!(markers(&shapes, egui::Color32::BLACK, egui::Color32::WHITE) >= 4);
+    assert_eq!(
+        markers(&shapes, egui::Color32::WHITE, egui::Color32::BLACK),
+        0
+    );
+    // One corner chosen: it alone is black, the others white with a
+    // black edge.
+    app.rect_corners_selected = vec![(id, 0)];
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert_eq!(
+        markers(&shapes, egui::Color32::BLACK, egui::Color32::WHITE),
+        1
+    );
+    assert_eq!(
+        markers(&shapes, egui::Color32::WHITE, egui::Color32::BLACK),
+        3
+    );
+    // A main colour of the user's own does not colour the nodes.
+    app.settings.nodes.main_rgb = [200, 0, 0];
+    let red = egui::Color32::from_rgb(200, 0, 0);
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert_eq!(markers(&shapes, red, red), 0);
+    assert_eq!(
+        markers(&shapes, egui::Color32::WHITE, egui::Color32::BLACK),
+        3
+    );
+    app.settings.nodes = crate::settings::NodePrefs::default();
+    // The node marquee.
+    app.node_selection.clear();
+    app.rect_corners_selected.clear();
+    let from = r.left_top() + egui::vec2(-30.0, -30.0);
+    let to = r.left_top() + egui::vec2(-60.0, 60.0);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(from)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(from, true, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    for i in 1..=3 {
+        let p = from + (to - from) * (i as f32 / 3.0);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(p)],
+            Modifiers::NONE,
+        );
+    }
+    assert!(
+        matches!(app.drag, crate::app::Drag::NodeMarquee { .. }),
+        "{:?}",
+        app.drag
+    );
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let (x0, x1) = (from.x.min(to.x), from.x.max(to.x));
+    let white = segments_of(&shapes, egui::Color32::WHITE, crate::canvas::HALO_INNER);
+    let edge_of = |s: &[Pos2; 2]| {
+        s.iter()
+            .all(|p| (p.y - from.y).abs() < 1.5 && p.x >= x0 - 1.0 && p.x <= x1 + 1.0)
+    };
+    assert!(white.iter().any(edge_of), "a white line under the marquee");
+    let blue_top: Vec<_> = segments_of(&shapes, blue, crate::canvas::HALO_INNER)
+        .into_iter()
+        .filter(edge_of)
+        .collect();
+    assert!(blue_top.len() > 2, "blue dashes: {blue_top:?}");
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(to, false, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
 }
 
 /// An idle window asks for no frame (#616): once the start has settled,

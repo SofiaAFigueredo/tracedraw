@@ -2507,28 +2507,11 @@ fn run_style_json(sp: &TextSpan, fill: Option<&Fill>) -> String {
     format!("{{{}}}", character_json(sp, fill))
 }
 
-/// The family and the weight's style code a style string names for a
-/// span: a family named with its weight ("Titillium Web SemiBold") as
-/// the family and that weight's code (1024), as the files name a face;
-/// the weights' codes run 1 for 100 to 65536 for 900, a power of two
-/// for each step of 100 (see docs/cdr-format.md).
-fn family_and_weight(sp: &TextSpan) -> (String, u32) {
-    let (family, weight) = match crate::parse::family_weight(&sp.font_family) {
-        Some((base, w)) if sp.bold => (base, w.max(700)),
-        Some((base, w)) => (base, w),
-        None => (sp.font_family.as_str(), if sp.bold { 700 } else { 400 }),
-    };
-    let step = u32::from(weight.clamp(100, 900) / 100 - 1);
-    (
-        family.replace('\\', "\\\\").replace('"', "\\\""),
-        1 << (2 * step),
-    )
-}
-
 /// The `character` member of a style string.
 fn character_json(sp: &TextSpan, fill: Option<&Fill>) -> String {
-    let (family, weight) = family_and_weight(sp);
+    let weight = if sp.bold { 4096 } else { 64 };
     let size = (sp.size_pt * 254000.0 / 72.0).round() as i64;
+    let family = sp.font_family.replace('\\', "\\\\").replace('"', "\\\"");
     let font = format!(
         r#"{{"font":"{family}","size":"{size}","weight":"{weight}","italic":"{}","underline":"{}","strikeout":"{}"}}"#,
         u8::from(sp.italic),
@@ -2579,9 +2562,9 @@ fn full_text_style(
         .unwrap_or_else(|| black.to_string());
     let (family, size, weight, italic, underline, strike) = match sp {
         Some(sp) => (
-            family_and_weight(sp).0,
+            sp.font_family.replace('\\', "\\\\").replace('"', "\\\""),
             (sp.size_pt * 254000.0 / 72.0).round() as i64,
-            family_and_weight(sp).1,
+            if sp.bold { 4096 } else { 64 },
             u8::from(sp.italic),
             u8::from(sp.underline),
             u8::from(sp.strikethrough),

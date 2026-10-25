@@ -146,17 +146,28 @@ pub(crate) fn family_weight(family: &str) -> Option<(&str, u16)> {
 /// (a semibold, a light): the family takes the weight's name and the
 /// span is not bold, so the text draws with that face rather than the
 /// bold or regular one ("Titillium Web" at 600 is "Titillium Web
-/// SemiBold"). A family already named with a weight keeps its name.
+/// SemiBold"). A family already named with a weight keeps its name, and
+/// is not bold when the name gives the code's weight.
 fn name_weight(span: &mut TextSpan, weight: Option<u16>) {
-    let Some(&(_, name)) = weight.and_then(|w| WEIGHT_NAMES.iter().find(|(n, _)| *n == w)) else {
+    let Some(w) = weight else {
         return;
     };
-    let named = family_weight(&span.font_family).is_some()
-        || span.font_family.to_ascii_lowercase().ends_with("bold");
-    if !named {
-        span.font_family = format!("{} {name}", span.font_family.trim_end());
-        span.bold = false;
+    if let Some((_, named)) = family_weight(&span.font_family) {
+        // The family names the face already ("Segoe UI Semibold" at
+        // 600): that face, not a bold one.
+        if named == w {
+            span.bold = false;
+        }
+        return;
     }
+    if span.font_family.to_ascii_lowercase().ends_with("bold") {
+        return;
+    }
+    let Some(&(_, name)) = WEIGHT_NAMES.iter().find(|(n, _)| *n == w) else {
+        return;
+    };
+    span.font_family = format!("{} {name}", span.font_family.trim_end());
+    span.bold = false;
 }
 const DEFAULT_SIZE_PT: f64 = 24.0;
 
@@ -7113,8 +7124,14 @@ mod tests {
         // A family already named with its weight keeps its name.
         assert_eq!(
             read("Segoe UI Semibold", "1024"),
-            ("Segoe UI Semibold".to_string(), true)
+            ("Segoe UI Semibold".to_string(), false),
+            "the name gives the weight: that face, not bold"
         );
+        assert_eq!(
+            read("Arial Black", "64"),
+            ("Arial Black".to_string(), false)
+        );
+        assert_eq!(read("Lato Hairline", "1").0, "Lato Hairline");
     }
 
     /// Version 21 paragraph text: the loda has no frame size; the frame

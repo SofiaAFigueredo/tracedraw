@@ -289,16 +289,19 @@ const WEIGHT_NAMES: [(&str, u16); 12] = [
 /// weight: "Titillium Web SemiBold" is ("Titillium Web", 600), and so is
 /// "Titillium Web Semi Bold". `None` for other names.
 pub fn split_weight(family: &str) -> Option<(&str, u16)> {
+    // Compared letter by letter, without building a string: the font
+    // lists ask this for every family a frame shows.
     let weight_of = |words: &[&str]| {
-        let key: String = words
-            .iter()
-            .flat_map(|w| w.chars())
-            .filter(|c| c.is_ascii_alphanumeric())
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
         WEIGHT_NAMES
             .iter()
-            .find(|(n, _)| *n == key)
+            .find(|(n, _)| {
+                let mut key = words
+                    .iter()
+                    .flat_map(|w| w.chars())
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .map(|c| c.to_ascii_lowercase());
+                n.chars().all(|c| key.next() == Some(c)) && key.next().is_none()
+            })
             .map(|(_, w)| *w)
     };
     // The weight is the last word, or the last two run together.
@@ -1034,8 +1037,15 @@ impl FontSystem {
         style: fontdb::Style,
     ) -> Option<fontdb::ID> {
         let legacy = self.legacy.read().unwrap_or_else(|e| e.into_inner());
-        legacy
-            .get(family)?
+        // Names differ in case between drawings and fonts ("SemiBold" and
+        // "Semibold").
+        let faces = legacy.get(family).or_else(|| {
+            legacy
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(family))
+                .map(|(_, v)| v)
+        })?;
+        faces
             .iter()
             .filter_map(|id| db.face(*id).map(|f| (*id, f)))
             .min_by_key(|(_, f)| {
@@ -1135,15 +1145,26 @@ impl FontSystem {
         }
         // A family named with its weight ("Titillium Web SemiBold") is
         // fetched as its family, and stands in as that family would.
+        // The name itself first: "Archivo Black" is a family of its own
+        // that "Archivo" does not stand for.
+        if self.has_exact_family(family) || self.request_offered(family) {
+            return;
+        }
         let base = split_weight(family).map(|(b, _)| b);
-        let names = std::iter::once(family)
-            .chain(base)
-            .chain(substitutes(base.unwrap_or(family)));
-        for name in names {
-            if self.has_family(name) || self.request_offered(name) {
+        for name in base.into_iter().chain(substitutes(base.unwrap_or(family))) {
+            if self.has_exact_family(name) || self.request_offered(name) {
                 return;
             }
         }
+    }
+
+    /// Whether a family of exactly this name (or legacy name) is loaded.
+    fn has_exact_family(&self, family: &str) -> bool {
+        self.families
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|f| f == family)
     }
 
     /// Load font files the application supplies (fetched after
@@ -1635,8 +1656,18 @@ impl FontSystem {
     /// Pick a face for a span: the family itself, else a stand-in (see
     /// [`substitutes`]), else a sans-serif, else anything.
     fn face_for(&self, family: &str, bold: bool, italic: bool) -> Option<fontdb::ID> {
+        self.face_and_weight(family, bold, italic).map(|(id, _)| id)
+    }
+
+    /// [`FontSystem::face_for`] with the weight the text is to be drawn
+    /// at: 400 or 700 when a face lists `family` itself ("Archivo Black"
+    /// is a regular face of its own family), else the weight the name ends
+    /// in (see [`target_weight`]), for the family without it or a
+    /// stand-in.
+    fn face_and_weight(&self, family: &str, bold: bool, italic: bool) -> Option<(fontdb::ID, u16)> {
         self.ask_for(family);
-        let weight = fontdb::Weight(target_weight(family, bold));
+        let plain = if bold { 700 } else { 400 };
+        let weight = fontdb::Weight(plain);
         let style = if italic {
             fontdb::Style::Italic
         } else {
@@ -1653,8 +1684,10 @@ impl FontSystem {
             .query(&exact)
             .or_else(|| self.legacy_face(&db, family, weight, style))
         {
-            return Some(id);
+            return Some((id, plain));
         }
+        let target = target_weight(family, bold);
+        let weight = fontdb::Weight(target);
         // A family named with its weight ("Titillium Web SemiBold") whose
         // faces are not listed under that name: the face of the family
         // nearest that weight (bold text at least bold).
@@ -1670,7 +1703,7 @@ impl FontSystem {
                 .query(&q)
                 .or_else(|| self.legacy_face(&db, base, weight, style))
             {
-                return Some(id);
+                return Some((id, target));
             }
         }
         let mut fams: Vec<fontdb::Family> = substitutes(base.unwrap_or(family))
@@ -1688,7 +1721,9 @@ impl FontSystem {
             stretch: fontdb::Stretch::Normal,
             style,
         };
-        db.query(&q).or_else(|| db.faces().next().map(|f| f.id))
+        db.query(&q)
+            .or_else(|| db.faces().next().map(|f| f.id))
+            .map(|id| (id, target))
     }
 
     /// The installed family that draws text set in `family` when that is
@@ -2059,7 +2094,9 @@ impl FontSystem {
         let Some(mut hb) = rustybuzz::Face::from_slice(&data, index) else {
             return out;
         };
-        let target = target_weight(&span.font_family, span.bold);
+        let target = self
+            .face_and_weight(&span.font_family, span.bold, span.italic)
+            .map_or(if span.bold { 700 } else { 400 }, |(_, w)| w);
         let (weight, slanted, coords) = set_axes(&mut face, &mut hb, target, span.italic);
         let font = tracedraw_core::document::text_outline::GlyphFont {
             data: data.clone(),
@@ -4477,9 +4514,8 @@ mod tests {
         let a = f.outline(&[TextSpan::new("Hello", "Quicksand Light", 24.0)]);
         let b = f.outline(&[TextSpan::new("Hello", "Quicksand", 24.0)]);
         assert_eq!(a.path.elements().len(), b.path.elements().len());
-        // The same font, at the weight its name says: Light is 300 on
-        // the weight axis, narrower than the regular 400 (#624).
-        assert!(a.bounds.width() < b.bounds.width() - 0.01);
+        // A face listed under the name draws as that face does, at 400.
+        assert!((a.bounds.width() - b.bounds.width()).abs() < 1e-9);
     }
 
     /// A family named with its weight keeps that weight where no face of
@@ -4523,6 +4559,27 @@ mod tests {
         k.offer_families(&["Quicksand".into()]);
         let _ = k.outline(&[TextSpan::new("Hello", "Quicksand SemiBold", 24.0)]);
         assert_eq!(k.take_font_requests(), ["Quicksand"]);
+        // A family of its own whose name ends in a weight word is fetched
+        // as itself.
+        let m = system_with(&[]);
+        m.offer_families(&["Archivo".into(), "Archivo Black".into()]);
+        let _ = m.outline(&[TextSpan::new("Hello", "Archivo Black", 24.0)]);
+        assert_eq!(m.take_font_requests(), ["Archivo Black"]);
+        // A face listed under a name ending in a weight word (as "Archivo
+        // Black" is a regular face of its own family) draws at 400, not
+        // at the word's weight: "Quicksand Light" is listed by the font.
+        assert_eq!(
+            f.face_and_weight("Quicksand Light", false, false)
+                .map(|(_, w)| w),
+            Some(400)
+        );
+        assert_eq!(
+            f.face_and_weight("Quicksand SemiBold", false, false)
+                .map(|(_, w)| w),
+            Some(600)
+        );
+        // Names match their fonts' legacy names whatever the case.
+        assert!(f.face_for("quicksand light", false, false).is_some());
         assert_eq!(target_weight("Lato Black", false), 900);
         assert_eq!(target_weight("Lato Light", true), 700);
         assert_eq!(target_weight("Lato", false), 400);

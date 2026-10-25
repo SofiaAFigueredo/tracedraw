@@ -560,19 +560,25 @@ legacy name picks the face of that name nearest the text's weight and
 style. A family name ending in a weight ("Titillium Web SemiBold",
 "Lato Light", "Semi Bold" written apart too) that no font lists is
 drawn with the family's face nearest that weight, and is not reported
-missing. The weight in the name carries on everywhere: a variable font
-draws at it on its weight axis ("Quicksand Light" at 300), a family
+missing. Drawn that way, through the family without the weight or a
+stand-in, the weight in the name carries on everywhere: a variable font
+draws at it on its weight axis ("Quicksand SemiBold" at 600), a family
 with only a regular face draws a weight from 600 up thickened as bold
 text is, a missing family's stand-in is the one for the family without
 the weight at that weight ("Segoe UI SemiBold" in Selawik Bold), and in
-the browser the family itself is fetched.
+the browser the family is fetched when no font of the whole name is
+offered. A face a font lists under the whole name (family or legacy
+name, in any case: "Archivo Black", "Quicksand Light") draws as that
+face, at 400 or 700 for bold, as before.
 
 A .cdr run set in a face between or beyond regular and bold (thin,
 extra light, light, medium, semibold, extra bold, black) opens as that
 face: the family takes the weight's name ("Titillium Web" at 600 opens
 as "Titillium Web SemiBold", not bold), so editing, the PDF and the
 saved file keep the face. A family already named with a weight keeps
-its name.
+its name, and is not bold when its name gives the run's weight
+("Segoe UI Semibold" at 600). The saved file names the family as it is
+shown, at regular or bold weight, and opens the same.
 
 A drawing that carries several faces of one family (regular and bold)
 has each face serve its text; an installed face of the same family,

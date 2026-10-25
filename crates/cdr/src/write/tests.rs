@@ -2749,9 +2749,8 @@ fn a_version_8_style_table_with_set11_is_read() {
     assert_eq!(eight.len(), nine.len());
 }
 
-/// A face named by its family and weight is written as the family with
-/// the weight's style code where style strings hold the font (versions
-/// 16 and later), and reads back as it was in every version (#624).
+/// A face named by its family and weight is written under that name
+/// and reads back as it was in every version (#624).
 #[test]
 fn faces_named_with_their_weight_round_trip() {
     let mut doc = doc_with(Vec::new());
@@ -2764,15 +2763,11 @@ fn faces_named_with_their_weight_round_trip() {
     ];
     doc.pages[0].layers[0].shapes = shapes;
     doc.set_ids(ids);
-    let (_, w) = family_and_weight(&TextSpan::new("x", "Titillium Web SemiBold", 1.0));
-    assert_eq!(w, 1024);
-    let mut bold = TextSpan::new("x", "Arial", 1.0);
-    assert_eq!(family_and_weight(&bold), ("Arial".to_string(), 64));
-    bold.bold = true;
-    assert_eq!(family_and_weight(&bold).1, 4096);
+    // Written as named, regular, as before: the reader brings the face
+    // back from its name.
     let json = character_json(&TextSpan::new("x", "Titillium Web SemiBold", 1.0), None);
     assert!(
-        json.contains(r#""font":"Titillium Web""#) && json.contains(r#""weight":"1024""#),
+        json.contains(r#""font":"Titillium Web SemiBold""#) && json.contains(r#""weight":"64""#),
         "{json}"
     );
     for v in versions() {

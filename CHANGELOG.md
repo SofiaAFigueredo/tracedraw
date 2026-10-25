@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- The mouse wheel zooms smoothly: each notch zooms in a glide over a few frames, as a scroll moves, instead of one jump of 15 %; a notch still zooms 15 % about the pointer (#766).
+
 ## 0.18.0 (2026-10-25)
 
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.

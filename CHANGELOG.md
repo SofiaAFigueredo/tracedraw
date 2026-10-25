@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Objects panel: every object's row has its own eye and padlock, to hide or show and lock or unlock it from the list, a locked object too (#832).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

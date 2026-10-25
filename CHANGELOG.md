@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Trim, Intersect and Weld with a picture as the target crop the picture to the result: its frame takes the shape and the picture shows inside it, also for a picture already cropped. The result was an empty curve that showed only in Wireframe (#827).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

@@ -50,6 +50,24 @@ pub struct Engine {
     instance: u64,
     /// A preview in progress (see [`Engine::begin_preview`]).
     preview: Option<PreviewMark>,
+    /// Groups begun and not yet ended (see [`Engine::begin_group`]): the
+    /// history is trimmed only once they end.
+    groups: usize,
+    /// The revision right after an Undo and the size of the step it took
+    /// back: a step recorded straight after it holds the same drawing, so
+    /// it takes that size instead of measuring (a live drag runs an Undo
+    /// and a step per pointer move).
+    undone_bytes: Option<(u64, usize)>,
+    /// Buffers for measuring a step, kept between steps.
+    measure: Measure,
+}
+
+/// Picture addresses gathered while measuring a step (see
+/// [`snapshot_bytes`]).
+#[derive(Debug, Default)]
+struct Measure {
+    shared: Vec<usize>,
+    own: Vec<(usize, usize)>,
 }
 
 /// How the history stood when a preview began, to put it back.
@@ -101,6 +119,9 @@ impl Engine {
             next_step: 1,
             instance: fresh_seed(),
             preview: None,
+            groups: 0,
+            undone_bytes: None,
+            measure: Measure::default(),
         };
         e.doc.assign_uids(&mut e.uid_state);
         e.doc.refresh_text_flow();
@@ -268,19 +289,34 @@ impl Engine {
         Ok(())
     }
 
-    /// Join the steps recorded after the first `depth` into one step named
-    /// `label` (the newest step's id), so one Undo takes them all back; an
-    /// action made of several commands run one by one records as one.
-    pub fn squash_since(&mut self, depth: usize, label: &'static str) {
-        if self.undo.len() <= depth {
-            return;
+    /// Begin a group of steps that [`end_group`](Self::end_group) joins
+    /// into one, so one Undo takes them all back (an action made of
+    /// several commands run one by one). Until it ends, no step is dropped
+    /// as too old, so the group is never cut short. Returns the mark to
+    /// end it with.
+    pub fn begin_group(&mut self) -> Option<u64> {
+        self.groups += 1;
+        self.last_step_id()
+    }
+
+    /// Join the steps recorded since `mark` (from
+    /// [`begin_group`](Self::begin_group)) into the oldest of them, named
+    /// `label`, with the newest one's id; then drop steps past the limits.
+    pub fn end_group(&mut self, mark: Option<u64>, label: &'static str) {
+        self.groups = self.groups.saturating_sub(1);
+        let first = match mark {
+            None => Some(0),
+            Some(id) => self.undo.iter().position(|e| e.id == id).map(|i| i + 1),
+        };
+        if let Some(first) = first.filter(|&i| i < self.undo.len()) {
+            let last = self.undo.last().map(|e| e.id).unwrap_or(0);
+            self.undo.truncate(first + 1);
+            if let Some(e) = self.undo.last_mut() {
+                e.label = label;
+                e.id = last;
+            }
         }
-        let last = self.undo.last().map(|e| e.id).unwrap_or(0);
-        self.undo.truncate(depth + 1);
-        if let Some(e) = self.undo.last_mut() {
-            e.label = label;
-            e.id = last;
-        }
+        self.trim_history();
     }
 
     /// Mint a fresh shape id. Ids never rewind on undo.
@@ -312,6 +348,7 @@ impl Engine {
         let mut e = self.undo.pop().ok_or(Error::NothingToUndo)?;
         let other = std::mem::take(&mut e.other);
         e.other = self.swap_in(other);
+        self.undone_bytes = Some((self.revision, e.bytes));
         let label = e.label;
         self.redo.push(e);
         Ok(label)
@@ -398,6 +435,23 @@ impl Engine {
             redo.append(&mut self.redo);
             self.redo = redo;
         }
+        // Steps recorded during the preview were not measured (a live
+        // preview records one per change); the kept ones are, once.
+        let first = match m.last_step {
+            None => 0,
+            Some(id) => self
+                .undo
+                .iter()
+                .position(|e| e.id == id)
+                .map_or(self.undo.len(), |i| i + 1),
+        };
+        for i in first..self.undo.len() {
+            let snapshot = std::mem::take(&mut self.undo[i].other);
+            let bytes = self.bytes_of(&snapshot);
+            self.undo[i].other = snapshot;
+            self.undo[i].bytes = bytes;
+        }
+        self.trim_history();
     }
 
     /// Drop the steps that could be redone, those a preview holds included.
@@ -440,25 +494,28 @@ impl Engine {
         self.trim_history();
     }
 
-    /// How much memory the undo steps may hold together (Options, General,
-    /// Undo memory; `usize::MAX` for no limit). Past it the oldest steps
-    /// go, at once when the limit shrinks; the newest step always stays.
+    /// How much memory the undo steps may hold together (`usize::MAX`
+    /// for no limit, the default). Past it the oldest steps go, at once
+    /// when the limit shrinks; the newest step always stays. Steps are
+    /// measured only while there is a limit.
     pub fn set_max_history_bytes(&mut self, bytes: usize) {
         self.max_history_bytes = bytes;
         self.trim_history();
     }
 
-    pub fn max_history_bytes(&self) -> usize {
-        self.max_history_bytes
-    }
-
-    /// About how much memory the undo and redo steps hold.
+    /// About how much memory the undo and redo steps hold. Only the undo
+    /// steps count against the limit: the redo ones are steps taken back
+    /// from them.
     pub fn history_bytes(&self) -> usize {
         self.undo.iter().chain(&self.redo).map(|e| e.bytes).sum()
     }
 
-    /// Drop the oldest undo steps past the step count or the memory limit.
+    /// Drop the oldest undo steps past the step count or the memory limit
+    /// (not while a group or a preview is open; they trim when they end).
     fn trim_history(&mut self) {
+        if self.groups > 0 || self.preview.is_some() {
+            return;
+        }
         let over = self.undo.len().saturating_sub(self.max_history);
         let mut drop = over;
         if self.max_history_bytes != usize::MAX {
@@ -473,9 +530,21 @@ impl Engine {
         }
     }
 
-    /// The memory `snapshot` holds that the drawing does not share with it.
-    fn bytes_of(&self, snapshot: &Document) -> usize {
-        snapshot_bytes(snapshot, &self.doc)
+    /// The memory `snapshot` holds that the drawing does not share with
+    /// it: 0 without a limit, and for a step recorded during a preview
+    /// (measured if the preview is kept); taken from the step just undone
+    /// when nothing happened since.
+    fn bytes_of(&mut self, snapshot: &Document) -> usize {
+        let undone = self.undone_bytes.take();
+        if self.max_history_bytes == usize::MAX || self.preview.is_some() {
+            return 0;
+        }
+        if let Some((revision, bytes)) = undone {
+            if revision == self.revision {
+                return bytes;
+            }
+        }
+        snapshot_bytes(snapshot, &self.doc, &mut self.measure)
     }
 
     pub fn max_history(&self) -> usize {
@@ -506,12 +575,23 @@ impl Engine {
 /// About how much memory `snapshot` holds of its own, next to `current`:
 /// each object and its path points, and the pictures that `current` does
 /// not share with it (pictures are shared between copies of a drawing
-/// until one is changed). Text, tables and effect settings are left out;
-/// they are small next to paths and pictures. One walk, without
-/// allocating anything per object.
-fn snapshot_bytes(snapshot: &Document, current: &Document) -> usize {
+/// until one is changed). Text, tables, node types and effect settings
+/// are left out; they are small next to paths and pictures. Two walks
+/// over the objects, into buffers kept between calls.
+fn snapshot_bytes(snapshot: &Document, current: &Document, m: &mut Measure) -> usize {
     use crate::document::{Shape, ShapeKind};
     use crate::style::{Fill, Pattern};
+    #[cfg(test)]
+    MEASURED.with(|c| c.set(c.get() + 1));
+    fn fill_pictures<'a>(fill: &'a Fill, f: &mut dyn FnMut(&'a crate::SharedBytes)) {
+        match fill {
+            Fill::Pattern(Pattern::Bitmap { png, .. }) => f(png),
+            Fill::Pattern(Pattern::Vector { shapes, .. }) => {
+                shapes.iter().for_each(|c| pictures(c, f))
+            }
+            _ => {}
+        }
+    }
     fn pictures<'a>(s: &'a Shape, f: &mut dyn FnMut(&'a crate::SharedBytes)) {
         match &s.kind {
             ShapeKind::Bitmap { png, fx, .. } => {
@@ -530,12 +610,10 @@ fn snapshot_bytes(snapshot: &Document, current: &Document) -> usize {
         if let Some(r) = &s.raster_fx {
             f(&r.png);
         }
-        match &s.fill {
-            Fill::Pattern(Pattern::Bitmap { png, .. }) => f(png),
-            Fill::Pattern(Pattern::Vector { shapes, .. }) => {
-                shapes.iter().for_each(|c| pictures(c, f))
-            }
-            _ => {}
+        fill_pictures(&s.fill, f);
+        s.extra_fills.iter().for_each(|x| fill_pictures(x, f));
+        if let Some(fill) = s.stroke.as_ref().and_then(|st| st.fill.as_deref()) {
+            fill_pictures(fill, f);
         }
     }
     fn objects(s: &Shape) -> usize {
@@ -562,22 +640,31 @@ fn snapshot_bytes(snapshot: &Document, current: &Document) -> usize {
             .flat_map(|l| &l.shapes)
             .chain(d.symbols.iter().map(|s| &s.shape))
     }
-    let mut shared = std::collections::HashSet::new();
+    m.shared.clear();
+    m.own.clear();
     for s in every(current) {
-        pictures(s, &mut |b| {
-            shared.insert(b.addr());
-        });
+        pictures(s, &mut |b| m.shared.push(b.addr()));
     }
     let mut total = 0usize;
     for s in every(snapshot) {
         total += objects(s);
-        pictures(s, &mut |b| {
-            if shared.insert(b.addr()) {
-                total += b.len();
-            }
-        });
+        pictures(s, &mut |b| m.own.push((b.addr(), b.len())));
+    }
+    m.shared.sort_unstable();
+    m.own.sort_unstable();
+    m.own.dedup_by_key(|p| p.0);
+    for &(addr, len) in &m.own {
+        if m.shared.binary_search(&addr).is_err() {
+            total += len;
+        }
     }
     total
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How often a step was measured on this thread, for tests.
+    static MEASURED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -932,6 +1019,8 @@ mod tests {
         use crate::document::{Shape, ShapeKind};
         use crate::geometry::Rect;
         let mut e = Engine::default();
+        // Measured only with a limit.
+        e.set_max_history_bytes(usize::MAX - 1);
         let layer = e.document().pages[0].layers[0].id;
         let picture = crate::SharedBytes::from(vec![1u8; 1 << 20]);
         let id = e.new_shape_id();
@@ -971,6 +1060,7 @@ mod tests {
         e.undo().unwrap();
         // A step that replaced the picture holds the old one of its own.
         let mut e = Engine::default();
+        e.set_max_history_bytes(usize::MAX - 1);
         let shape = Shape::new(
             id,
             ShapeKind::Bitmap {
@@ -984,6 +1074,101 @@ mod tests {
         e.run(&Command::AddShape { layer, shape }).unwrap();
         e.run(&Command::DeleteShapes { shapes: vec![id] }).unwrap();
         assert!(e.history_bytes() >= 1 << 20);
+    }
+
+    /// Steps grouped into one stay one at the memory limit: the limit
+    /// waits for the group to end, so the copy and its move are one Undo.
+    #[test]
+    fn a_group_stays_one_step_at_the_memory_limit() {
+        use crate::document::{Shape, ShapeKind};
+        use crate::geometry::Rect;
+        let mut e = Engine::default();
+        let layer = e.document().pages[0].layers[0].id;
+        let add = |e: &mut Engine| {
+            let id = e.new_shape_id();
+            let shape = Shape::new(
+                id,
+                ShapeKind::Rect {
+                    rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                    radius: 0.0,
+                    corners: None,
+                },
+            );
+            e.run(&Command::AddShape { layer, shape }).unwrap();
+            id
+        };
+        e.set_max_history_bytes(usize::MAX - 1);
+        let first = add(&mut e);
+        add(&mut e);
+        let step = e.undo.iter().map(|x| x.bytes).max().unwrap_or(1);
+        // Two steps' worth.
+        e.set_max_history_bytes(step * 2 + step / 2);
+        let before = e.document().pages[0].layers[0].shapes.len();
+        let mark = e.begin_group();
+        let copy = add(&mut e);
+        e.run(&Command::TransformShapes {
+            shapes: vec![copy, first],
+            transform: crate::Affine::translate((5.0, 0.0)),
+        })
+        .unwrap();
+        e.end_group(mark, "Duplicate");
+        assert_eq!(e.undo_label(), Some("Duplicate"));
+        e.undo().unwrap();
+        assert_eq!(e.document().pages[0].layers[0].shapes.len(), before);
+        let moved = e.document().find_shape(first).map(|s| s.transform);
+        assert_eq!(moved, Some(crate::Affine::IDENTITY), "the move went too");
+    }
+
+    /// A drag that undoes and records a step per pointer move, and steps
+    /// recorded during a preview, are not measured each time.
+    #[test]
+    fn live_steps_are_not_measured_again() {
+        use crate::document::{Shape, ShapeKind};
+        use crate::geometry::Rect;
+        let mut e = Engine::default();
+        e.set_max_history_bytes(1 << 30);
+        let layer = e.document().pages[0].layers[0].id;
+        let id = e.new_shape_id();
+        let shape = Shape::new(
+            id,
+            ShapeKind::Rect {
+                rect: Rect::new(0.0, 0.0, 10.0, 10.0),
+                radius: 0.0,
+                corners: None,
+            },
+        );
+        e.run(&Command::AddShape { layer, shape }).unwrap();
+        let fill = |e: &mut Engine, k: u8| {
+            e.run(&Command::SetFill {
+                shapes: vec![id],
+                fill: crate::Fill::Solid(crate::Color::rgb8(k, 0, 0)),
+            })
+            .unwrap()
+        };
+        fill(&mut e, 0);
+        let count = || MEASURED.with(|c| c.get());
+        let start = count();
+        for k in 1..20 {
+            e.undo().unwrap();
+            fill(&mut e, k);
+        }
+        assert_eq!(count(), start, "undo + run per move");
+        e.begin_preview();
+        for k in 0..20 {
+            fill(&mut e, k);
+        }
+        assert_eq!(count(), start, "inside a preview");
+        e.withdraw_preview();
+        assert_eq!(count(), start);
+        e.begin_preview();
+        fill(&mut e, 3);
+        fill(&mut e, 4);
+        e.keep_preview();
+        assert_eq!(count(), start + 2, "kept steps, once each");
+        // Without a limit nothing is measured.
+        e.set_max_history_bytes(usize::MAX);
+        fill(&mut e, 5);
+        assert_eq!(count(), start + 2);
     }
 
     /// A step redone during a preview that recorded nothing comes back

@@ -29,33 +29,89 @@ struct Job {
     rx: std::sync::mpsc::Receiver<Option<(ColorImage, f64)>>,
 }
 
-/// A turn to render on a thread: one page job runs at a time in the whole
+/// Turns to render on a thread: one page job runs at a time in the whole
 /// program (each holds a copy of the drawing and decodes on band threads
 /// of its own; Multipage view used to start one per slow page at once,
-/// and a job made stale kept running beside the next one).
+/// and a job made stale kept running beside the next one). The page being
+/// edited goes first: when it had to wait, the turn is kept for it for a
+/// moment after the running job ends, and other pages wait.
 #[cfg(not(target_arch = "wasm32"))]
-struct Turn(&'static std::sync::atomic::AtomicBool);
+struct Turns(std::sync::Mutex<TurnState>);
 
 #[cfg(not(target_arch = "wasm32"))]
-impl Turn {
-    /// The turn, unless a job holds it.
-    fn take(of: &'static std::sync::atomic::AtomicBool) -> Option<Turn> {
-        use std::sync::atomic::Ordering;
-        of.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()
-            .map(|_| Turn(of))
+#[derive(Default)]
+struct TurnState {
+    busy: bool,
+    /// The current page asked while a job ran.
+    current_waits: bool,
+    /// Until when a freed turn is kept for the current page.
+    kept_until: Option<web_time::Instant>,
+    /// Turns given to other pages, for tests.
+    #[cfg(test)]
+    to_others: usize,
+}
+
+/// How long a freed turn waits for the current page that asked for it.
+#[cfg(not(target_arch = "wasm32"))]
+const KEEP_FOR_CURRENT: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Turns {
+    const fn new() -> Self {
+        Turns(std::sync::Mutex::new(TurnState {
+            busy: false,
+            current_waits: false,
+            kept_until: None,
+            #[cfg(test)]
+            to_others: 0,
+        }))
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, TurnState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The turn for the current page (`current`) or another one, unless a
+    /// job holds it or it is kept for the current page.
+    fn take(&'static self, current: bool) -> Option<Turn> {
+        let mut st = self.state();
+        if st.busy {
+            st.current_waits |= current;
+            return None;
+        }
+        if !current && st.kept_until.is_some_and(|t| web_time::Instant::now() < t) {
+            return None;
+        }
+        st.busy = true;
+        #[cfg(test)]
+        if !current {
+            st.to_others += 1;
+        }
+        if current {
+            st.current_waits = false;
+            st.kept_until = None;
+        }
+        Some(Turn(self))
     }
 }
+
+/// A job's turn, given back when it is dropped.
+#[cfg(not(target_arch = "wasm32"))]
+struct Turn(&'static Turns);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Turn {
     fn drop(&mut self) {
-        self.0.store(false, std::sync::atomic::Ordering::Release);
+        let mut st = self.0.state();
+        st.busy = false;
+        if std::mem::take(&mut st.current_waits) {
+            st.kept_until = Some(web_time::Instant::now() + KEEP_FOR_CURRENT);
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-static RENDER_TURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RENDER_TURNS: Turns = Turns::new();
 
 #[derive(Default)]
 pub struct Raster {
@@ -75,6 +131,15 @@ pub struct Raster {
     /// The render running on its own thread, if any.
     #[cfg(not(target_arch = "wasm32"))]
     job: Option<Job>,
+    /// A page shown beside the current one (Multipage view), which yields
+    /// its turn to render on a thread to the current page.
+    other_page: bool,
+    /// Turns other than the program's, for tests.
+    #[cfg(not(target_arch = "wasm32"))]
+    turns: Option<&'static Turns>,
+    /// Every render counts as slow, for tests.
+    #[cfg(test)]
+    always_slow: bool,
 }
 
 /// Screen colours as they would print, on a `N` x `N` x `N` grid of the
@@ -243,6 +308,14 @@ pub fn pixel_window(view: &View, rect: Rect, dpi: f64, ppp: f32) -> Option<Pixel
 }
 
 impl Raster {
+    /// The raster of a page shown beside the current one.
+    pub fn other_page() -> Self {
+        Raster {
+            other_page: true,
+            ..Default::default()
+        }
+    }
+
     /// Drop the cached texture so the next frame re-renders (and the
     /// proofed colours, which the colour settings decide).
     pub fn invalidate(&mut self) {
@@ -380,11 +453,15 @@ impl Raster {
         // A slow page, with a picture to show meanwhile: drawn on a
         // thread of its own, the window answering all along.
         #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(test)]
+        if self.always_slow {
+            self.last_seconds = 1.0;
+        }
         if window.is_none() && self.last_seconds > SLOW_RENDER && self.texture.is_some() {
             // Another page's job (or a stale one) is running: the last
             // picture shows until it is done, which repaints.
-            let Some(turn) = Turn::take(&RENDER_TURN) else {
-                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            // The job holding the turn repaints when it ends.
+            let Some(turn) = self.turns.unwrap_or(&RENDER_TURNS).take(!self.other_page) else {
                 return self.shown_meanwhile(view, screen);
             };
             let doc = doc.clone();
@@ -484,19 +561,102 @@ impl Key {
 
 #[cfg(test)]
 mod tests {
-    /// One page job at a time: the turn is free again once its job ends.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn one_render_job_runs_at_a_time() {
-        static TURN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        let first = super::Turn::take(&TURN).expect("free");
-        assert!(super::Turn::take(&TURN).is_none());
-        let job = std::thread::spawn(move || drop(first));
-        job.join().unwrap();
-        assert!(super::Turn::take(&TURN).is_some());
-    }
 
     use super::*;
+
+    /// One page job at a time, and the current page first: another page
+    /// that asks first every frame waits while the turn is kept for the
+    /// current page.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn one_render_job_runs_at_a_time_and_the_current_page_goes_first() {
+        static TURNS: Turns = Turns::new();
+        let job = TURNS.take(false).expect("free");
+        assert!(TURNS.take(false).is_none());
+        // The current page asks while the job runs, and so waits.
+        assert!(TURNS.take(true).is_none());
+        std::thread::spawn(move || drop(job)).join().unwrap();
+        // Freed: another page asking first does not get it.
+        assert!(TURNS.take(false).is_none());
+        let current = TURNS.take(true).expect("kept for the current page");
+        drop(current);
+        // Nobody waits: whoever asks.
+        assert!(TURNS.take(false).is_some());
+    }
+
+    /// Two slow pages drawn every frame, the other page asked first and
+    /// the drawing changing each frame: the current page's render starts
+    /// within one release of the turn.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_current_page_gets_the_next_turn() {
+        static TURNS: Turns = Turns::new();
+        let ctx = Context::default();
+        let doc = Document::new("t", Size::new(100.0, 50.0));
+        let rect = Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 200.0));
+        let view = View::default();
+        let mut current = Raster {
+            turns: Some(&TURNS),
+            ..Default::default()
+        };
+        let mut other = Raster {
+            turns: Some(&TURNS),
+            ..Raster::other_page()
+        };
+        let draw = |r: &mut Raster, revision: u64| {
+            let page = doc.pages[0].id;
+            let input = egui::RawInput {
+                time: Some(revision as f64),
+                ..Default::default()
+            };
+            let mut full = ctx.run_ui(input, |ui| {
+                r.texture(
+                    ui.ctx(),
+                    &doc,
+                    page,
+                    &view,
+                    rect,
+                    None,
+                    revision,
+                    false,
+                    false,
+                    false,
+                    false,
+                    None,
+                    None,
+                );
+            });
+            full.textures_delta.clear();
+        };
+        draw(&mut other, 0);
+        draw(&mut current, 0);
+        other.always_slow = true;
+        current.always_slow = true;
+        // The other page takes the turn first.
+        draw(&mut other, 1);
+        assert!(other.job.is_some());
+        // From the first time the current page waits, no other page may
+        // take a turn before it.
+        let mut given = None;
+        for revision in 2..2000 {
+            draw(&mut other, revision);
+            draw(&mut current, revision);
+            if current.job.is_some() {
+                break;
+            }
+            let st = TURNS.state();
+            if st.current_waits && given.is_none() {
+                given = Some(st.to_others);
+            }
+            if let Some(n) = given {
+                assert_eq!(st.to_others, n, "another page went first");
+            }
+            drop(st);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(given.is_some(), "the current page had to wait");
+        assert!(current.job.is_some(), "the current page got a turn");
+    }
     use tracedraw_core::geometry::Size;
 
     #[test]

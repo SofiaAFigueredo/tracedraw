@@ -15,7 +15,6 @@ stelt in hoe het programma werkt. Kies een pagina in de lijst links.
 - [[options.hardware_acceleration]] (aan): tekent het venster met de grafische kaart die ernaast is gekozen ([[options.gpu_automatic]] in het begin); uit, met de softwarerenderer van de computer. Het geldt vanaf de volgende start. Als het venster zo niet opent, start TraceDraw opnieuw met de softwarerenderer, daarna met OpenGL, en onthoudt wat werkte.
 - [[options.undo_levels]]: hoeveel stappen u ongedaan kunt maken (in het begin
   150).
-- [[options.undo_memory]]: hoeveel geheugen die stappen hoogstens mogen gebruiken (in het begin 1024 MB, 0 voor geen limiet); daarboven vallen de oudste weg, de nieuwste blijft altijd.
 
 ## Weergave {#display}
 

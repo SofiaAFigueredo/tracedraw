@@ -282,8 +282,7 @@ impl App {
         self.engine = Engine::new(doc);
         self.engine
             .set_max_history(self.settings.undo_levels.max(1));
-        self.engine
-            .set_max_history_bytes(self.settings.undo_memory_bytes());
+        self.engine.set_max_history_bytes(crate::app::UNDO_MEMORY);
         self.selection.clear();
         self.file = file;
         self.opened_from = None;

@@ -166,7 +166,9 @@ pub fn draw_other_pages(app: &App, painter: &Painter, rect: ERect) {
                     zoom: app.view.zoom,
                     origin: paper.left_bottom(),
                 };
-                let raster = rasters.entry(*id).or_default();
+                let raster = rasters
+                    .entry(*id)
+                    .or_insert_with(crate::raster::Raster::other_page);
                 if let Some(tex) = raster.texture(
                     ctx,
                     doc,

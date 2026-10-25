@@ -14,7 +14,6 @@ define como o programa funciona. Escolha uma página na lista à esquerda.
 - [[options.show_splash]] (ligado).
 - [[options.hardware_acceleration]] (ligado): desenha a janela com a placa de vídeo escolhida ao lado ([[options.gpu_automatic]] de início); desligado, com o renderizador por software do computador. Vale a partir da próxima abertura. Se a janela não abrir assim, o TraceDraw abre de novo com o renderizador por software, depois com OpenGL, e guarda o que funcionou.
 - [[options.undo_levels]]: quantos passos você pode desfazer (150 de início).
-- [[options.undo_memory]]: quanta memória esses passos podem ocupar no máximo (1024 MB de início, 0 sem limite); acima disso os mais antigos são descartados, o mais recente sempre fica.
 
 ## Exibição {#display}
 

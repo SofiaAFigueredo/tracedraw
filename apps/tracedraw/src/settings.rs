@@ -239,10 +239,6 @@ pub struct Settings {
     /// Options > General: undo levels.
     #[serde(default = "default_undo_levels")]
     pub undo_levels: usize,
-    /// Options > General: the memory the undo steps of a drawing may hold,
-    /// in megabytes (0: no limit); past it the oldest steps go.
-    #[serde(default = "default_undo_memory_mb")]
-    pub undo_memory_mb: usize,
     /// Options > Display.
     #[serde(default = "default_true")]
     pub show_tooltips: bool,
@@ -610,10 +606,6 @@ pub fn effective_ui_size_with(s: &Settings, sys: crate::system_prefs::SystemPref
 
 fn default_undo_levels() -> usize {
     150
-}
-
-fn default_undo_memory_mb() -> usize {
-    1024
 }
 
 fn default_constrain_angle() -> f64 {
@@ -1342,7 +1334,6 @@ impl Default for Settings {
             document_defaults: DocumentDefaults::default(),
             startup: Startup::default(),
             undo_levels: default_undo_levels(),
-            undo_memory_mb: default_undo_memory_mb(),
             show_tooltips: true,
             font_manager: Default::default(),
             hide_bbox_curve_tools: false,
@@ -1482,14 +1473,6 @@ pub fn config_dir() -> Option<PathBuf> {
 const WEB_KEY: &str = "tracedraw.settings";
 
 impl Settings {
-    /// Options > General > Undo memory as the engine takes it.
-    pub fn undo_memory_bytes(&self) -> usize {
-        match self.undo_memory_mb {
-            0 => usize::MAX,
-            mb => mb.saturating_mul(1 << 20),
-        }
-    }
-
     /// The preferences as TraceDraw comes, keeping what is history rather
     /// than choice: the recent drawings, the last folder and the window's
     /// size.

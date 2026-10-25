@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Alt codes while editing text: the keypad digits typed under Alt are no longer typed too (with Num Lock on they also came as text, so Alt+0193 could give "0193" before the character), and a character the system composes as well is typed once. Fonts made for the symbol encoding (legacy script and dingbat fonts) now list their glyphs in the Glyphs panel with the keystroke that types them, and text typed in them draws their glyphs instead of another font's (#469).
+
 - The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).
 
 - The preferences are no longer serialized on every frame to see whether they changed: only on frames with a key, text, a click or a dropped file, and at most once a second otherwise. A pointer move now costs about 0.1 µs there instead of about 20 µs, more on an older PC (#616).

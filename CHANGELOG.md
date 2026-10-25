@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Editing a symmetry ends when another drawing comes to the front or a new one opens; the mode and its "Editing the symmetry" message in the status bar stayed on over the next drawing (#442).
+
 - The log now names the processor, its threads and the Windows build, says at the first frame how long the start took and how large the window is in pixels, and with `RUST_LOG=debug` sums up the frames every 10 s (count, input, build times, gaps and why they were asked for), so a report of a slow window shows where the time goes (#616).
 
 - The preferences are no longer serialized on every frame to see whether they changed: only on frames with a key, text, a click or a dropped file, and at most once a second otherwise. A pointer move now costs about 0.1 µs there instead of about 20 µs, more on an older PC (#616).

@@ -132,8 +132,13 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
     }
     // 3-point tools: base segment waiting for the third click, previewed to the pointer.
     if let (Some((a, b)), Some(c)) = (app.three_point_base, app.pointer_page) {
-        let stroke = EStroke::new(1.0, Tokens::SELECTION);
-        painter.line_segment([view.to_screen(a), view.to_screen(b)], stroke);
+        // On a white line, as while it was dragged (#672).
+        haloed_polyline(
+            painter,
+            &[view.to_screen(a), view.to_screen(b)],
+            false,
+            Color32::BLACK,
+        );
         let preview = three_point_preview(app.tool, a, b, c);
         for (pts, closed) in flatten(&preview, view) {
             if pts.len() > 1 {
@@ -345,8 +350,17 @@ pub fn draw_canvas(app: &App, painter: &Painter, rect: ERect) {
                 draw_control_handle(painter, sp, so, Tokens::SELECTION);
                 draw_control_handle(painter, sp, mirrored, Tokens::SELECTION);
             }
+            // A white edge round the hollow square, so it shows on a
+            // black fill too (#672).
+            let r = ERect::from_center_size(sp, egui::vec2(6.0, 6.0));
             painter.rect_stroke(
-                ERect::from_center_size(sp, egui::vec2(6.0, 6.0)),
+                r,
+                0.0,
+                EStroke::new(1.0, Color32::WHITE),
+                epaint::StrokeKind::Outside,
+            );
+            painter.rect_stroke(
+                r,
                 0.0,
                 EStroke::new(1.0, Tokens::text()),
                 epaint::StrokeKind::Middle,
@@ -739,8 +753,11 @@ pub(crate) const HALO_WIDTH: f32 = 2.0;
 pub(crate) const HALO_INNER: f32 = 1.0;
 
 /// An overlay line that shows on any colour: `inner` on a white line
-/// twice as wide. Plain segments, which cost less than a path shape in
-/// an overlay redrawn every frame.
+/// twice as wide. A short line is plain segments, which cost less than a
+/// path shape in an overlay redrawn every frame (#560); a long one (a
+/// freehand stroke, many placed segments) two path shapes, which cost
+/// less than twice its segments (`frame_times_of_the_pen_preview`, #672).
+/// Either way one call to the painter.
 pub(crate) fn haloed_polyline(painter: &Painter, pts: &[Pos2], closed: bool, inner: Color32) {
     let segs = || {
         pts.windows(2).map(|w| [w[0], w[1]]).chain(
@@ -749,12 +766,34 @@ pub(crate) fn haloed_polyline(painter: &Painter, pts: &[Pos2], closed: bool, inn
                 .filter(|_| pts.len() > 2),
         )
     };
-    for seg in segs() {
-        painter.line_segment(seg, EStroke::new(HALO_WIDTH, Color32::WHITE));
+    if pts.len() > 8 {
+        let shape = |stroke: EStroke| {
+            if closed {
+                epaint::PathShape::closed_line(pts.to_vec(), stroke)
+            } else {
+                epaint::PathShape::line(pts.to_vec(), stroke)
+            }
+        };
+        painter.extend([
+            egui::Shape::Path(shape(EStroke::new(HALO_WIDTH, Color32::WHITE))),
+            egui::Shape::Path(shape(EStroke::new(HALO_INNER, inner))),
+        ]);
+        return;
     }
-    for seg in segs() {
-        painter.line_segment(seg, EStroke::new(HALO_INNER, inner));
-    }
+    // One call for every segment, the white ones first.
+    let white = EStroke::new(HALO_WIDTH, Color32::WHITE);
+    let line = EStroke::new(HALO_INNER, inner);
+    painter.extend(
+        segs()
+            .map(|points| egui::Shape::LineSegment {
+                points,
+                stroke: white,
+            })
+            .chain(segs().map(|points| egui::Shape::LineSegment {
+                points,
+                stroke: line,
+            })),
+    );
 }
 
 fn three_point_preview(

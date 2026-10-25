@@ -156,7 +156,8 @@ meets the start) `Path` objects with the toolbox defaults.
   constrain angle.
 - While drawing, the polyline, line or B-spline (as with the 3-point
   curve) shows as a black hairline on a white line twice as wide, the
-  segment to the pointer included, so it shows over a black fill (#672).
+  segment to the pointer included, and its node squares have a white
+  edge, so they show over a black fill (#672).
 
 ## Continuing the selected curve
 

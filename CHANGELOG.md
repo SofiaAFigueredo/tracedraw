@@ -6,6 +6,9 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Printing to a printer no longer freezes the window: the sheets are drawn and sent to the printer in the background, with "Printing on ..." in the status bar and the outcome there when it is done. On Windows a slow or stuck spooler left the window on "Processing" with a PowerShell window open until the program was closed (#810).
+- Print Preview > Print to the system's PDF viewer opens each print in a page of its own; with the last print still open in the viewer, the new one did not open (#809).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

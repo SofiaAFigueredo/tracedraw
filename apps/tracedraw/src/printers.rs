@@ -411,6 +411,10 @@ $doc.DocumentName = {title}
 $doc.PrinterSettings.Copies = {copies}
 $doc.PrinterSettings.Collate = ${collate}
 $doc.OriginAtMargins = $false
+# No "Printing page" window: the default controller opens one, which a
+# process without a console window cannot show, and the job then never
+# reaches the spooler (#614).
+$doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $state = @{{ i = 0 }}
 $doc.add_QueryPageSettings({{
     param($sender, $e)
@@ -438,6 +442,7 @@ $doc.add_PrintPage({{
     $e.HasMorePages = $state.i -lt $files.Count
 }})
 $doc.Print()
+[Console]::Out.WriteLine('sent ' + $state.i + ' sheet(s) to ' + {printer})
 "#,
         files = files.join(", "),
         sizes = sizes.join(", "),
@@ -475,20 +480,68 @@ pub fn print_sheets_windows(
         windows_print_script(printer, &files, copies, collate, title).as_bytes(),
     );
     std::fs::write(&script, bytes).map_err(|e| e.to_string())?;
-    let out = powershell()
-        .arg("-File")
-        .arg(&script)
-        .output()
-        .map_err(|e| format!("powershell: {e}"))?;
+    let result = run_print_script(&script, PRINT_TIMEOUT);
     for (path, _, _) in &files {
         let _ = std::fs::remove_file(path);
     }
-    if out.status.success() {
-        Ok(String::new())
+    // What happened goes in the log, so a print that did not come out
+    // can be told apart from one that Windows took (#614).
+    match &result {
+        Ok(said) => log::info!("print on {printer}: {said}"),
+        Err(e) => log::warn!("print on {printer} failed: {e}"),
+    }
+    result.map(|_| String::new())
+}
+
+/// How long the print script may run before it is taken as hung.
+#[cfg(target_os = "windows")]
+const PRINT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Run the print script, stopping it when it runs longer than `limit`;
+/// Ok with what it said when it ended well, Err with its error.
+#[cfg(target_os = "windows")]
+fn run_print_script(
+    script: &std::path::Path,
+    limit: std::time::Duration,
+) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut child = powershell()
+        .arg("-File")
+        .arg(script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("powershell: {e}"))?;
+    let start = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) if start.elapsed() > limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "the printer did not take the job within {} s",
+                    limit.as_secs()
+                ));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => return Err(format!("powershell: {e}")),
+        }
+    };
+    let mut out = String::new();
+    let mut err = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        let _ = o.read_to_string(&mut out);
+    }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut err);
+    }
+    if status.success() {
+        Ok(out.trim().to_string())
     } else {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let err = err.trim().to_string();
         Err(if err.is_empty() {
-            format!("powershell: {}", out.status)
+            format!("powershell: {status}")
         } else {
             err
         })
@@ -598,9 +651,53 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("$doc.DocumentName = 'Poster'"));
+        // No status window, which a process without a console window
+        // cannot show: the job then never reached the spooler (#614).
+        let controller = s
+            .find(
+                "$doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController",
+            )
+            .expect("the standard print controller");
+        assert!(controller < s.find("$doc.Print()").expect("Print"));
+        // What was sent is said, for the log.
+        assert!(s.contains("[Console]::Out.WriteLine('sent '"), "{s}");
         // Typographic quotes close a PowerShell string too.
         assert_eq!(ps_quote("a\u{2019}b"), "'a\u{2019}\u{2019}b'");
         assert!(windows_print_script("P", &sheets, 0, true, "").contains("Copies = 1"));
+    }
+
+    /// Write the print script for the printer in `PRINTER_NAME`, one A4
+    /// sheet, to the path in `PRINT_SCRIPT_OUT` (a check on a Windows
+    /// machine runs it as TraceDraw does); `OLD_CONTROLLER=1` leaves the
+    /// standard controller out, as before #614.
+    #[test]
+    #[ignore]
+    fn dump_windows_print_script() {
+        let (Ok(out), Ok(printer)) = (
+            std::env::var("PRINT_SCRIPT_OUT"),
+            std::env::var("PRINTER_NAME"),
+        ) else {
+            return;
+        };
+        let dir = std::path::Path::new(&out)
+            .parent()
+            .expect("folder")
+            .to_path_buf();
+        let png = dir.join("sheet-1.png");
+        image::RgbaImage::from_pixel(248, 351, image::Rgba([200, 30, 30, 255]))
+            .save(&png)
+            .expect("sheet");
+        let mut script = windows_print_script(&printer, &[(png, 210.0, 297.0)], 1, false, "Check");
+        if std::env::var("OLD_CONTROLLER").is_ok_and(|v| v == "1") {
+            script = script
+                .lines()
+                .filter(|l| !l.contains("StandardPrintController"))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        let mut bytes = vec![0xef, 0xbb, 0xbf];
+        bytes.extend_from_slice(script.as_bytes());
+        std::fs::write(&out, bytes).expect("script");
     }
 
     #[test]

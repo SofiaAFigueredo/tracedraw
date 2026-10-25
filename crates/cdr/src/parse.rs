@@ -2764,15 +2764,16 @@ impl<'a> Ctx<'a> {
             shape.node_types = std::mem::take(&mut self.pending_node_types);
         }
         shape.transform = recenter * transform;
-        // Rounded corners keep their size when the rectangle is resized,
-        // as new rectangles do, rather than stretch with it (#619).
-        shape.keep_corner_size();
         // A hidden object (a version 21 template: the white page-sized
         // rectangle its preview leaves out, over the page's dark
         // background) is kept but not drawn.
         shape.visible = !hidden;
         shape.fill = fill;
         shape.stroke = stroke;
+        // Rounded corners keep their size when the rectangle is resized,
+        // as new rectangles do, rather than stretch with it (#619); after
+        // the outline, which decides whether the stretch may move.
+        shape.keep_corner_size();
         shape.name = name;
         shape.opacity = opacity;
         if let Some((mask, target)) = mask {

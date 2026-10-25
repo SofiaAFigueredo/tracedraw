@@ -2273,7 +2273,8 @@ impl Shape {
     /// the page now; a rectangle whose axes scale differently gets round
     /// corners of the smaller scale, and when its axes stay square the
     /// stretch goes into its size, so its transform scales evenly and
-    /// later stretches keep it a rectangle. Corners keep their size even
+    /// later stretches keep it a rectangle (not when its outline scales
+    /// with it, and a skewed rectangle is left as it is). Corners keep their size even
     /// past half the shorter side (one corner may take a whole side; the
     /// drawing fits corners too big for it). Other shapes, square corners
     /// and corners that already keep their size are left as they are.
@@ -2289,8 +2290,17 @@ impl Shape {
         };
         let [a, b, c, d, _, _] = self.transform.as_coeffs();
         let (sx, sy) = axis_scale(self.transform);
+        // A skewed rectangle keeps corners that follow it: fixed ones
+        // could not be written to the files that keep rectangles plain.
         let square = (a * c + b * d).abs() <= 1e-9 * sx * sy;
-        if sx > 1e-12 && sy > 1e-12 && square && (sx - sy).abs() > 1e-9 * sx.max(sy) {
+        if !square {
+            return;
+        }
+        // An outline that scales with the object would thin out if the
+        // stretch left the transform; fixed corners draw round under the
+        // stretch anyway.
+        let widens_outline = self.stroke.as_ref().is_some_and(|s| s.scale_with_object);
+        if sx > 1e-12 && sy > 1e-12 && !widens_outline && (sx - sy).abs() > 1e-9 * sx.max(sy) {
             rect = Rect::new(rect.x0 * sx, rect.y0 * sy, rect.x1 * sx, rect.y1 * sy);
             self.transform *= Affine::scale_non_uniform(1.0 / sx, 1.0 / sy);
         }
@@ -4517,6 +4527,36 @@ mod tests {
         let b = t.bounds();
         assert!((b.x0 - bounds.x0).abs() < 1e-9 && (b.x1 - bounds.x1).abs() < 1e-9);
         assert_eq!(t.page_corners().expect("corners").radii, [2.0; 4]);
+        // An outline that scales with the object keeps its width: the
+        // stretch stays in the transform.
+        let mut u = Shape::new(
+            ids.shape(),
+            ShapeKind::rect_with_corners(
+                Rect::new(0.0, 0.0, 20.0, 10.0),
+                Corners::uniform(2.0, CornerKind::Round),
+            ),
+        );
+        u.transform = Affine::scale_non_uniform(2.0, 1.0);
+        let mut stroke = Stroke::default();
+        stroke.scale_with_object = true;
+        u.stroke = Some(stroke);
+        let before = u.transform;
+        u.keep_corner_size();
+        assert_eq!(u.transform, before);
+        assert!(u.page_corners().expect("corners").fixed);
+        assert_eq!(u.page_corners().expect("corners").radii, [2.0; 4]);
+        // A skewed one is left as it was.
+        let mut k = Shape::new(
+            ids.shape(),
+            ShapeKind::rect_with_corners(
+                Rect::new(0.0, 0.0, 20.0, 10.0),
+                Corners::uniform(2.0, CornerKind::Round),
+            ),
+        );
+        k.transform = Affine::new([1.0, 0.0, 0.5, 1.0, 0.0, 0.0]);
+        let kind = k.kind.clone();
+        k.keep_corner_size();
+        assert_eq!(k.kind, kind);
     }
 
     /// A clip frame's warp is baked before the warps of what it holds, as

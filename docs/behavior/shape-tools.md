@@ -58,6 +58,8 @@ whatever tool is active.
   size, at the size the corners measure on the page (a corner larger
   than half the shorter side stays so); one the file stretches gets
   round corners of its shorter scale, the stretch going into its size
+  unless its outline scales with the object (a skewed one keeps
+  corners that follow it)
   (`document::tests::keep_corner_size_leaves_the_outline_and_takes_the_stretch`)
   (`parse::tests::rounded_rectangles_keep_their_corner_size` in the
   .cdr reader). Preferences saved by older versions, which could not store the

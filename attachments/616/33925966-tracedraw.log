@@ -1,0 +1,11 @@
+[2026-10-25T12:11:16Z INFO  tracedraw::startup_log] TraceDraw 0.17.0 on windows x86_64
+[2026-10-25T12:11:16Z INFO  tracedraw] opening the window with Software (Options asks for Software)
+[2026-10-25T12:11:16Z INFO  eframe] Both the glow and wgpu renderers are available. Using wgpu.
+[2026-10-25T12:11:16Z WARN  wgpu_hal::gles::adapter] Returned GL context is 2.1, when 3.3+ is needed
+[2026-10-25T12:11:16Z INFO  tracedraw::gpu] 1 graphics adapter(s) for Software:
+[2026-10-25T12:11:16Z INFO  tracedraw::gpu]   Microsoft Basic Render Driver (Dx12, Cpu, 1414:008c, driver 10.0.19041.7802 ): picked: the fastest usable
+[2026-10-25T12:11:16Z WARN  egui_wgpu] Software rasterizer detected - loss of performance expected. backend: Dx12, device_type: Cpu, name: "Microsoft Basic Render Driver", driver: "10.0.19041.7802", vendor: Unknown (0x1414), device: 0x8C, subgroup_size: 4..=4, transient_saves_memory: Some(false), limit_bucket: None
+[2026-10-25T12:11:16Z INFO  tracedraw::gpu] the window opened with Software: Microsoft Basic Render Driver (Dx12)
+[2026-10-25T12:11:16Z WARN  tracedraw::gpu] a software adapter draws the window (Microsoft Basic Render Driver): frames paced to 30 a second, no shadows, system pointers
+[2026-10-25T12:11:20Z INFO  tracedraw_text] loaded 2645 font faces, 1332 families
+[2026-10-25T12:11:20Z INFO  tracedraw::theme] UI fallback fonts: fallback-Noto Sans Arabic, fallback-Nirmala UI, fallback-Microsoft YaHei, fallback-Microsoft JhengHei, fallback-Yu Gothic UI

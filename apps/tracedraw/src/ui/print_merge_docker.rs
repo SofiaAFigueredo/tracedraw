@@ -226,10 +226,7 @@ impl App {
                 shape: s.id,
                 name: Some(field.clone()),
             });
-            let mut data = frame_data(s, &d);
-            if picture.is_none() {
-                data.retain(|(k, _)| k != crate::print_merge::PLACED_DATA);
-            }
+            let data = frame_data(s, &d);
             cmds.push(Command::SetObjectData { shape: s.id, data });
             // The stand-in picture, in a frame on the page.
             let on_page = self.doc().top_level_of(s.id) == Some(s.id);
@@ -482,7 +479,9 @@ impl App {
         if self.merge_docker.all_pages {
             match crate::print_merge::merge_onto_pages(&mut self.engine, &st) {
                 Ok(m) => {
-                    self.status = if m.filled == 0 {
+                    self.status = if !m.fields {
+                        crate::i18n::tr("status.merge_no_fields")
+                    } else if m.filled == 0 {
                         crate::i18n::tr("status.merge_nothing_to_fill")
                     } else if m.left_out > 0 {
                         crate::i18n::trf(
@@ -515,21 +514,15 @@ impl App {
 }
 
 /// A frame's object data after Place Inside Frame: its own, with the
-/// docker's Align and scale, and with On every page the mark that keeps
-/// its picture out of a merge onto the drawing's pages (#618).
+/// docker's Align and scale.
 fn frame_data(s: &Shape, d: &MergeDocker) -> Vec<(String, String)> {
     let mut data: Vec<(String, String)> = s
         .data
         .iter()
-        .filter(|(k, _)| {
-            k != SCALE_DATA && k != ANCHOR_DATA && k != crate::print_merge::PLACED_DATA
-        })
+        .filter(|(k, _)| k != SCALE_DATA && k != ANCHOR_DATA)
         .cloned()
         .collect();
     data.extend(placement_data(d.scale, d.anchor));
-    if d.all_pages {
-        data.push((crate::print_merge::PLACED_DATA.to_string(), "1".to_string()));
-    }
     data
 }
 
@@ -1053,20 +1046,70 @@ mod tests {
         assert_eq!(app.docs.len(), docs);
         assert_eq!(app.doc(), &before, "both circles kept on every page");
         assert_eq!(app.status, crate::i18n::tr("status.merge_nothing_to_fill"));
-        // With the pictures there again, the photo frames are filled from
-        // the records once more, and the red circles keep the stand-in.
+        // With the pictures there again, every picture field of a page
+        // takes its record's picture, the red circles too.
         if let Some(st) = app.merge_state.as_mut() {
             st.pictures = Some(pics.clone());
         }
         app.create_merged_document(false);
         assert_eq!(widths(&app, 0, 10.0), vec![30]);
         assert_eq!(widths(&app, 1, 10.0), vec![40]);
-        assert_eq!(widths(&app, 0, 60.0), vec![10]);
-        assert_eq!(widths(&app, 1, 60.0), vec![10]);
+        assert_eq!(widths(&app, 0, 60.0), vec![30]);
+        assert_eq!(widths(&app, 1, 60.0), vec![40]);
         assert_eq!(
             app.status,
             crate::i18n::trf("status.merge_filled", &[("n", "2")])
         );
+        // Pages without any field: the status bar says so.
+        let mut plain = App::headless();
+        plain.merge_state = app.merge_state.clone();
+        plain.merge_docker.all_pages = true;
+        plain.create_merged_document(false);
+        assert_eq!(plain.status, crate::i18n::tr("status.merge_no_fields"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A merge into a new drawing (On every page off) empties the frame of
+    /// a record whose picture cell is empty or names a missing file: the
+    /// copy never shows the template's stand-in, another person's photo
+    /// on an ID card (#618).
+    #[test]
+    fn a_record_without_a_picture_gets_no_stand_in() {
+        let dir = std::env::temp_dir().join(format!("td_merge_empty_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        image::RgbaImage::from_pixel(30, 30, image::Rgba([0, 0, 200, 255]))
+            .save(dir.join("wide.png"))
+            .unwrap();
+        image::RgbaImage::from_pixel(10, 10, image::Rgba([200, 0, 0, 255]))
+            .save(dir.join("stand_in.png"))
+            .unwrap();
+        let mut app = App::headless();
+        let mut st = data(&dir);
+        st.rows[1][1] = String::new();
+        st.rows
+            .push(vec!["Cy".into(), "missing.png".into(), "C-3".into()]);
+        app.merge_state = Some(st);
+        app.merge_docker.kind = 1;
+        app.merge_docker.column = 1;
+        app.merge_docker.placeholder = dir.join("stand_in.png").display().to_string();
+        app.insert_merge_field();
+        app.merge_docker.all_pages = false;
+        app.create_merged_document(false);
+        assert_ne!(app.active_doc, 0, "a drawing of its own");
+        let doc = app.doc().clone();
+        assert_eq!(doc.pages.len(), 3);
+        let bitmaps = |k: usize| -> Vec<u32> {
+            all_of(&doc.pages[k])
+                .iter()
+                .filter_map(|s| match s.kind {
+                    ShapeKind::Bitmap { width_px, .. } => Some(width_px),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(bitmaps(0), vec![30], "Ana's photo");
+        assert!(bitmaps(1).is_empty(), "no stand-in for an empty cell");
+        assert!(bitmaps(2).is_empty(), "no stand-in for a missing file");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

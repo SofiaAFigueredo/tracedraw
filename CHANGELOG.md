@@ -6,7 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
-- Print Merge: a picture frame whose cell is empty or whose picture does not load keeps the picture it holds, and with On every page Create Merged Document leaves frames that Place Inside Frame filled on every page as they are; when nothing is left to fill it says so and changes nothing, and the status bar no longer says pages were created by a merge into the drawing's own pages (#618).
+- Print Merge: with On every page, Create Merged Document leaves a picture frame whose cell is empty or whose picture does not load as it is instead of emptying it, says when nothing was left to fill (or when the pages hold no fields) instead of claiming it created pages, and Place Inside Frame on every page no longer stacks a second picture in a frame that already holds one (#618).
 
 - Browser version: the module is optimised for size with binaryen's wasm-opt and loses its name, debug and producer sections, 36.9 MB down to 31.6 MB (13.3 to 12.7 MB compressed). Nothing changes in what it does, and frame and script times stay the same.
 

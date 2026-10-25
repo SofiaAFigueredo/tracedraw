@@ -25,7 +25,7 @@ jobs:
             try { Add-PrinterDriver -Name "Generic / Text Only"; $driver = "Generic / Text Only" } catch { Write-Output "::error title=driver::$($_.Exception.Message)" }
           }
           Write-Output "::notice title=driver::$driver"
-          foreach ($k in "a", "b", "c") {
+          foreach ($k in "s1", "s2") {
             try {
               Add-PrinterPort -Name "C:\pc\$k.out.prn"
               Add-Printer -Name "Check $k" -DriverName $driver -PortName "C:\pc\$k.out.prn"
@@ -38,7 +38,7 @@ jobs:
       - name: Print as TraceDraw does (hidden window, no profile)
         shell: pwsh
         run: |
-          foreach ($k in "a", "b", "c") {
+          foreach ($k in "s1", "s2") {
             $p = Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"C:\pc\$k.ps1" -WindowStyle Hidden -PassThru -RedirectStandardOutput "C:\pc\$k.out" -RedirectStandardError "C:\pc\$k.err"
             $done = $p.WaitForExit(120000)
             if (-not $done) { $p.Kill(); $code = "hung (killed after 120 s)" } else { $code = $p.ExitCode }

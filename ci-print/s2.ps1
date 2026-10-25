@@ -1,19 +1,23 @@
 ﻿$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
-$files = @('C:\pc\sheet-1.png')
-$sizes = @(@(210.000, 297.000))
+$files = @('C:\pc\sheet-1.png', 'C:\pc\sheet-1.png')
+$sizes = New-Object System.Collections.ArrayList
+[void]$sizes.Add(@(210.000, 297.000))
+[void]$sizes.Add(@(297.000, 210.000))
 $doc = New-Object System.Drawing.Printing.PrintDocument
-$doc.PrinterSettings.PrinterName = 'Check b'
-if (-not $doc.PrinterSettings.IsValid) { [Console]::Error.WriteLine('Printer not found'); exit 2 }
+$doc.PrinterSettings.PrinterName = 'Check s2'
+if (-not $doc.PrinterSettings.IsValid) { [Console]::Error.WriteLine('Printer not found: ' + 'Check s2'); exit 2 }
 $doc.DocumentName = 'Check'
 $doc.PrinterSettings.Copies = 1
 $doc.PrinterSettings.Collate = $false
 $doc.OriginAtMargins = $false
+# No "Printing page" window: the default controller opens one, which a
+# process without a console window cannot show, and the job then never
+# reaches the spooler (#614).
 $doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
 $state = @{ i = 0 }
 $doc.add_QueryPageSettings({
     param($sender, $e)
-    try {
     $w = $sizes[$state.i][0]; $h = $sizes[$state.i][1]
     foreach ($p in $doc.PrinterSettings.PaperSizes) {
         $pw = $p.Width * 0.254; $ph = $p.Height * 0.254
@@ -23,22 +27,19 @@ $doc.add_QueryPageSettings({
         }
     }
     $e.PageSettings.Landscape = ($w -gt $h)
-    } catch { [Console]::Error.WriteLine('QUERY: ' + ($_ | Out-String) + ' INNER: ' + $_.Exception.InnerException); throw }
 })
 $doc.add_PrintPage({
     param($sender, $e)
-    try {
     $w = $sizes[$state.i][0]; $h = $sizes[$state.i][1]
     $img = [System.Drawing.Image]::FromFile($files[$state.i])
     $g = $e.Graphics
     $g.PageUnit = [System.Drawing.GraphicsUnit]::Millimeter
     $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
     $mx = $e.PageSettings.HardMarginX * 0.254; $my = $e.PageSettings.HardMarginY * 0.254
-    $g.DrawImage($img, (New-Object System.Drawing.RectangleF([single](-$mx), [single](-$my), [single]$w, [single]$h)))
+    $g.DrawImage($img, [single](-$mx), [single](-$my), [single]$w, [single]$h)
     $img.Dispose()
     $state.i++
     $e.HasMorePages = $state.i -lt $files.Count
-    } catch { [Console]::Error.WriteLine('PAGE: ' + ($_ | Out-String) + ' INNER: ' + $_.Exception.InnerException); throw }
 })
-try { $doc.Print() } catch { [Console]::Error.WriteLine('PRINT: ' + $_.Exception.ToString()); exit 1 }
-[Console]::Out.WriteLine('sent ' + $state.i + ' sheet(s)')
+$doc.Print()
+[Console]::Out.WriteLine('sent ' + $state.i + ' sheet(s) to ' + 'Check s2')

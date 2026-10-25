@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- A combined curve with tens of thousands of nodes (a combined ornament) can be moved again: with snapping on, every frame over it compared each node with every other to find the snap points near the pointer, about 1.8 s a frame for 40,000 nodes, so a drag seemed to do nothing. Now a frame over it takes about 9 ms and a drag frame about 5 ms (#764).
+
 - Browser version: the module is optimised for size with binaryen's wasm-opt and loses its name, debug and producer sections, 36.9 MB down to 31.6 MB (13.3 to 12.7 MB compressed). Nothing changes in what it does, and frame and script times stay the same.
 
 - The default palette's menu has Rows > 1 Row, 2 Rows, 3 Rows, and with more than one row the swatches fill line by line (the second line goes on where the first ends) and scroll one swatch at a time (#610).

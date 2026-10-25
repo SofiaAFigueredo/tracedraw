@@ -6842,3 +6842,50 @@ fn a_double_click_edits_a_dimension_label_in_place() {
     assert_eq!(app.text_edit.as_ref().map(|te| te.shape), Some(label.id));
     assert_eq!(shape_count(&app), count);
 }
+
+/// The dimension bar's Options menu stays open while a field in it is
+/// clicked, typed in and confirmed with Enter, and the value applies to
+/// the selected dimension (#644).
+#[test]
+fn the_dimension_options_stay_open_while_typed_in() {
+    let (ctx, mut app, rect) = setup();
+    app.run(tracedraw_core::Command::DeleteShapes { shapes: vec![rect] });
+    app.create_dimension(
+        Point::new(20.0, 60.0),
+        Point::new(80.0, 60.0),
+        Point::new(50.0, 80.0),
+    );
+    let g = app.selection[0];
+    app.set_tool(Tool::Pick);
+    let menu = egui::Id::new("dimension_options_menu");
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    egui::Popup::open_id(&ctx, menu);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let area = ctx
+        .memory(|m| m.area_rect(menu))
+        .expect("the menu is shown");
+    // The second row's field, Extension past the line, the widest row:
+    // its text, left of the spin arrows.
+    let at = Pos2::new(area.max.x - 50.0, area.min.y + 34.0);
+    click_at(&ctx, &mut app, at, Modifiers::NONE);
+    assert!(egui::Popup::is_id_open(&ctx, menu), "open after the click");
+    frame(
+        &ctx,
+        &mut app,
+        vec![
+            key(egui::Key::A, Modifiers::COMMAND),
+            Event::Text("3".into()),
+            key(egui::Key::Enter, Modifiers::NONE),
+        ],
+        Modifiers::NONE,
+    );
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    assert!(egui::Popup::is_id_open(&ctx, menu), "open after typing");
+    let d = crate::dimensions::Dimension::of(app.doc().find_shape(g).expect("dimension"))
+        .expect("dimension");
+    assert!(
+        (d.style.extension_overshoot - 3.0).abs() < 1e-9,
+        "{}",
+        d.style.extension_overshoot
+    );
+}

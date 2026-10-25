@@ -4510,15 +4510,17 @@ impl App {
                     shapes: vec![te.shape],
                 });
                 self.selection.retain(|s| *s != te.shape);
-                // A dimension's label deleted brings the measured one back,
-                // in this step (#644).
-                self.bake_dimensions();
             } else if self.settings.hyphens_when_typing && !self.settings.custom_hyphens.is_empty()
             {
                 // Custom optional hyphens break the lines of text typed
                 // with a defined word.
                 crate::ui::writing_tools::apply_custom_hyphens(self, &[te.shape]);
             }
+            // A dimension's label read back in this step (deleted, the
+            // measured one comes back, #644); then what was noted for its
+            // edit goes.
+            self.bake_dimensions();
+            self.dimension_labels_seen.clear();
         }
     }
 

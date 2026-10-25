@@ -2,7 +2,7 @@
 //! selected with the Pick tool) and the preview of the dimension being
 //! placed. Bar: Precision, Units, Show units, Prefix, Suffix, Text
 //! position, Text size; the look; more options (extension lines,
-//! arrowhead size, horizontal text); then what to click next. Changes
+//! horizontal text); then what to click next. Changes
 //! apply to the selected dimensions and to the ones made next.
 
 use crate::app::App;
@@ -152,59 +152,47 @@ fn length_field(
 }
 
 /// More options (#644): the extension lines' gap from the object and how
-/// far they run past the dimension line, the arrowheads' size, a
-/// horizontal label; and the measured value back for a typed label.
-fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle, typed: bool) {
-    ui.menu_button(tr("dimension.options"), |ui| {
-        length_field(
-            app,
-            ui,
-            "dimension.extension_gap",
-            style.extension_gap,
-            100.0,
-            |s, v| s.extension_gap = v,
-        );
-        length_field(
-            app,
-            ui,
-            "dimension.extension_overshoot",
-            style.extension_overshoot,
-            100.0,
-            |s, v| s.extension_overshoot = v,
-        );
-        length_field(
-            app,
-            ui,
-            "dimension.arrow_size",
-            style.arrow_size,
-            50.0,
-            |s, v| s.arrow_size = v,
-        );
-        let mut horizontal = style.horizontal_text;
-        if ui
-            .checkbox(&mut horizontal, tr("dimension.horizontal_text"))
-            .changed()
-        {
-            app.set_dimension_style(|s| s.horizontal_text = horizontal);
-        }
-    })
-    .response
-    .rich_tip(tr("dimension.options"));
-    if typed
-        && ui
-            .button(tr("dimension.measured_value"))
-            .rich_tip(tr("dimension.measured_value"))
-            .clicked()
-    {
-        app.measured_dimension_labels();
-    }
+/// far they run past the dimension line, and a horizontal label.
+fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
+    let button = ui
+        .button(format!("{} \u{25BE}", tr("dimension.options")))
+        .rich_tip(tr("dimension.options"));
+    // The menu stays open while its fields are typed in and stepped; a
+    // click outside closes it.
+    egui::Popup::menu(&button)
+        .id(egui::Id::new("dimension_options_menu"))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            length_field(
+                app,
+                ui,
+                "dimension.extension_gap",
+                style.extension_gap,
+                100.0,
+                |s, v| s.extension_gap = v,
+            );
+            length_field(
+                app,
+                ui,
+                "dimension.extension_overshoot",
+                style.extension_overshoot,
+                100.0,
+                |s, v| s.extension_overshoot = v,
+            );
+            let mut horizontal = style.horizontal_text;
+            if ui
+                .checkbox(&mut horizontal, tr("dimension.horizontal_text"))
+                .changed()
+            {
+                app.set_dimension_style(|s| s.horizontal_text = horizontal);
+            }
+        });
 }
 
 /// The bar.
 pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
     // The first selected dimension, read once a frame.
     let first = app.first_selected_dimension();
-    let typed = first.as_ref().is_some_and(|d| d.text.is_some());
     let style = first
         .map(|d| d.style)
         .unwrap_or_else(|| app.dimension_style.clone());
@@ -280,7 +268,7 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
         app.set_dimension_style(|s| s.text_size = size);
     }
     style_part(app, ui, &style);
-    options_part(app, ui, &style, typed);
+    options_part(app, ui, &style);
     if matches!(
         app.tool,
         Tool::ParallelDimension

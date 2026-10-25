@@ -33,8 +33,8 @@ moved, scaled, turned or skewed (`dimensions.rs`).
 
 - Linear: extension lines from the measured points (or the extension
   gap off them) to 2 mm (the overshoot) past the dimension line, the
-  dimension line, filled arrowheads (3 mm long, 2 mm wide, scaled with
-  the arrowhead size) at both ends. Angular: the two sides from the
+  dimension line, filled arrowheads (3 mm long, 2 mm wide) at both
+  ends. Angular: the two sides from the
   vertex (or the gap off it) to the overshoot past the arc, the arc,
   arrowheads along it at both ends.
 - The label reads left to right: along the dimension line, turned to
@@ -76,10 +76,11 @@ is kept in the preferences (`tools.dimension_style`).
 | Round ends | off | round caps and joins on the lines |
 | Options > Extension line gap | 0 | 0 to 100 mm between the measured points and the extension lines (at most the lines' length) |
 | Options > Extension past the line | 2 mm | 0 to 100 mm |
-| Options > Arrowhead size | 3 mm | 0 to 50 mm, the arrowheads' length (width two thirds of it; a dot's radius a third); 0 draws none |
 | Options > Horizontal text | off | a linear dimension's label stays horizontal |
-| Measured value | shown for a label typed without the value | the label shows the measured value again |
 
+The Options menu stays open while its fields are typed in or stepped;
+a click outside it closes it
+(`pick_drag_tests::the_dimension_options_stay_open_while_typed_in`).
 Styles saved before the options read with their defaults; lengths that
 are not finite numbers read as the defaults
 (`dimensions::tests::more_options_shape_the_dimension`).
@@ -99,16 +100,20 @@ label back and draws itself again:
   another number) keeps it live: the text before it becomes the prefix, the text
   after it the suffix, and a new size changes the number;
 - typed text without it (`140.00 mm` where the value was `40.00 mm`
-  counts as without) shows as typed whatever the size, until Measured
-  value on the bar brings the measured value back;
+  counts as without) shows as typed whatever the size, until the
+  label's text is deleted, which brings the measured value back;
 - the label's font, size and colour become the style's (the first
   span's font and size: bold, italic and the looks of other characters
   are not kept); a fill picked for a selected dimension (a palette
   swatch) so colours its label only, the lines and arrowheads keeping
-  the line colour;
+  the line colour, and an outline colour picked for it becomes the line
+  colour (`dimensions::tests::a_dragged_fill_on_a_dimension_is_one_step`:
+  a colour dragged in a picker stays one undo step while it is read
+  back);
 - a label emptied while it is typed stays empty; when its editing ends
   it is deleted, which brings the measured one back in that step (a part
-  of the group deleted is drawn again too).
+  of the group deleted, or a label left empty otherwise, is drawn again
+  too).
 
 The follow-up joins the step just recorded and is never made after an
 undo, a redo or opening a drawing, so undo and redo go through every
@@ -120,7 +125,9 @@ make a measured label a typed one. A dimension saved before labels were
 noted reads its label as drawn until it is drawn again (moved, scaled or
 restyled), so opening an older file changes nothing; an edit of its
 label begun in place is read back against the label as it was then
-(`dimensions::tests::decimals_older_dimensions_and_fills_read_back`,
+(noted for that edit only: it goes when the editing ends or the drawing
+is left for another tab, `dimensions::tests::noted_labels_go_with_the_edit`,
+`dimensions::tests::decimals_older_dimensions_and_fills_read_back`,
 `dimensions::tests::a_label_edited_in_place_stays_linked`,
 `dimensions::tests::new_units_or_default_font_keep_labels_measured`,
 `pick_drag_tests::a_double_click_edits_a_dimension_label_in_place`).
@@ -225,6 +232,9 @@ ones made next; the style is kept in the preferences
 - `dimensions::tests::more_options_shape_the_dimension`
 - `dimensions::tests::undo_after_an_emptied_label_goes_all_the_way_back`
 - `dimensions::tests::decimals_older_dimensions_and_fills_read_back`
+- `dimensions::tests::a_dragged_fill_on_a_dimension_is_one_step`
+- `dimensions::tests::noted_labels_go_with_the_edit`
+- `pick_drag_tests::the_dimension_options_stay_open_while_typed_in`
 - `pick_drag_tests::a_double_click_edits_a_dimension_label_in_place`
 - `ui::dimension_bar::tests::the_bar_and_the_preview_draw`
 - `callouts::tests::a_callout_ends_at_its_text_and_follows_it`

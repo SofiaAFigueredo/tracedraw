@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- The page tabs under the drawing slide to show the current page's tab whenever the page changes (a tab, the page navigator, PgUp and PgDn, Go To Page), and the mouse wheel over them slides them. In a drawing of many pages, a merged document for example, the tabs past the end of the row never showed before, so those pages could only be reached with Go To Page (#794).
+
 - Browser version: the module is optimised for size with binaryen's wasm-opt and loses its name, debug and producer sections, 36.9 MB down to 31.6 MB (13.3 to 12.7 MB compressed). Nothing changes in what it does, and frame and script times stay the same.
 
 - The default palette's menu has Rows > 1 Row, 2 Rows, 3 Rows, and with more than one row the swatches fill line by line (the second line goes on where the first ends) and scroll one swatch at a time (#610).

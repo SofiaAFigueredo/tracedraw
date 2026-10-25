@@ -520,72 +520,51 @@ mod tests {
         assert!(spans[0].features.iter().any(|f| f == "salt"));
     }
 
-    /// WCAG contrast ratio of two opaque colours.
-    fn contrast(a: egui::Color32, b: egui::Color32) -> f32 {
-        let lum = |c: egui::Color32| {
-            let ch = |v: u8| {
-                let v = v as f32 / 255.0;
-                if v <= 0.04045 {
-                    v / 12.92
-                } else {
-                    ((v + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
-        };
-        let (x, y) = (lum(a), lum(b));
-        (x.max(y) + 0.05) / (x.min(y) + 0.05)
-    }
-
-    /// The recent glyphs are tinted with the theme's text colour, so the
-    /// box the docker paints behind them must contrast with it in every
-    /// theme, not stay white in the dark ones (#660).
+    /// The recent glyphs are tinted with the theme's text colour, so their
+    /// box takes the theme's field colour, not a fixed white (#660). The
+    /// theme is shared by the tests running alongside, so this one draws in
+    /// whatever theme is set; `theme_tests` checks that the field and text
+    /// colours of every theme contrast.
     #[test]
-    fn recent_glyphs_contrast_with_their_box_in_every_theme() {
-        for theme in crate::theme::Theme::ALL {
-            crate::theme::set_theme(theme);
-            let mut app = App::headless();
-            app.settings.recent_glyphs = vec![("Arial".into(), "A".into())];
-            let ctx = crate::theme::ui_context();
-            let input = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(360.0, 800.0),
-                )),
-                ..Default::default()
-            };
-            let mut out = ctx.run_ui(input, |ui| glyphs(&mut app, ui));
-            out.textures_delta.clear();
-            // The recent glyph as drawn (a picture of it, tinted, or the
-            // character itself), and the framed box behind it: both read
-            // from the frame, whatever theme another test may set.
-            let (at, ink) = out
-                .shapes
-                .iter()
-                .find_map(|c| match &c.shape {
-                    egui::Shape::Mesh(m) if m.texture_id != egui::TextureId::default() => m
-                        .vertices
-                        .first()
-                        .map(|v| (m.calc_bounds().center(), v.color)),
-                    egui::Shape::Text(t) if t.galley.text() == "A" => {
-                        Some((t.visual_bounding_rect().center(), t.fallback_color))
-                    }
-                    _ => None,
-                })
-                .expect("the recent glyph");
-            let fill = out
-                .shapes
-                .iter()
-                .find_map(|c| match &c.shape {
-                    egui::Shape::Rect(r) if r.stroke.width > 0.0 && r.rect.contains(at) => {
-                        Some(r.fill)
-                    }
-                    _ => None,
-                })
-                .expect("the recent box");
-            assert!(contrast(fill, ink) >= 4.5, "{theme:?}: {ink:?} on {fill:?}");
-        }
-        crate::theme::set_theme(crate::theme::Theme::Light);
+    fn the_recent_glyphs_box_takes_the_theme_field_colour() {
+        let mut app = App::headless();
+        app.settings.recent_glyphs = vec![("Arial".into(), "A".into())];
+        let ctx = crate::theme::ui_context();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(360.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| glyphs(&mut app, ui));
+        out.textures_delta.clear();
+        // The recent glyph as drawn (a picture of it, tinted, or the
+        // character itself), and the framed box behind it.
+        let (at, ink) = out
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) if m.texture_id != egui::TextureId::default() => m
+                    .vertices
+                    .first()
+                    .map(|v| (m.calc_bounds().center(), v.color)),
+                egui::Shape::Text(t) if t.galley.text() == "A" => {
+                    Some((t.visual_bounding_rect().center(), t.fallback_color))
+                }
+                _ => None,
+            })
+            .expect("the recent glyph");
+        let fill = out
+            .shapes
+            .iter()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Rect(r) if r.stroke.width > 0.0 && r.rect.contains(at) => Some(r.fill),
+                _ => None,
+            })
+            .expect("the recent box");
+        assert_eq!(fill, Tokens::field());
+        assert_eq!(ink, Tokens::text());
     }
 
     #[test]

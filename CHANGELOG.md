@@ -6,7 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
-- Ungroup keeps a group's perspective: each object takes a Perspective effect of its own and stays drawn as it was in the group. The perspective disappeared when the group was ungrouped (#674).
+- Ungroup keeps a group's perspective: each object takes a Perspective effect of its own, first in its stack (folded into a perspective it had), and stays drawn as it was in the group, its own contour or distortion included. The perspective disappeared when the group was ungrouped (#674).
 
 - Convert Outline to Object (Ctrl+Shift+Q) on an outline with round ends or round corners: each round end is now two real curves meeting at its tip, with nodes where it meets the sides, and each round corner a curve, instead of many tiny straight segments. Curved sides also get fewer nodes (#623).
 

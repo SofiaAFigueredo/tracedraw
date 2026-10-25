@@ -1559,41 +1559,74 @@ pub fn perspective_in(path: &BezPath, b: Rect, corners: &[Point; 4]) -> BezPath 
     warp(path, b, map)
 }
 
-/// The perspective a group's `member` takes when the group is ungrouped
-/// (#674): the group's perspective of its box `b` onto `corners`, as seen
-/// in the member's own space. A homography restricted to the member is
-/// still one, so the member is drawn as it was in the group.
-pub fn member_perspective(b: Rect, corners: &[Point; 4], member: &Shape) -> Option<Effect> {
-    if b.width() < 1e-9 || b.height() < 1e-9 {
-        return None;
-    }
+/// Give a group's `member` the group's perspectives as it is ungrouped
+/// (#674): the group (outline `group_path`, effects `group`) warps the
+/// member's outline before the member's own effects run, so the member
+/// takes one Perspective at the front of its stack, the group's
+/// projections seen in its own space (a homography restricted to the
+/// member is still one). A Perspective the member had first already is
+/// folded into it, so it keeps one set of corners. Drawn as it was in the
+/// group; other group effects are not carried.
+pub fn take_group_perspectives(member: &mut Shape, group_path: &BezPath, group: &[Effect]) {
     let t = member.transform;
     if t.determinant().abs() < 1e-12 {
-        return None;
+        return;
     }
-    let mb = member.local_path().bounding_box();
-    if mb.width() < 1e-9 || mb.height() < 1e-9 {
-        return None;
-    }
-    let src = [
-        Point::new(b.x0, b.y0),
-        Point::new(b.x1, b.y0),
-        Point::new(b.x1, b.y1),
-        Point::new(b.x0, b.y1),
-    ];
-    let h = homography(&src, corners)?;
     let inv = t.inverse();
-    let corners = [
-        Point::new(mb.x0, mb.y0),
-        Point::new(mb.x1, mb.y0),
-        Point::new(mb.x1, mb.y1),
-        Point::new(mb.x0, mb.y1),
-    ]
-    .map(|p| inv * map_homography(&h, t * p));
-    corners
-        .iter()
-        .all(|p| p.x.is_finite() && p.y.is_finite())
-        .then_some(Effect::Perspective { corners })
+    let raw = member.local_path();
+    let mb = raw.bounding_box();
+    if mb.width() < 1e-9 || mb.height() < 1e-9 {
+        return;
+    }
+    let rect = |b: Rect| {
+        [
+            Point::new(b.x0, b.y0),
+            Point::new(b.x1, b.y0),
+            Point::new(b.x1, b.y1),
+            Point::new(b.x0, b.y1),
+        ]
+    };
+    // The member's box corners through each group perspective in turn,
+    // each on the box of the group's outline as the one before left it.
+    let mut corners = rect(mb);
+    let mut path = group_path.clone();
+    let mut any = false;
+    for e in group {
+        let Effect::Perspective { corners: to } = e else {
+            continue;
+        };
+        let b = path.bounding_box();
+        if b.width() < 1e-9 || b.height() < 1e-9 {
+            continue;
+        }
+        let Some(h) = homography(&rect(b), to) else {
+            continue;
+        };
+        corners = corners.map(|q| inv * map_homography(&h, t * q));
+        path = perspective_in(&path, b, to);
+        any = true;
+    }
+    if !any || !corners.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
+        return;
+    }
+    let mut stack = member.effect_stack();
+    // The member's own first perspective ran on the warped outline's box.
+    let folded = match stack.first() {
+        Some((Effect::Perspective { corners: own }, true)) => {
+            let b = perspective_in(&raw, mb, &corners).bounding_box();
+            homography(&rect(b), own).map(|h| corners.map(|g| map_homography(&h, g)))
+        }
+        _ => None,
+    };
+    match folded {
+        Some(c) if c.iter().all(|p| p.x.is_finite() && p.y.is_finite()) => {
+            stack[0].0 = Effect::Perspective { corners: c };
+        }
+        _ => stack.insert(0, (Effect::Perspective { corners }, true)),
+    }
+    let (effects, parked) = Shape::split_stack(stack);
+    member.effects = effects;
+    member.parked_effects = parked;
 }
 
 /// Solve the 8 parameters of a homography from 4 point pairs.

@@ -6781,3 +6781,53 @@ fn the_edge_of_the_shape_being_drawn_shows_over_a_wide_outline() {
         frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
     }
 }
+
+/// An Area Fill click inside a circle makes the circle itself: four
+/// curves on it, not a jagged outline with many nodes (#734); a click
+/// where the circle overlaps a rectangle makes the overlap, with the
+/// circle's curve as its round side.
+#[test]
+fn area_fill_keeps_the_curves_it_fills_between() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    // A circle alone, and one overlapping the rectangle (10..60, 10..40).
+    for rect in [
+        Rect::new(120.0, 70.0, 180.0, 130.0),
+        Rect::new(40.0, 20.0, 100.0, 80.0),
+    ] {
+        app.new_shape(ShapeKind::Ellipse { rect, arc: None })
+            .expect("circle");
+    }
+    app.set_tool(Tool::AreaFill);
+    let on_circle = |path: &tracedraw_core::BezPath, centre: Point| {
+        let mut far: f64 = 0.0;
+        tracedraw_core::geometry::flatten(path, 0.01, &mut |el| {
+            if let tracedraw_core::geometry::PathEl::LineTo(q) = el {
+                far = far.max(((q - centre).hypot() - 30.0).abs());
+            }
+        });
+        far
+    };
+    // Inside the circle alone.
+    click_page(&ctx, &mut app, Point::new(150.0, 110.0));
+    let area = last_path(&app);
+    let segs: Vec<_> = area.segments().collect();
+    assert_eq!(segs.len(), 4, "{area:?}");
+    let far = on_circle(&area, Point::new(150.0, 100.0));
+    assert!(far < 0.02, "{far}");
+    // The overlap of the rectangle (10..60, 10..40) and the circle.
+    click_page(&ctx, &mut app, Point::new(55.0, 35.0));
+    let overlap = last_path(&app);
+    let b = tracedraw_core::geometry::Shape::bounding_box(&overlap);
+    let x0 = 70.0 - (30.0f64.powi(2) - 10.0f64.powi(2)).sqrt();
+    assert!(
+        (b.x0 - x0).abs() < 0.01 && (b.x1 - 60.0).abs() < 1e-6,
+        "{b:?}"
+    );
+    assert!(
+        (b.y0 - (50.0 - (30.0f64.powi(2) - 10.0f64.powi(2)).sqrt())).abs() < 0.01
+            && (b.y1 - 40.0).abs() < 1e-6,
+        "{b:?}"
+    );
+    assert!(overlap.segments().count() <= 4, "{overlap:?}");
+}

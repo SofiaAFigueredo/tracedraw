@@ -17,19 +17,29 @@ jobs:
       - name: A printer that writes to a file
         shell: pwsh
         run: |
-          Get-PrinterDriver | Format-Table Name
-          Add-PrinterPort -Name "C:\pc\new.pdf"
-          Add-PrinterPort -Name "C:\pc\old.pdf"
+          Set-Service Spooler -StartupType Automatic -ErrorAction SilentlyContinue
+          Start-Service Spooler
           New-Item -ItemType Directory -Force C:\pc | Out-Null
-          Add-Printer -Name "Check New" -DriverName "Microsoft Print To PDF" -PortName "C:\pc\new.pdf"
-          Add-Printer -Name "Check Old" -DriverName "Microsoft Print To PDF" -PortName "C:\pc\old.pdf"
+          $drivers = (Get-PrinterDriver).Name
+          Write-Output "::notice title=drivers::$($drivers -join ', ')"
+          $driver = @("Microsoft Print To PDF", "Microsoft XPS Document Writer v4", "Microsoft Software Printer Driver") | Where-Object { $drivers -contains $_ } | Select-Object -First 1
+          if (-not $driver) {
+            try { Add-PrinterDriver -Name "Generic / Text Only"; $driver = "Generic / Text Only" } catch { Write-Output "::error title=driver::$($_.Exception.Message)" }
+          }
+          Write-Output "::notice title=driver::$driver"
+          foreach ($k in "new", "old") {
+            try {
+              Add-PrinterPort -Name "C:\pc\$k.out.prn"
+              Add-Printer -Name "Check $k" -DriverName $driver -PortName "C:\pc\$k.out.prn"
+            } catch { Write-Output "::error title=printer $k::$($_.Exception.Message)"; exit 1 }
+          }
           Get-Printer | Format-Table Name,DriverName,PortName
       - name: The scripts
         shell: pwsh
         run: |
-          $env:PRINT_SCRIPT_OUT = "C:\pc\new.ps1"; $env:PRINTER_NAME = "Check New"
+          $env:PRINT_SCRIPT_OUT = "C:\pc\new.ps1"; $env:PRINTER_NAME = "Check new"
           cargo test -p tracedraw --bins dump_windows_print_script -- --ignored
-          $env:PRINT_SCRIPT_OUT = "C:\pc\old.ps1"; $env:PRINTER_NAME = "Check Old"; $env:OLD_CONTROLLER = "1"
+          $env:PRINT_SCRIPT_OUT = "C:\pc\old.ps1"; $env:PRINTER_NAME = "Check old"; $env:OLD_CONTROLLER = "1"
           cargo test -p tracedraw --bins dump_windows_print_script -- --ignored
       - name: Print as TraceDraw does (hidden window, no profile)
         shell: pwsh
@@ -39,8 +49,8 @@ jobs:
             $done = $p.WaitForExit(120000)
             if (-not $done) { $p.Kill(); $code = "hung (killed after 120 s)" } else { $code = $p.ExitCode }
             Start-Sleep -Seconds 10
-            $size = if (Test-Path "C:\pc\$k.pdf") { (Get-Item "C:\pc\$k.pdf").Length } else { "no file" }
+            $size = if (Test-Path "C:\pc\$k.out.prn") { (Get-Item "C:\pc\$k.out.prn").Length } else { "no file" }
             $out = (Get-Content "C:\pc\$k.out" -Raw) -replace "`r?`n", " "
             $err = (Get-Content "C:\pc\$k.err" -Raw) -replace "`r?`n", " "
-            Write-Output "::notice title=$k::exit $code; pdf $size; out: $out; err: $err"
+            Write-Output "::notice title=$k::exit $code; printed bytes $size; out: $out; err: $err"
           }

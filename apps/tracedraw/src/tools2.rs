@@ -432,15 +432,7 @@ impl App {
                 };
                 corners.sort_by(|a, b| a.x.total_cmp(&b.x));
                 let nodes = round_nodes(&contours, &corners, width / 2.0, round_cap, round_join);
-                // The fans of round parts step by 0.05 rad: the tip of
-                // an end may lie up to half a step from a vertex.
-                let reach = width / 2.0 * ROUND_STEP;
-                out = tracedraw_core::fit::fit_path_with_nodes(
-                    &out,
-                    OUTLINE_FIT_TOLERANCE,
-                    &nodes,
-                    reach,
-                );
+                out = tracedraw_core::fit::fit_path_with_nodes(&out, OUTLINE_FIT_TOLERANCE, &nodes);
             }
             let id = self.engine.new_shape_id();
             let mut o = Shape::new(
@@ -488,7 +480,7 @@ fn round_nodes(
     half: f64,
     caps: bool,
     joins: bool,
-) -> Vec<(Point, Vec2)> {
+) -> Vec<tracedraw_core::fit::Node> {
     let normal = |t: Vec2| Vec2::new(-t.y, t.x);
     let dir = |a: Point, b: Point| {
         let v = b - a;
@@ -496,10 +488,14 @@ fn round_nodes(
         (len > 1e-12).then(|| v / len)
     };
     let mut out = Vec::new();
-    let side = |p: Point, t: Vec2, out: &mut Vec<(Point, Vec2)>| {
-        out.push((p + normal(t) * half, t));
-        out.push((p - normal(t) * half, t));
+    let side = |p: Point, t: Vec2, out: &mut Vec<tracedraw_core::fit::Node>| {
+        out.push((p + normal(t) * half, t, 0.0));
+        out.push((p - normal(t) * half, t, 0.0));
     };
+    // The fan of a round end steps by `ROUND_STEP`: its tip may lie up to
+    // half a step from a vertex, so the tip's node reaches a step. The
+    // points where ends and corners meet the sides are vertices.
+    let tip = half * ROUND_STEP;
     for (pts, closed) in contours {
         let pts: Vec<Point> = pts.iter().map(|p| Point::new(p[0], p[1])).collect();
         let n = pts.len();
@@ -509,11 +505,11 @@ fn round_nodes(
         if caps && !closed {
             if let Some(t) = dir(pts[0], pts[1]) {
                 side(pts[0], t, &mut out);
-                out.push((pts[0] - t * half, normal(t)));
+                out.push((pts[0] - t * half, normal(t), tip));
             }
             if let Some(t) = dir(pts[n - 2], pts[n - 1]) {
                 side(pts[n - 1], t, &mut out);
-                out.push((pts[n - 1] + t * half, normal(t)));
+                out.push((pts[n - 1] + t * half, normal(t), tip));
             }
         }
         if !joins || corners.is_empty() {
@@ -868,6 +864,44 @@ mod tests {
             Point::new(10.0, 8.0),
         ] {
             assert!(near(q), "no node at {q:?}: {nodes:?}");
+        }
+    }
+
+    /// A wide round end gets a node at its tip, however its fan's
+    /// vertices fall: the vertex nearest the tip, half a fan step away at
+    /// most (#623).
+    #[test]
+    fn wide_round_ends_have_a_node_at_each_tip() {
+        for width in [10.0, 17.0] {
+            let (a, b) = (Point::new(20.0, 30.0), Point::new(130.0, 71.0));
+            let mut line = BezPath::new();
+            line.move_to(a);
+            line.line_to(b);
+            let line = ShapeKind::Path {
+                path: line,
+                closed: false,
+            };
+            let (_, out) = outline_object(line, width, |st| {
+                st.cap = tracedraw_core::LineCap::Round;
+            });
+            let nodes: Vec<Point> = out
+                .elements()
+                .iter()
+                .filter_map(|e| e.end_point())
+                .collect();
+            let t = (b - a) / (b - a).hypot();
+            let half = width / 2.0;
+            // Half a step of the fan's 0.05 rad, as a chord.
+            let within = half * ROUND_STEP / 2.0 + 1e-3;
+            for tip in [a - t * half, b + t * half] {
+                let d = nodes
+                    .iter()
+                    .map(|p| (*p - tip).hypot())
+                    .fold(f64::MAX, f64::min);
+                assert!(d < within, "{width} mm: {d} from {tip:?}");
+            }
+            // Each end two curves, the sides straight.
+            assert_eq!(segments(&out), (2, 4), "{width} mm: {:?}", out.elements());
         }
     }
 

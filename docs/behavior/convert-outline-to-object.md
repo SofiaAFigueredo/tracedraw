@@ -27,7 +27,8 @@ loses its outline. One undo step, and the new objects are selected.
   and a round corner one or two curves between nodes where it meets
   them; straight sides stay single lines (#623). The fans of round
   parts step by 0.05 rad, so the node at an end's tip goes to the fan
-  vertex nearest to it, up to one step away.
+  vertex nearest to it, up to one step away; the nodes where ends and
+  corners meet the sides take only a vertex within the tolerance.
 
 ## Checks
 
@@ -48,7 +49,11 @@ loses its outline. One undo step, and the new objects are selected.
   (`tools2::tests::round_ends_of_a_curve_meet_its_sides_at_nodes`).
 - The fitting: a given node with no vertex within the tolerance goes to
   the nearest vertex within its reach
-  (`tracedraw_core::fit::tests::a_node_between_two_vertices_takes_the_nearest`).
+  (`tracedraw_core::fit::tests::a_node_between_two_vertices_takes_the_nearest`);
+  of two nodes within reach, the nearer one.
+- Given 10 mm and 17 mm lines with round ends, each tip has a node half
+  a fan step from it at most, each end two curves
+  (`tools2::tests::wide_round_ends_have_a_node_at_each_tip`).
 - The fitting: given nodes where a stadium's ends meet its sides, it
   becomes two lines and four curves with nodes at the tips
   (`tracedraw_core::fit::tests::given_nodes_split_a_stadium_where_its_ends_meet_its_sides`);

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Edit Fill, the colour picker and the Color docker: a click near the black corner of the colour square in CMYK keeps its ring where it was put. All those points give K 100, which looks lighter on screen, so the ring jumped back up as if the click had not taken (#761).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

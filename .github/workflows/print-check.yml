@@ -12,8 +12,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: A printer that writes to a file
         shell: pwsh
         run: |
@@ -27,7 +25,7 @@ jobs:
             try { Add-PrinterDriver -Name "Generic / Text Only"; $driver = "Generic / Text Only" } catch { Write-Output "::error title=driver::$($_.Exception.Message)" }
           }
           Write-Output "::notice title=driver::$driver"
-          foreach ($k in "new", "old") {
+          foreach ($k in "a", "b", "c") {
             try {
               Add-PrinterPort -Name "C:\pc\$k.out.prn"
               Add-Printer -Name "Check $k" -DriverName $driver -PortName "C:\pc\$k.out.prn"
@@ -36,15 +34,11 @@ jobs:
           Get-Printer | Format-Table Name,DriverName,PortName
       - name: The scripts
         shell: pwsh
-        run: |
-          $env:PRINT_SCRIPT_OUT = "C:\pc\new.ps1"; $env:PRINTER_NAME = "Check new"
-          cargo test -p tracedraw --bins dump_windows_print_script -- --ignored
-          $env:PRINT_SCRIPT_OUT = "C:\pc\old.ps1"; $env:PRINTER_NAME = "Check old"; $env:OLD_CONTROLLER = "1"
-          cargo test -p tracedraw --bins dump_windows_print_script -- --ignored
+        run: Copy-Item ci-print\* C:\pc\
       - name: Print as TraceDraw does (hidden window, no profile)
         shell: pwsh
         run: |
-          foreach ($k in "new", "old") {
+          foreach ($k in "a", "b", "c") {
             $p = Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"C:\pc\$k.ps1" -WindowStyle Hidden -PassThru -RedirectStandardOutput "C:\pc\$k.out" -RedirectStandardError "C:\pc\$k.err"
             $done = $p.WaitForExit(120000)
             if (-not $done) { $p.Kill(); $code = "hung (killed after 120 s)" } else { $code = $p.ExitCode }

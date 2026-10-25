@@ -256,6 +256,9 @@ pub struct PrintState {
     pub printers: Vec<crate::printers::Printer>,
     /// The printer list is still being read (#614).
     pub looking_for_printers: bool,
+    /// A destination was chosen in the dialog: the list read later keeps
+    /// it (#614).
+    pub printer_picked: bool,
     /// 0 as the pages are, 1 portrait, 2 landscape (fixed sheets).
     pub orientation: usize,
     /// 0 the whole drawing, 1 the current page, 2 the pages in `pages`,
@@ -490,6 +493,7 @@ impl Default for PrintState {
             printer: None,
             printers: Vec::new(),
             looking_for_printers: false,
+            printer_picked: false,
             orientation: 0,
             range: 0,
             pages: String::new(),
@@ -3346,7 +3350,14 @@ fn print_dialog(app: &mut App, ctx: &Context, st: &mut PrintState, close: &mut b
                 if ui.button(tr("dialog.cancel")).clicked() {
                     *close = true;
                 }
-                if ui.button(tr("dialog.print")).clicked() {
+                // While the first printer list is read, a print to a
+                // printer waits for it (#614).
+                let waiting =
+                    st.destination == 0 && st.looking_for_printers && st.printers.is_empty();
+                if ui
+                    .add_enabled(!waiting, egui::Button::new(tr("dialog.print")))
+                    .clicked()
+                {
                     match crate::export::print(app, st) {
                         Ok(msg) if !msg.is_empty() => app.status = msg,
                         Ok(_) => {}
@@ -3372,8 +3383,8 @@ fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) -> Option<Stri
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
                 ui.label(tr("print.printer"));
-                // The system's printers (the default first), then the
-                // PDF viewer and the file destinations.
+                // The system's printers (in name order), then the PDF
+                // viewer and the file destinations.
                 let dests = ["print.dest_viewer", "print.dest_pdf", "print.dest_ps"];
                 let on_printer = st.destination == 0 && st.printer.is_some();
                 let selected = match (&st.printer, st.destination) {
@@ -3394,12 +3405,14 @@ fn print_tab_general(app: &App, ui: &mut Ui, st: &mut PrintState) -> Option<Stri
                                 if ui.selectable_label(is, &p.name).clicked() {
                                     st.destination = 0;
                                     st.printer = Some(p.name.clone());
+                                    st.printer_picked = true;
                                 }
                             }
                             for (i, d) in dests.iter().enumerate() {
                                 let is = st.destination == i && (i != 0 || !on_printer);
                                 if ui.selectable_label(is, tr(d)).clicked() {
                                     st.destination = i;
+                                    st.printer_picked = true;
                                     if i == 0 {
                                         st.printer = None;
                                     }

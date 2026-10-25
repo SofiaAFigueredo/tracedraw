@@ -6256,7 +6256,8 @@ impl App {
 
     /// The printer list once it has been read: into the Print dialog's
     /// state, keeping the printer chosen when the system has it, else the
-    /// default. Returns whether the list is still being read.
+    /// default (a destination picked meanwhile stays). Returns whether the
+    /// list is still being read.
     pub fn poll_printers(&mut self, st: &mut crate::ui::dialogs::PrintState) -> bool {
         let Some(rx) = &self.printer_fetch else {
             st.looking_for_printers = false;
@@ -6265,7 +6266,15 @@ impl App {
         match rx.try_recv() {
             Ok(list) => {
                 let list = crate::printers::by_name(list);
-                st.printer = crate::printers::starting_printer(st.printer.as_deref(), &list);
+                // A destination the user chose meanwhile stays, unless it
+                // names a printer the system does not have.
+                let gone = st
+                    .printer
+                    .as_ref()
+                    .is_some_and(|p| !list.iter().any(|q| &q.name == p));
+                if !st.printer_picked || gone {
+                    st.printer = crate::printers::starting_printer(st.printer.as_deref(), &list);
+                }
                 self.printers_seen = list.clone();
                 st.printers = list;
             }

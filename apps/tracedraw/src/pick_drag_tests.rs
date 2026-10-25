@@ -6806,7 +6806,7 @@ fn the_print_dialog_reads_the_printers_off_the_interface_thread() {
                 comment: "Colour, A3".into(),
             },
             Printer {
-                name: "Adobe PDF".into(),
+                name: "Generic PDF".into(),
                 ..Default::default()
             },
         ]
@@ -6855,7 +6855,7 @@ fn the_print_dialog_reads_the_printers_off_the_interface_thread() {
     let names: Vec<&str> = st.printers.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(
         names,
-        ["3-102. KONICA MINOLTA C220", "Adobe PDF", "Oce TDS600"]
+        ["3-102. KONICA MINOLTA C220", "Generic PDF", "Oce TDS600"]
     );
     assert_eq!(st.printer.as_deref(), Some("3-102. KONICA MINOLTA C220"));
     shown.extend(texts(&ctx, &mut app));
@@ -6877,4 +6877,102 @@ fn the_print_dialog_reads_the_printers_off_the_interface_thread() {
         state(&app).printer.as_deref(),
         Some("3-102. KONICA MINOLTA C220")
     );
+}
+
+/// A destination chosen in the Print dialog while the printer list is
+/// still being read stays when the list comes (#614): the PDF viewer
+/// picked before the list stays the PDF viewer, and a printer picked from
+/// the list read last stays chosen though the system's default differs.
+#[test]
+fn a_destination_picked_while_the_printers_are_read_stays() {
+    use crate::printers::Printer;
+    use crate::ui::dialogs::Dialog;
+    fn slow_list() -> Vec<Printer> {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        ["Office", "Plotter", "Studio"]
+            .iter()
+            .map(|n| Printer {
+                name: n.to_string(),
+                default: *n == "Studio",
+                ..Default::default()
+            })
+            .collect()
+    }
+    /// The centre of the last text `label` drawn in one frame.
+    fn last_text(ctx: &egui::Context, app: &mut App, label: &str) -> Option<Pos2> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                Pos2::ZERO,
+                egui::vec2(1600.0, 1000.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| crate::ui::root(app, ui));
+        out.textures_delta.clear();
+        fn walk(s: &egui::Shape, label: &str, at: &mut Option<Pos2>) {
+            match s {
+                egui::Shape::Text(t) if t.galley.text() == label => {
+                    *at = Some(t.galley.rect.translate(t.pos.to_vec2()).center())
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, label, at)),
+                _ => {}
+            }
+        }
+        let mut at = None;
+        out.shapes
+            .iter()
+            .for_each(|c| walk(&c.shape, label, &mut at));
+        at
+    }
+    let state = |app: &App| match &app.dialog {
+        Dialog::Print(st) => st.clone(),
+        other => panic!("no Print dialog: {other:?}"),
+    };
+    let wait = |ctx: &egui::Context, app: &mut App| {
+        for _ in 0..400 {
+            frame(ctx, app, Vec::new(), Modifiers::NONE);
+            if !state(app).looking_for_printers {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the list never came");
+    };
+    // The first time: nothing listed yet, the viewer picked.
+    let (ctx, mut app, _) = setup();
+    app.printers_seen.clear();
+    app.print();
+    app.fetch_printers(slow_list);
+    // The dialog takes its place over the first frames.
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    let viewer = crate::i18n::tr("print.dest_viewer");
+    let combo = last_text(&ctx, &mut app, &viewer).expect("the destination list");
+    click_at(&ctx, &mut app, combo, Modifiers::NONE);
+    let item = last_text(&ctx, &mut app, &viewer).expect("the viewer in the list");
+    assert!(
+        state(&app).looking_for_printers,
+        "picked before the list came"
+    );
+    click_at(&ctx, &mut app, item, Modifiers::NONE);
+    wait(&ctx, &mut app);
+    let st = state(&app);
+    assert_eq!((st.printer.as_deref(), st.destination), (None, 0));
+    assert_eq!(st.printers.len(), 3);
+    // Again, a printer of the list read last picked before the new one
+    // comes: it stays, not the system's default.
+    app.dialog = Dialog::None;
+    app.print();
+    app.fetch_printers(slow_list);
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    assert_eq!(state(&app).printer.as_deref(), Some("Studio"));
+    let combo = last_text(&ctx, &mut app, "Studio").expect("the destination list");
+    click_at(&ctx, &mut app, combo, Modifiers::NONE);
+    let item = last_text(&ctx, &mut app, "Office").expect("Office in the list");
+    click_at(&ctx, &mut app, item, Modifiers::NONE);
+    wait(&ctx, &mut app);
+    assert_eq!(state(&app).printer.as_deref(), Some("Office"));
 }

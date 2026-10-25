@@ -243,7 +243,9 @@ pub fn starting_printer(remembered: Option<&str>, printers: &[Printer]) -> Optio
 
 /// The program and arguments that open `printer`'s own settings (the
 /// Print dialog's Properties button): on Windows the printer's printing
-/// preferences, elsewhere the printer's page of the CUPS web interface.
+/// preferences, on macOS the system's Printers & Scanners settings, on
+/// Linux and other CUPS systems the printer's page of the CUPS web
+/// interface in the browser.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn properties_command(printer: &str) -> (String, Vec<String>) {
     if cfg!(target_os = "windows") {
@@ -256,6 +258,11 @@ pub fn properties_command(printer: &str) -> (String, Vec<String>) {
                 printer.into(),
             ],
         )
+    } else if cfg!(target_os = "macos") {
+        (
+            "open".into(),
+            vec!["x-apple.systempreferences:com.apple.Print-Scan-Settings.extension".into()],
+        )
     } else {
         let mut url = String::from("http://localhost:631/printers/");
         for b in printer.bytes() {
@@ -265,12 +272,7 @@ pub fn properties_command(printer: &str) -> (String, Vec<String>) {
                 url.push_str(&format!("%{b:02X}"));
             }
         }
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        (opener.into(), vec![url])
+        ("xdg-open".into(), vec![url])
     }
 }
 
@@ -621,7 +623,8 @@ mod tests {
     }
 
     /// Properties opens the printer's own settings: its printing
-    /// preferences on Windows, its CUPS page elsewhere (#614).
+    /// preferences on Windows, Printers & Scanners on macOS, its CUPS web
+    /// page elsewhere (#614).
     #[test]
     fn properties_open_the_printers_own_settings() {
         let (program, args) = properties_command("Office HP/2");
@@ -631,8 +634,14 @@ mod tests {
                 args,
                 ["printui.dll,PrintUIEntry", "/e", "/n", "Office HP/2"]
             );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(program, "open");
+            assert_eq!(
+                args,
+                ["x-apple.systempreferences:com.apple.Print-Scan-Settings.extension"]
+            );
         } else {
-            assert!(program == "xdg-open" || program == "open", "{program}");
+            assert_eq!(program, "xdg-open");
             assert_eq!(args, ["http://localhost:631/printers/Office%20HP%2F2"]);
         }
     }

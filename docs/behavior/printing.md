@@ -14,7 +14,10 @@ case; the default stays where its name puts it), then "System printer
 is read off the interface's thread when the dialog opens, so a print
 server that is slow to answer never holds the window: until it comes,
 the list read last shows (or "Looking for printers..." the first
-time), and the dialog takes the new list as soon as it is read (#614).
+time, when Print waits for the list if a printer is the destination),
+and the dialog takes the new list as soon as it is read, keeping a
+destination picked meanwhile unless it names a printer the system does
+not have (#614).
 The printers come from CUPS (Linux and macOS): `lpstat -l -p -d` lists
 them with their state, description and location (`printers.rs`,
 `parse_lpstat`), and a print on one of them hands the PDF to `lp -d`
@@ -44,8 +47,10 @@ viewer.
 Next to the list a Properties button (a gear, available when a system
 printer is chosen) opens the printer's own settings: on Windows its
 printing preferences (`rundll32 printui.dll,PrintUIEntry /e /n name`),
-elsewhere its page of the CUPS web interface
-(`http://localhost:631/printers/name`; `properties_command`). Under
+on macOS the system's Printers & Scanners settings, on Linux and other
+CUPS systems the printer's page of the CUPS web interface in the browser
+(`http://localhost:631/printers/name`, a web page, not a system dialog;
+`properties_command`). Under
 Orientation, Status, Location and Comment show what the system says of
 the printer chosen (empty for the PDF viewer and the files, #614).
 
@@ -201,7 +206,7 @@ With any mark on, a 12 mm margin (plus the bleed) surrounds the pages.
 
 - `printers::tests::the_printer_list_is_read_from_lpstat`, `printers::tests::the_dialog_starts_on_the_remembered_printer_else_the_default`, `printers::tests::lp_is_told_the_printer_copies_and_title`
 - `printers::tests::the_windows_printer_list_holds_network_printers`, `printers::tests::the_windows_print_script_names_the_printer_copies_and_sheets`
-- `printers::tests::properties_open_the_printers_own_settings`, `pick_drag_tests::the_print_dialog_reads_the_printers_off_the_interface_thread`
+- `printers::tests::properties_open_the_printers_own_settings`, `pick_drag_tests::the_print_dialog_reads_the_printers_off_the_interface_thread`, `pick_drag_tests::a_destination_picked_while_the_printers_are_read_stays`
 - `export::tests::page_lists_and_ranges_pick_pages`
 - `export::tests::print_colour_options_change_the_sheets_objects`
 - `export::tests::copies_repeat_sheets_collated_or_not_and_ps_gets_its_level`

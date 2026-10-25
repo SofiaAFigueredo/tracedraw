@@ -53,11 +53,12 @@ pub struct Engine {
     /// Groups begun and not yet ended (see [`Engine::begin_group`]): the
     /// history is trimmed only once they end.
     groups: usize,
-    /// The revision right after an Undo and the size of the step it took
-    /// back: a step recorded straight after it holds the same drawing, so
-    /// it takes that size instead of measuring (a live drag runs an Undo
-    /// and a step per pointer move).
-    undone_bytes: Option<(u64, usize)>,
+    /// The size of the step the last Undo took back, until a step is
+    /// recorded or redone: the next step recorded holds about the same
+    /// drawing, so it takes that size instead of measuring (a live drag
+    /// runs an Undo and a step per pointer move, with side effects such as
+    /// a cleared link in between).
+    undone_bytes: Option<usize>,
     /// Buffers for measuring a step, kept between steps.
     measure: Measure,
 }
@@ -165,6 +166,7 @@ impl Engine {
         self.redo.clear();
         // A preview of the drawing that went has nothing to go back to.
         self.preview = None;
+        self.undone_bytes = None;
         self.revision += 1;
         self.saved_revision = self.revision;
         self.step_revision = u64::MAX;
@@ -348,13 +350,14 @@ impl Engine {
         let mut e = self.undo.pop().ok_or(Error::NothingToUndo)?;
         let other = std::mem::take(&mut e.other);
         e.other = self.swap_in(other);
-        self.undone_bytes = Some((self.revision, e.bytes));
+        self.undone_bytes = Some(e.bytes);
         let label = e.label;
         self.redo.push(e);
         Ok(label)
     }
 
     pub fn redo(&mut self) -> Result<&'static str> {
+        self.undone_bytes = None;
         let held = self.preview.as_mut().filter(|m| !m.redo_cleared);
         let mut e = match self.redo.pop() {
             Some(e) => e,
@@ -539,10 +542,8 @@ impl Engine {
         if self.max_history_bytes == usize::MAX || self.preview.is_some() {
             return 0;
         }
-        if let Some((revision, bytes)) = undone {
-            if revision == self.revision {
-                return bytes;
-            }
+        if let Some(bytes) = undone {
+            return bytes;
         }
         snapshot_bytes(snapshot, &self.doc, &mut self.measure)
     }

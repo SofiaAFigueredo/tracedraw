@@ -2736,6 +2736,12 @@ impl Shape {
             }
             // A B-spline keeps its outline; the control points go.
             ShapeKind::Path { .. } => Some(self.kind.clone()),
+            // Text fills with the nonzero rule, curves with even-odd: the
+            // overlapping strokes of a glyph would leave holes (#800).
+            ShapeKind::Text { .. } => Some(ShapeKind::Path {
+                path: crate::shaping::nonzero_as_even_odd(&self.local_path()),
+                closed: true,
+            }),
             _ => Some(ShapeKind::Path {
                 path: self.local_path(),
                 closed: true,

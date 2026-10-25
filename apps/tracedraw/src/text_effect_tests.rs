@@ -472,3 +472,34 @@ fn breaking_several_warped_texts_keeps_the_stacking_order() {
         }
     }
 }
+
+/// How long Convert to Curves takes on long texts, and the drawing's
+/// look kept (#800): `cargo test --release -p tracedraw -- --ignored
+/// frame_times_converting_long_text --nocapture`. Uses a Chinese font
+/// when one is installed.
+#[test]
+#[ignore]
+fn frame_times_converting_long_text() {
+    for (font, line) in [
+        ("WenQuanYi Zen Hei", "镂空问题汉字转曲线测试中文字体"),
+        (
+            "DejaVu Sans",
+            "The quick brown fox jumps over the lazy dog. ",
+        ),
+    ] {
+        let mut app = App::headless();
+        app.text_font = font.into();
+        let body: String = (0..40).map(|_| format!("{}\n", line.repeat(4))).collect();
+        let id = text(&mut app, Point::new(20.0, 100.0), &body);
+        app.select(vec![id]);
+        let t = std::time::Instant::now();
+        app.convert_to_curves();
+        let s = app.doc().shape_on_page(id).expect("shape");
+        let n = s.local_path().elements().len();
+        eprintln!(
+            "{font}: {} characters to curves in {:?}, {n} path elements",
+            body.chars().count(),
+            t.elapsed()
+        );
+    }
+}

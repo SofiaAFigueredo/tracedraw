@@ -44,3 +44,6 @@
 255 https://github.com/user-attachments/assets/a9d18025-65fd-46be-aae3-a9ce13688e7a
 616 https://github.com/user-attachments/files/33925966/tracedraw.log
 802 https://github.com/user-attachments/files/33927054/Issues.tdraw.zip
+803 https://github.com/user-attachments/assets/f4687b7d-5942-43c4-be1d-8939d55733c5
+761 https://github.com/user-attachments/assets/f49bddd0-113b-47cb-9b0f-497ccefdc01e
+776 https://github.com/user-attachments/assets/1b49e267-1799-4c2b-9caa-acd310d7b00d

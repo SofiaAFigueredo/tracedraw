@@ -623,36 +623,16 @@ pub fn delete_node(path: &BezPath, index: usize) -> BezPath {
 /// Delete the nodes `indices` together. Two or more neighbouring nodes
 /// going at once become one curve between the nodes either side, fitted
 /// to the old segments, so the outline keeps its general shape even when
-/// every segment was a line (#675). A
-/// lone node goes as [`delete_node`] takes it.
+/// every segment was a line (#675). A lone node goes as [`delete_node`]
+/// takes it. One pass over the path, however many nodes go.
 pub fn delete_nodes(path: &BezPath, indices: &[usize]) -> BezPath {
     let els: Vec<PathEl> = normalize(path).elements().to_vec();
-    let gone = |i: usize| indices.contains(&i);
-    let rings: Vec<(Ring, bool)> = split_segments(path)
-        .iter()
-        .map(|sub| (ring(sub, &els), sub.closed))
-        .collect();
-    // With no two neighbouring nodes going between kept ones, one node at
-    // a time gives the same.
-    let runs = rings.iter().any(|((nodes, _), closed)| {
-        let n = nodes.len();
-        let kept = |k: usize| !gone(nodes[k].0);
-        if *closed {
-            (0..n).any(kept) && (0..n).any(|k| !kept(k) && !kept((k + 1) % n))
-        } else {
-            (1..n.saturating_sub(2))
-                .any(|k| !kept(k) && !kept(k + 1) && (0..k).any(kept) && (k + 2..n).any(kept))
-        }
-    });
-    if !runs {
-        let mut sorted = indices.to_vec();
-        sorted.sort_unstable_by(|a, b| b.cmp(a));
-        sorted.dedup();
-        return sorted.iter().fold(path.clone(), |p, &i| delete_node(&p, i));
-    }
+    let gone: std::collections::HashSet<usize> = indices.iter().copied().collect();
     let mut out = BezPath::new();
-    for ((nodes, implicit_close), closed) in &rings {
-        rebuild_without(nodes, *closed, *implicit_close, &gone, &mut out);
+    for sub in split_segments(path) {
+        let (nodes, implicit_close) = ring(&sub, &els);
+        let deleted: Vec<bool> = nodes.iter().map(|n| gone.contains(&n.0)).collect();
+        rebuild_without(&nodes, sub.closed, implicit_close, &deleted, &mut out);
     }
     out
 }
@@ -676,21 +656,26 @@ fn ring(sub: &Segs, els: &[PathEl]) -> Ring {
     (nodes, implicit_close)
 }
 
-/// Append the subpath `nodes` without those `gone` takes to `out` (see
-/// [`delete_nodes`]).
+/// Append the subpath `nodes` without those `deleted` marks to `out` (see
+/// [`delete_nodes`]). A closed subpath left with one node is that node
+/// alone, an open one with fewer than two goes.
 fn rebuild_without(
     nodes: &[(usize, Point, Option<PathEl>)],
     closed: bool,
     implicit_close: bool,
-    gone: &dyn Fn(usize) -> bool,
+    deleted: &[bool],
     out: &mut BezPath,
 ) {
     let n = nodes.len();
-    let kept: Vec<usize> = (0..n).filter(|&k| !gone(nodes[k].0)).collect();
+    let kept: Vec<usize> = (0..n).filter(|&k| !deleted[k]).collect();
     let Some(&first) = kept.first() else {
         return;
     };
-    if !closed && kept.len() < 2 {
+    if kept.len() < 2 {
+        if closed {
+            out.move_to(nodes[first].1);
+            out.close_path();
+        }
         return;
     }
     out.move_to(nodes[first].1);
@@ -698,6 +683,14 @@ fn rebuild_without(
     if closed {
         ends.push(first);
     }
+    // The segment leaving node `k` (none past an open subpath's end).
+    let leaving = |k: usize| -> Option<PathEl> {
+        if closed {
+            nodes[(k + 1) % n].2
+        } else {
+            nodes.get(k + 1).and_then(|x| x.2)
+        }
+    };
     let mut a = first;
     for (i, &c) in ends.iter().enumerate() {
         // The segments from kept node `a` to the next kept one.
@@ -717,11 +710,21 @@ fn rebuild_without(
         let el = match segs.as_slice() {
             [one] => *one,
             [seg_a, seg_b] => joined_segment(start, *seg_a, *seg_b).unwrap_or(PathEl::LineTo(end)),
-            _ => fitted_run(start, &segs).unwrap_or(PathEl::LineTo(end)),
+            _ => {
+                // The kept nodes' sides outside the run: a curve there (or
+                // in the run's end segment) holds the tangent, so a smooth
+                // node stays smooth; between lines the handle is free.
+                let hold_start = !is_line(segs.first()) || !is_line(nodes[a].2.as_ref());
+                let hold_end = !is_line(segs.last()) || !is_line(leaving(c).as_ref());
+                fitted_run(start, &segs, hold_start, hold_end).unwrap_or(PathEl::LineTo(end))
+            }
         };
-        // An untouched closing line stays the ClosePath's own.
-        let own_close = closed && i + 1 == ends.len() && implicit_close && first == 0;
-        if !(own_close && segs.len() == 1) {
+        let closing = closed && i + 1 == ends.len();
+        let untouched = first == 0 && segs.len() == 1;
+        // A closing line is the ClosePath's own, unless it was drawn
+        // as an element and is left as it was.
+        let skip = closing && matches!(el, PathEl::LineTo(_)) && (implicit_close || !untouched);
+        if !skip {
             out.push(el);
         }
         a = c;
@@ -731,20 +734,46 @@ fn rebuild_without(
     }
 }
 
+/// Whether `el` is a straight segment, or no segment (an open end).
+fn is_line(el: Option<&PathEl>) -> bool {
+    matches!(el, None | Some(PathEl::LineTo(_)))
+}
+
 /// One cubic from `a` through the segments `segs` (lines or cubics, each
-/// from the end of the one before), its two handles fitted freely to their
-/// shape: the deleted nodes' corner or bump is kept as a curve, even
-/// between two ends whose segments ran the same way.
-fn fitted_run(a: Point, segs: &[PathEl]) -> Option<PathEl> {
+/// from the end of the one before), fitted to their shape by least
+/// squares. An end `hold_start` / `hold_end` keeps the old tangent there
+/// (only the handle's length is fitted); a free end's handle is fitted in
+/// both directions, so the deleted nodes' corner or bump is kept as a
+/// curve even between two ends whose lines ran the same way.
+fn fitted_run(a: Point, segs: &[PathEl], hold_start: bool, hold_end: bool) -> Option<PathEl> {
     use kurbo::ParamCurveNearest;
-    let mut pts = Vec::new();
+    let mut cubics = Vec::with_capacity(segs.len());
     let mut from = a;
-    for (k, el) in segs.iter().enumerate() {
+    for el in segs {
         let c = element_cubic(from, *el)?;
         from = c.p3;
-        sample_cubic(c, 8, k > 0, &mut pts);
+        cubics.push(c);
     }
     let end = from;
+    let (first, last) = (cubics.first()?, cubics.last()?);
+    let t1 = unit(first.p1 - first.p0)
+        .or_else(|| unit(first.p2 - first.p0))
+        .or_else(|| unit(first.p3 - first.p0))
+        .or_else(|| unit(end - a))
+        .unwrap_or(Vec2::new(1.0, 0.0));
+    let t2 = unit(last.p2 - last.p3)
+        .or_else(|| unit(last.p1 - last.p3))
+        .or_else(|| unit(last.p0 - last.p3))
+        .or_else(|| unit(a - end))
+        .unwrap_or(Vec2::new(-1.0, 0.0));
+    let mut pts = Vec::new();
+    for (k, c) in cubics.iter().enumerate() {
+        sample_cubic(*c, 8, k > 0, &mut pts);
+    }
+    if hold_start && hold_end {
+        let (h1, h2) = fit_cubic(a, end, t1, t2, &pts);
+        return Some(PathEl::CurveTo(h1, h2, end));
+    }
     // Chord-length parameters, then a couple of passes moving each onto
     // the nearest point of the fit.
     let mut u = Vec::with_capacity(pts.len());
@@ -761,30 +790,58 @@ fn fitted_run(a: Point, segs: &[PathEl]) -> Option<PathEl> {
     for x in u.iter_mut() {
         *x /= acc;
     }
+    // The unknowns: a length along the tangent for a held end, both
+    // coordinates for a free one.
     let mut handles = (a.lerp(end, 1.0 / 3.0), a.lerp(end, 2.0 / 3.0));
     for pass in 0..3 {
-        let (mut c11, mut c12, mut c22) = (0.0, 0.0, 0.0);
-        let (mut r1, mut r2) = (Vec2::ZERO, Vec2::ZERO);
+        let mut ata = [[0.0f64; 4]; 4];
+        let mut atb = [0.0f64; 4];
+        let mut size = 0;
         for (pt, &t) in pts.iter().zip(u.iter()) {
             let s = 1.0 - t;
             let (b0, b1, b2, b3) = (s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t);
-            let r = pt.to_vec2() - a.to_vec2() * b0 - end.to_vec2() * b3;
-            c11 += b1 * b1;
-            c12 += b1 * b2;
-            c22 += b2 * b2;
-            r1 += r * b1;
-            r2 += r * b2;
+            let mut r = pt.to_vec2() - a.to_vec2() * b0 - end.to_vec2() * b3;
+            // Each unknown's column: its 2D effect on this sample.
+            let mut cols: Vec<Vec2> = Vec::with_capacity(4);
+            if hold_start {
+                r -= a.to_vec2() * b1;
+                cols.push(t1 * b1);
+            } else {
+                cols.push(Vec2::new(b1, 0.0));
+                cols.push(Vec2::new(0.0, b1));
+            }
+            if hold_end {
+                r -= end.to_vec2() * b2;
+                cols.push(t2 * b2);
+            } else {
+                cols.push(Vec2::new(b2, 0.0));
+                cols.push(Vec2::new(0.0, b2));
+            }
+            size = cols.len();
+            for i in 0..size {
+                for j in 0..size {
+                    ata[i][j] += cols[i].dot(cols[j]);
+                }
+                atb[i] += cols[i].dot(r);
+            }
         }
-        let det = c11 * c22 - c12 * c12;
-        if det.abs() < 1e-12 {
+        let Some(x) = solve_small(&ata, &atb, size) else {
             break;
-        }
-        let h1 = (r1 * c22 - r2 * c12) / det;
-        let h2 = (r2 * c11 - r1 * c12) / det;
+        };
+        let (h1, rest) = if hold_start {
+            (a + t1 * x[0].max(1e-6), 1)
+        } else {
+            (Point::new(x[0], x[1]), 2)
+        };
+        let h2 = if hold_end {
+            end + t2 * x[rest].max(1e-6)
+        } else {
+            Point::new(x[rest], x[rest + 1])
+        };
         if !(h1.x.is_finite() && h1.y.is_finite() && h2.x.is_finite() && h2.y.is_finite()) {
             break;
         }
-        handles = (h1.to_point(), h2.to_point());
+        handles = (h1, h2);
         if pass == 2 {
             break;
         }
@@ -794,6 +851,36 @@ fn fitted_run(a: Point, segs: &[PathEl]) -> Option<PathEl> {
         }
     }
     Some(PathEl::CurveTo(handles.0, handles.1, end))
+}
+
+/// Solve the `n` by `n` system `m x = v` (n at most 4) by Gaussian
+/// elimination with partial pivoting; `None` when it is singular.
+fn solve_small(m: &[[f64; 4]; 4], v: &[f64; 4], n: usize) -> Option<[f64; 4]> {
+    let mut a = *m;
+    let mut b = *v;
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
+        if a[pivot][col].abs() < 1e-12 {
+            return None;
+        }
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        let (top, below) = a.split_at_mut(col + 1);
+        let row = &top[col];
+        for (r, other) in below.iter_mut().take(n - col - 1).enumerate() {
+            let f = other[col] / row[col];
+            for (x, y) in other.iter_mut().zip(row.iter()).take(n).skip(col) {
+                *x -= f * y;
+            }
+            b[col + 1 + r] -= f * b[col];
+        }
+    }
+    let mut x = [0.0f64; 4];
+    for r in (0..n).rev() {
+        let acc: f64 = (r + 1..n).fold(b[r], |acc, k| acc - a[r][k] * x[k]);
+        x[r] = acc / a[r][r];
+    }
+    Some(x)
 }
 
 /// Split the segment ending at `index` at parameter `t`, inserting a node.
@@ -1872,6 +1959,111 @@ mod tests {
             .elements()
             .iter()
             .any(|e| matches!(e, PathEl::CurveTo(..))));
+    }
+
+    /// On a circle, deleting two neighbouring nodes keeps the two left
+    /// smooth: the new curve leaves and arrives along the untouched arcs.
+    #[test]
+    fn a_run_between_curves_keeps_the_kept_nodes_smooth() {
+        let p = crate::geometry::ellipse_path(crate::geometry::Rect::new(-10.0, -10.0, 10.0, 10.0));
+        let ns = nodes(&p);
+        assert_eq!(ns.len(), 4);
+        let q = delete_nodes(&p, &[ns[1].index, ns[2].index]);
+        let left = nodes(&q);
+        assert_eq!(left.len(), 2, "{q:?}");
+        for n in &left {
+            let (Some(i), Some(o)) = (n.ctrl_in, n.ctrl_out) else {
+                panic!("handles on both sides: {n:?}");
+            };
+            let (din, dout) = (n.pos - i, o - n.pos);
+            let cross = din.cross(dout) / (din.hypot() * dout.hypot());
+            assert!(
+                cross.abs() < 1e-6 && din.dot(dout) > 0.0,
+                "a corner at {n:?}"
+            );
+        }
+    }
+
+    /// A run between a curve and lines holds the tangent on the curve's
+    /// side only: the node there stays smooth, the far end is free.
+    #[test]
+    fn a_run_holds_the_tangent_where_a_curve_meets_it() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.curve_to((3.0, 6.0), (7.0, 6.0), (10.0, 4.0));
+        p.line_to((20.0, 10.0));
+        p.line_to((30.0, 0.0));
+        p.line_to((40.0, 0.0));
+        p.line_to((50.0, 0.0));
+        let q = delete_nodes(&p, &[2, 3]);
+        let ns = nodes(&q);
+        assert_eq!(ns.len(), 4, "{q:?}");
+        let n = ns[1];
+        let Some(o) = n.ctrl_out else {
+            panic!("a handle out: {n:?}");
+        };
+        // Leaving along the line it left on before, (10, 4) to (20, 10).
+        let dout = o - n.pos;
+        assert!(
+            dout.cross(Vec2::new(10.0, 6.0)).abs() < 1e-6 * dout.hypot(),
+            "{n:?}"
+        );
+    }
+
+    /// One node at a time, and a closed curve left with one node, go as
+    /// deleting them one by one does.
+    #[test]
+    fn lone_nodes_go_as_delete_node_takes_them() {
+        let circle =
+            crate::geometry::ellipse_path(crate::geometry::Rect::new(-10.0, -10.0, 10.0, 10.0));
+        let mut open = BezPath::new();
+        open.move_to((0.0, 0.0));
+        open.curve_to((5.0, 5.0), (10.0, 5.0), (15.0, 0.0));
+        open.line_to((20.0, 0.0));
+        open.line_to((30.0, 5.0));
+        for (p, gone) in [
+            (square(), vec![0]),
+            (square(), vec![1]),
+            (square(), vec![0, 2]),
+            (circle.clone(), vec![0]),
+            (circle.clone(), vec![nodes(&circle)[2].index]),
+            (open.clone(), vec![0]),
+            (open.clone(), vec![1, 3]),
+            (square(), vec![1, 2, 3]),
+        ] {
+            let one_by_one = {
+                let mut sorted = gone.clone();
+                sorted.sort_unstable_by(|a, b| b.cmp(a));
+                sorted.iter().fold(p.clone(), |q, &i| delete_node(&q, i))
+            };
+            assert_eq!(
+                delete_nodes(&p, &gone),
+                one_by_one,
+                "{p:?} without {gone:?}"
+            );
+        }
+    }
+
+    /// Every node of a long curve chosen and deleted, or every other one,
+    /// is one pass: no time per node per node.
+    #[test]
+    fn deleting_many_nodes_of_a_long_curve_is_one_pass() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        for i in 1..3000 {
+            p.line_to((i as f64, (i % 7) as f64));
+        }
+        let all: Vec<usize> = (0..3000).collect();
+        let started = std::time::Instant::now();
+        assert!(delete_nodes(&p, &all).elements().is_empty());
+        let every_other: Vec<usize> = (1..2999).step_by(2).collect();
+        let q = delete_nodes(&p, &every_other);
+        assert_eq!(nodes(&q).len(), 3000 - every_other.len());
+        assert!(
+            started.elapsed().as_secs_f64() < 2.0,
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     /// A run through a closed curve's start goes the same way: the curve

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Layout > Insert Page Number on a master layer: one page number field goes on the master layer and shows the number of each page it is drawn on, on screen, in print and in exports, so one number manages them all. Before, nothing went on the master page; the numbers went on the pages instead (#807).
+
 ## 0.19.0 (2026-10-25)
 
 - Opening `.cdr`: blends from versions 9 and X3 (and others storing them the same way) show their steps as a live blend between the two end objects; only the two ends were drawn before (#597).

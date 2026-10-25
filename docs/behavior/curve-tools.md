@@ -56,13 +56,19 @@ meets the start) `Path` objects with the toolbox defaults.
   Undoing or redoing a step of a curve drawn with the Pen or Bezier
   tool (one of those anchor steps, the close, or a line that continued
   a curve) goes back to drawing it (#631): that tool is chosen again,
-  the curve selected, and a line goes on from the last node left,
-  wherever the pointer is, leaving along the mirror of the handle the
-  curve arrives there with, so the dashed preview curves as before. A
-  click goes on drawing and joins the same curve, so the curve can be
-  undone anchor by anchor and drawn on at once. A redone close ends
-  the line, the curve closed and selected
-  (`pick_drag_tests::undoing_pen_steps_goes_back_to_drawing_the_curve`).
+  the curve selected, and a line goes on from the node drawing stood
+  at before that step (the last anchor left, the node a continued line
+  started from, or the first node once the first step is undone),
+  wherever the pointer is, with the handle that node had then, so the
+  dashed preview curves as before. A click goes on drawing and joins
+  the same curve, so the curve can be undone anchor by anchor and drawn
+  on at once; a click on the curve's other end closes it again. A
+  redone close ends the line, the curve closed and selected. Redo leaves
+  a curve being drawn alone, and while nodes are drawn on from a curve
+  taken up this way there is nothing to redo
+  (`pick_drag_tests::undoing_pen_steps_goes_back_to_drawing_the_curve`,
+  `pick_drag_tests::redo_keeps_the_curve_being_drawn`,
+  `pick_drag_tests::undo_goes_back_to_the_end_drawing_went_on_from`).
   A press on the first node (within the join distance, 5 screen pixels
   by default, once the curve has two nodes with the Bezier and Pen
   tools, three with the others: two curved nodes close into a leaf or a
@@ -273,6 +279,9 @@ Medium (first), High, Highest; kept in the preferences
 - `pick_drag_tests::the_pen_continues_an_unselected_curve_with_the_mirrored_handle`
   (#630)
 - `pick_drag_tests::undoing_pen_steps_goes_back_to_drawing_the_curve`
+  (#631)
+- `pick_drag_tests::redo_keeps_the_curve_being_drawn` (#631)
+- `pick_drag_tests::undo_goes_back_to_the_end_drawing_went_on_from`
   (#631)
 - `curve_join::tests` (from either end, closing, two subpaths made one,
   reversing curves, in the curve's own space with one undo step)

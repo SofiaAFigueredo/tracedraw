@@ -253,25 +253,55 @@ impl App {
 
     /// Take the curve `id` up again with the Pen or Bezier `tool` as if
     /// it were still being drawn (#631): the tool is chosen, the curve
-    /// selected, and a line goes on from the end of its last open subpath
-    /// (where its last node went), leaving along the mirror of the handle
-    /// the curve arrives there with. A closed curve is only selected.
-    pub(crate) fn resume_curve(&mut self, id: ShapeId, tool: crate::tools::Tool) {
-        let Some(path) = self.doc().shape_on_page(id).map(|s| s.page_path()) else {
-            return;
-        };
-        let subs = subpaths(&path);
+    /// selected (when it is still there), and a line goes on from `to`,
+    /// the node it stood at with the handle it had; without one (the step
+    /// closed the curve) the curve is only selected.
+    pub(crate) fn resume_curve(
+        &mut self,
+        id: ShapeId,
+        tool: crate::tools::Tool,
+        to: Option<crate::app::PenEnd>,
+    ) {
         if self.tool != tool {
             self.set_tool(tool);
         }
-        self.select(vec![id]);
-        if let Some(sub) = subs.iter().rev().find(|s| !s.closed) {
+        if self.doc().shape_on_page(id).is_some() {
+            self.select(vec![id]);
+        } else {
+            self.select(Vec::new());
+        }
+        if let Some(node) = to {
             self.curve = Some(crate::app::CurveInProgress {
-                nodes: vec![(sub.end(), mirrored_handle(sub, true))],
+                nodes: vec![node],
                 smooth: true,
+                resumed: true,
                 ..Default::default()
             });
         }
+    }
+
+    /// The curve being drawn goes on from an end of the selected curve:
+    /// the other end of that open subpath when `p` (page) is within
+    /// `reach` of it, where a click closes the curve.
+    pub(crate) fn continuation_close_at(&self, p: Point, reach: f64) -> Option<Point> {
+        let c = self.curve.as_ref()?;
+        if !c.smooth || c.bspline {
+            return None;
+        }
+        let from = c.nodes.first()?.0;
+        let curve = self.join_candidate()?;
+        let subs = subpaths(&curve.page_path());
+        subs.iter().filter(|s| !s.closed).find_map(|s| {
+            let (a, b) = (s.start, s.end());
+            let other = if (a - from).hypot() < 1e-6 {
+                b
+            } else if (b - from).hypot() < 1e-6 {
+                a
+            } else {
+                return None;
+            };
+            ((other - p).hypot() <= reach && (other - from).hypot() > 1e-6).then_some(other)
+        })
     }
 
     /// The selected curve a new line may join: one open curve lying on a

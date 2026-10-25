@@ -3663,8 +3663,9 @@ fn ctrl_z_takes_back_pen_nodes_one_by_one() {
     );
     assert!(app.curve.is_none());
     assert_ne!(app.engine.undo_label(), undo_before);
+    // Undoing it leaves the Pen on the first node, drawing again (#631).
     press(&ctx, &mut app, ctrl);
-    assert!(app.curve.is_none());
+    assert_eq!(count(&app), Some(1));
     assert_eq!(app.engine.undo_label(), undo_before);
 }
 
@@ -6698,4 +6699,81 @@ fn undoing_pen_steps_goes_back_to_drawing_the_curve() {
     app.finish_curve();
     assert_eq!(shape_count(&app), count, "no new object");
     assert_eq!(nodes_of(&app), 4);
+}
+
+/// Redo leaves a curve being drawn alone: a fresh one stays, and nodes
+/// drawn on from a curve an undo took up are not thrown away for the
+/// step that undo took back (#631).
+#[test]
+fn redo_keeps_the_curve_being_drawn() {
+    let (ctx, mut app, rect) = setup();
+    let ctrl = Modifiers::COMMAND | Modifiers::CTRL;
+    let press = |ctx: &egui::Context, app: &mut App, mods: Modifiers| {
+        frame(ctx, app, vec![key(egui::Key::Z, mods)], mods);
+        frame(ctx, app, Vec::new(), Modifiers::NONE);
+    };
+    let count = |app: &App| app.curve.as_ref().map(|c| c.nodes.len());
+    // Undo the rectangle's fill, then start a fresh curve and redo.
+    press(&ctx, &mut app, ctrl);
+    app.select(Vec::new());
+    app.set_tool(Tool::Pen);
+    click_page(&ctx, &mut app, Point::new(100.0, 150.0));
+    click_page(&ctx, &mut app, Point::new(140.0, 150.0));
+    press(&ctx, &mut app, ctrl | Modifiers::SHIFT);
+    assert_eq!(count(&app), Some(2), "the fresh curve stays");
+    assert!(app.doc().find_shape(rect).is_some());
+    // A curve of three nodes, finished, one node undone, then drawn on.
+    click_page(&ctx, &mut app, Point::new(140.0, 190.0));
+    app.finish_curve();
+    let id = app.selection[0];
+    press(&ctx, &mut app, ctrl);
+    assert_eq!(count(&app), Some(1), "taken up again");
+    click_page(&ctx, &mut app, Point::new(180.0, 150.0));
+    press(&ctx, &mut app, ctrl | Modifiers::SHIFT);
+    assert_eq!(count(&app), Some(2), "the node drawn on stays");
+    app.finish_curve();
+    let ShapeKind::Path { path, .. } = &app.doc().find_shape(id).expect("curve").kind else {
+        panic!("a curve");
+    };
+    assert_eq!(tracedraw_core::nodes::nodes(path).len(), 3, "{path:?}");
+}
+
+/// Undoing a line that went on from a curve's first node takes the curve
+/// up at that node, not at its other end; and after undoing a close, a
+/// click on the other end closes the curve again (#631).
+#[test]
+fn undo_goes_back_to_the_end_drawing_went_on_from() {
+    let (ctx, mut app, first) = setup();
+    app.select(vec![first]);
+    app.delete_selection();
+    app.set_tool(Tool::Pen);
+    let (a, b, c) = (
+        Point::new(100.0, 150.0),
+        Point::new(140.0, 150.0),
+        Point::new(180.0, 150.0),
+    );
+    click_page(&ctx, &mut app, a);
+    click_page(&ctx, &mut app, b);
+    app.finish_curve();
+    let id = app.selection[0];
+    // On from the first node a.
+    app.select(Vec::new());
+    app.set_tool(Tool::Pen);
+    click_page(&ctx, &mut app, a);
+    click_page(&ctx, &mut app, Point::new(100.0, 190.0));
+    app.finish_curve();
+    assert_eq!(app.selection, vec![id]);
+    let ctrl = Modifiers::COMMAND | Modifiers::CTRL;
+    frame(&ctx, &mut app, vec![key(egui::Key::Z, ctrl)], ctrl);
+    let cur = app.curve.clone().expect("drawing again");
+    assert!(near(cur.nodes[0].0, a), "at the first node: {cur:?}");
+    // A node further, then a click on the other end b closes the curve.
+    click_page(&ctx, &mut app, c);
+    click_page(&ctx, &mut app, b);
+    assert!(app.curve.is_none(), "closed");
+    let ShapeKind::Path { path, closed } = &app.doc().find_shape(id).expect("curve").kind else {
+        panic!("a curve");
+    };
+    assert!(*closed, "{path:?}");
+    assert_eq!(tracedraw_core::nodes::nodes(path).len(), 3, "{path:?}");
 }

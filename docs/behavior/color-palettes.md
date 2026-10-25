@@ -51,7 +51,10 @@ mode, Document Properties) the default palette shows and applies its
 colours as clean RGB values (names kept; spot inks and registration stay
 as they are). The default palette's colours come from the RGB default
 palette, a table of RGB values defined directly
-(`palette::default_rgb`, the same 99 names in the same order): 10%
+(`palette::default_rgb`, the same 99 names in the same order, also the
+Palette Manager's built-in Default RGB palette), found by name and colour
+so a default palette edited in the Palette Editor keeps them, and worked
+out when the palette changes rather than every frame: 10%
 greys (90% Black 26 26 26, 50% Black 128 128 128) and multiples of 51
 otherwise (Black 0 0 0, Red 255 0 0, Orange 255 102 0, Purple 153 0 204,
 Navy Blue 0 51 153, Dark Brown 102 51 51, Ruby Red 153 0 0, Crimson
@@ -61,7 +64,8 @@ not the press simulation; other colours are converted as the colour
 management converts. A CMYK drawing keeps them CMYK (#483, #620,
 `ui::palette::tests::an_rgb_drawing_gets_an_rgb_palette`,
 `ui::palette::tests::the_default_palette_of_an_rgb_drawing_is_clean_rgb`,
-`ui::palette::tests::inks_with_black_become_rgb_by_adding_the_black`).
+`ui::palette::tests::inks_with_black_become_rgb_by_adding_the_black`,
+`ui::palette::tests::edited_default_palettes_keep_their_rgb_values`).
 
 ## Using a palette
 

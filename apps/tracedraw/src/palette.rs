@@ -276,19 +276,6 @@ pub fn process_palette() -> Vec<(String, Color)> {
     v
 }
 
-pub fn rgb_palette() -> Vec<(String, Color)> {
-    let mut v = Vec::new();
-    let steps = [0u8, 51, 102, 153, 204, 255];
-    for &r in &steps {
-        for &g in &steps {
-            for &b in &steps {
-                v.push((format!("R{r} G{g} B{b}"), Color::rgb8(r, g, b)));
-            }
-        }
-    }
-    v
-}
-
 pub fn gray_palette() -> Vec<(String, Color)> {
     (0..=20)
         .map(|i| {
@@ -310,7 +297,7 @@ pub fn builtin_palettes() -> Vec<Palette> {
         Palette {
             name: "Default RGB".into(),
             key: "palette.default_rgb",
-            colors: rgb_palette(),
+            colors: default_rgb(),
             builtin: true,
             path: None,
         },

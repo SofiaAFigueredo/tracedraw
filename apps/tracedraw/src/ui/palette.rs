@@ -99,19 +99,8 @@ fn colors_of(app: &App, which: Row) -> Vec<(String, Color)> {
     match which {
         // An RGB drawing gets the palette's colours as RGB, so what it
         // applies is RGB too; spot inks and registration stay (#483).
-        // The default palette's colours take the RGB default palette's
-        // values, defined directly (#620); other colours their inks as RGB.
-        Row::Main if rgb_drawing(app) => {
-            let (cmyk, rgb) = &*DEFAULTS;
-            app.palette
-                .iter()
-                .enumerate()
-                .map(|(i, (n, c))| match (cmyk.get(i), rgb.get(i)) {
-                    (Some((dn, dc)), Some(r)) if dn == n && dc == c => r.clone(),
-                    _ => (n.clone(), in_rgb(*c)),
-                })
-                .collect()
-        }
+        // Worked out when the palette changes, not every frame (#620).
+        Row::Main if rgb_drawing(app) => app.palette_rgb.clone(),
         Row::Main => app.palette.clone(),
         Row::Document => app
             .doc()
@@ -122,15 +111,30 @@ fn colors_of(app: &App, which: Row) -> Vec<(String, Color)> {
     }
 }
 
-/// The default CMYK palette and the RGB one it shows as in an RGB drawing,
-/// slot for slot.
-type Defaults = (Vec<(String, Color)>, Vec<(String, Color)>);
-static DEFAULTS: std::sync::LazyLock<Defaults> = std::sync::LazyLock::new(|| {
-    (
-        crate::palette::default_cmyk(),
-        crate::palette::default_rgb(),
-    )
-});
+/// `palette` as an RGB drawing shows it: the default palette's colours
+/// take the RGB default palette's values, defined directly, found by name
+/// and colour so a palette edited in the Palette Editor keeps them (#620);
+/// other colours their inks as RGB ([`in_rgb`]).
+pub fn as_rgb(palette: &[(String, Color)]) -> Vec<(String, Color)> {
+    palette
+        .iter()
+        .map(|(n, c)| match DEFAULTS.get(n.as_str()) {
+            Some((cmyk, rgb)) if cmyk == c => (n.clone(), *rgb),
+            _ => (n.clone(), in_rgb(*c)),
+        })
+        .collect()
+}
+
+/// The default palette's colours by name: their CMYK value and the RGB
+/// one they show as in an RGB drawing.
+static DEFAULTS: std::sync::LazyLock<std::collections::HashMap<String, (Color, Color)>> =
+    std::sync::LazyLock::new(|| {
+        crate::palette::default_cmyk()
+            .into_iter()
+            .zip(crate::palette::default_rgb())
+            .map(|((n, cmyk), (_, rgb))| (n, (cmyk, rgb)))
+            .collect()
+    });
 
 /// Whether the drawing's primary colour mode is RGB.
 fn rgb_drawing(app: &App) -> bool {
@@ -1458,6 +1462,7 @@ mod tests {
             ("Cyan".into(), Color::cmyk_pct(100.0, 0.0, 0.0, 0.0)),
             ("Mine".into(), Color::rgb8(10, 20, 30)),
         ];
+        app.palette_rgb = as_rgb(&app.palette);
         let cmyk = colors_of(&app, Row::Main);
         assert_eq!(cmyk, app.palette);
         let mut metadata = app.doc().metadata.clone();
@@ -1520,6 +1525,29 @@ mod tests {
                 "{n}: {r} {g} {b}"
             );
         }
+    }
+
+    /// A colour added to the default palette in the Palette Editor moves
+    /// the others along, and they keep their RGB values; the Palette
+    /// Manager's built-in RGB default palette is the same table (#620).
+    #[test]
+    fn edited_default_palettes_keep_their_rgb_values() {
+        let mut palette = crate::palette::default_cmyk();
+        palette.insert(0, ("Mine".into(), Color::cmyk_pct(10.0, 0.0, 0.0, 0.0)));
+        palette.retain(|(n, _)| n != "Black");
+        let rgb = as_rgb(&palette);
+        let of = |name: &str| rgb.iter().find(|(n, _)| n == name).map(|(_, c)| *c);
+        assert_eq!(of("Crimson"), Some(Color::rgb8(0x99, 0x33, 0x66)));
+        assert_eq!(of("Navy Blue"), Some(Color::rgb8(0, 51, 153)));
+        assert_eq!(of("Mine"), Some(Color::rgb8(230, 255, 255)));
+        // A default name with another colour is converted from its inks.
+        let changed = vec![("Crimson".to_string(), Color::cmyk_pct(0.0, 100.0, 0.0, 0.0))];
+        assert_eq!(as_rgb(&changed)[0].1, Color::rgb8(255, 0, 255));
+        let builtin = crate::palette::builtin_palettes()
+            .into_iter()
+            .find(|p| p.key == "palette.default_rgb")
+            .expect("the RGB default palette");
+        assert_eq!(builtin.colors, crate::palette::default_rgb());
     }
 
     /// A CMYK colour outside the default palette takes 255 (1 - min(1,

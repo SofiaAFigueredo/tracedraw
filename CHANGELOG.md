@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Print Merge: Add Column for a Number asks for its digits, starting value, "Continually increment value" with its step and an ending value; with an ending value the records from the start to the end are made at once, for serial, ticket or roll numbers without a data file (#791).
+
 ## 0.18.0 (2026-10-25)
 
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.

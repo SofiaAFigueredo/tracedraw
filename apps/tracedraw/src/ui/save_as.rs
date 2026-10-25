@@ -886,18 +886,13 @@ mod tests {
         );
         assert_eq!(app.file.as_deref(), Some(path.as_path()));
         assert_eq!(app.settings.last_dir.as_deref(), Some(dir.as_path()));
-        // The next Save As starts there, as .cdr, offering the newest
-        // version again.
+        // The next Save As starts there, as .cdr, at the version the
+        // drawing now has, as Save keeps it (#613).
         app.save_as_dialog();
         let st = state(&mut app);
         assert_eq!(
             (st.dir.as_path(), st.name.as_str(), st.cdr, st.version),
-            (
-                dir.as_path(),
-                "poster.cdr",
-                true,
-                tracedraw_cdr::write::NEWEST_VERSION
-            )
+            (dir.as_path(), "poster.cdr", true, 15)
         );
         st.version = 15;
         // An existing file asks first; Replace writes it.

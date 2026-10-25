@@ -66,7 +66,7 @@ converts. A CMYK drawing keeps them CMYK (#483, #620,
 | Drag objects (Pick tool) onto the document palette | Their fill and outline colours join it (as Add from Selection); the objects stay where they were; the pointer shows a copy sign there |
 | While dragging a swatch | A chip of the colour follows the pointer: filled over a fill, a ring over an outline; the pointer shows whether letting go changes anything; Esc drops nothing |
 | Scroll arrows, wheel | One swatch at a time; holding an arrow keeps scrolling |
-| The show-all button | Every colour of the row in a grid above it; click to apply, click elsewhere or Esc to close |
+| The show-all button | Every colour of the row in a grid above it (below it, clear of every row, when the palette is along the top; beside a column); click to apply, click elsewhere or Esc to close |
 | Tooltip | The colour's name, then its values: `C: 60 M: 0 Y: 40 K: 20`, `R: 255 G: 0 B: 0` |
 
 ## Document palette
@@ -95,9 +95,11 @@ converts. A CMYK drawing keeps them CMYK (#483, #620,
 
 ## Default palette menu
 
-Open Palette..., Palette Editor..., Palette Manager, and the Document
-Palette switch. A right click on a row outside the swatches opens the
-same menu.
+Open Palette..., Palette Editor..., Palette Manager, the Document
+Palette switch and Rows (1 Row, 2 Rows, 3 Rows, the same setting as
+Options > Customization > Color Palette > Rows; #610,
+`ui::palette::tests::the_palette_menu_sets_the_rows`). A right click on
+a row outside the swatches opens the same menu.
 
 ## Options > Customization > Color Palette
 
@@ -116,6 +118,8 @@ update the document palette (on).
 - `ui::palette::tests::rows_fit_whole_swatches`
 - `ui::palette::tests::the_default_palette_of_an_rgb_drawing_is_clean_rgb`
 - `ui::palette::tests::the_default_palette_can_show_several_rows`
+- `ui::palette::tests::the_palette_menu_sets_the_rows`
+- `ui::palette::tests::every_colour_opens_clear_of_all_the_rows`
 - `ui::dockers::tests::a_fill_dragged_in_the_picker_is_one_step_and_one_palette_colour`
 - `color_drop::tests` (fill inside, outline on the edge, No Color, an
   object without a fill, the document palette)

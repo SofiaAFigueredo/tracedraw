@@ -397,15 +397,28 @@ fn row(app: &mut App, ui: &mut Ui, which: Row, vertical: bool) {
         return;
     }
     let mut px = Pixels::default();
-    // One frame per column, as long as the swatches it holds.
-    for col in 0..shown.div_ceil(lines) {
-        let n = lines.min(shown - col * lines);
+    // One frame round the full columns and one round a part-filled last
+    // column, each as long as the swatches it holds.
+    let full = shown / lines;
+    let rest = shown % lines;
+    if full > 0 {
         px.rect(
             ax.rect(
-                LEAD + col as f32 * STRIDE,
+                LEAD,
+                EDGE,
+                full as f32 * STRIDE + 1.0,
+                lines as f32 * STRIDE + 1.0,
+            ),
+            FRAME,
+        );
+    }
+    if rest > 0 {
+        px.rect(
+            ax.rect(
+                LEAD + full as f32 * STRIDE,
                 EDGE,
                 STRIDE + 1.0,
-                n as f32 * STRIDE + 1.0,
+                rest as f32 * STRIDE + 1.0,
             ),
             FRAME,
         );
@@ -751,7 +764,7 @@ fn double_chevron(painter: &egui::Painter, c: Pos2, color: Color32, vertical: bo
 
 /// The palette menu (the arrow button, or a right click on the row).
 fn palette_menu(app: &mut App, ui: &mut Ui, which: Row) {
-    use crate::ui::menus::{check, item, sep, sub};
+    use crate::ui::menus::{check, item, radio, sep, sub};
     ui.set_min_width(220.0);
     match which {
         Row::Main => {
@@ -775,6 +788,20 @@ fn palette_menu(app: &mut App, ui: &mut Ui, which: Row) {
                 app.settings.palette.show_document = !app.settings.palette.show_document;
                 app.settings.save();
             }
+            // How many rows of swatches the palette shows (#610).
+            sub(ui, "palette.rows", |ui| {
+                let rows = app.settings.palette.rows();
+                for (n, key) in [
+                    (1, "palette.row_1"),
+                    (2, "palette.rows_2"),
+                    (3, "palette.rows_3"),
+                ] {
+                    if radio(ui, key, "", rows == n) {
+                        app.settings.palette.rows = n as u8;
+                        app.settings.save();
+                    }
+                }
+            });
         }
         Row::Document => {
             let doc = app.has_document();
@@ -892,6 +919,8 @@ pub fn popups(app: &mut App, ctx: &egui::Context) {
         let strip = ctx
             .data(|d| d.get_temp::<Pos2>(egui::Id::new(("palette_strip", which as u8))))
             .unwrap_or(pos2(screen.left() + LEAD, screen.bottom() - 3.0 * ROW_H));
+        // Clear of every row of the strip.
+        let thick = thickness(app, which);
         let vertical = ctx
             .data(|d| d.get_temp::<bool>(egui::Id::new(("palette_strip_vertical", which as u8))))
             .unwrap_or(false);
@@ -903,7 +932,7 @@ pub fn popups(app: &mut App, ctx: &egui::Context) {
             let x = if strip.x > screen.center().x {
                 strip.x - size.x - 24.0
             } else {
-                strip.x + ROW_H + 8.0
+                strip.x + thick + 8.0
             };
             let y = strip
                 .y
@@ -917,7 +946,7 @@ pub fn popups(app: &mut App, ctx: &egui::Context) {
             // Above the row, or below it when it is docked at the top.
             let above = strip.y - size.y - 16.0;
             let y = if above < screen.top() {
-                strip.y + ROW_H + 8.0
+                strip.y + thick + 8.0
             } else {
                 above
             };
@@ -1237,6 +1266,68 @@ mod tests {
     /// With two rows the default palette is twice as thick and fills
     /// column by column: under the No Color well sits Black, then the next
     /// column starts with 90% Black; scrolling moves a column (#610).
+    /// The palette menu's Rows submenu sets 1, 2 or 3 rows (#610).
+    #[test]
+    fn the_palette_menu_sets_the_rows() {
+        use crate::ui::menus::replay;
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        let mut pick = |app: &mut App, wanted: &str| {
+            for i in 0.. {
+                replay::start(i);
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    palette_menu(app, ui, Row::Main);
+                });
+                out.textures_delta.clear();
+                let (hit, rows) = replay::finish();
+                if hit.as_deref() == Some(wanted) {
+                    return;
+                }
+                assert!(i + 1 < rows, "no {wanted} in the menu");
+            }
+        };
+        pick(&mut app, "palette.rows_3");
+        assert_eq!(app.settings.palette.rows(), 3);
+        pick(&mut app, "palette.row_1");
+        assert_eq!(app.settings.palette.rows(), 1);
+        pick(&mut app, "palette.rows_2");
+        assert_eq!(app.settings.palette.rows(), 2);
+    }
+
+    /// Every colour at once, for a palette of three rows along the top:
+    /// the window opens below all three rows, not over them (#610).
+    #[test]
+    fn every_colour_opens_clear_of_all_the_rows() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        app.settings.palette.rows = 3;
+        let run = |app: &mut App| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 700.0),
+                )),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                palette_row(app, ui);
+                popups(app, ui.ctx());
+            });
+            out.textures_delta.clear();
+        };
+        run(&mut app);
+        app.palette_expanded = Some(Row::Main);
+        run(&mut app);
+        run(&mut app);
+        let area = ctx
+            .memory(|m| m.area_rect(egui::Id::new("palette_expanded")))
+            .expect("every colour shown");
+        assert!(
+            area.top() >= thickness(&app, Row::Main),
+            "{area:?} over the rows"
+        );
+    }
+
     #[test]
     fn the_default_palette_can_show_several_rows() {
         use tracedraw_core::{geometry::Rect as R, ShapeKind};

@@ -1484,6 +1484,11 @@ pub(crate) fn autofit_popup_id() -> egui::Id {
     egui::Id::new("autofit_page_popup")
 }
 
+/// Where the popup's Live preview box was drawn last (for tests).
+pub(crate) fn autofit_live_id() -> egui::Id {
+    egui::Id::new("autofit_live_preview_rect")
+}
+
 pub fn page_bar(app: &mut App, ui: &mut Ui) {
     let size = app.page_size();
     let presets = crate::ui::dialogs::paper_presets();
@@ -1561,8 +1566,11 @@ pub fn page_bar(app: &mut App, ui: &mut Ui) {
     }
     let ctx = ui.ctx().clone();
     let mut fitted = false;
+    // Open until a click outside it or Autofit Page: the margin field and
+    // the Live preview box take clicks of their own.
     egui::Popup::new(popup_id, ctx.clone(), fit.rect, ui.layer_id())
         .open_memory(None)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(190.0);
             ui.horizontal(|ui| {
@@ -1572,11 +1580,16 @@ pub fn page_bar(app: &mut App, ui: &mut Ui) {
                 if let Some(m) = paper_distance(ui, app, margin, 88.0, Some(1.0)) {
                     app.settings.fit_page_margin = m.max(0.0);
                 }
+                // Live preview on or off, beside the margin (#659).
+                let live = ui
+                    .checkbox(
+                        &mut app.settings.fit_page_preview,
+                        tr("toolbar.autofit_live_preview"),
+                    )
+                    .rect;
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(autofit_live_id(), live));
             });
-            ui.checkbox(
-                &mut app.settings.fit_page_preview,
-                tr("toolbar.autofit_live_preview"),
-            );
             ui.add_space(4.0);
             if ui
                 .add_sized(
@@ -3334,28 +3347,63 @@ mod tests {
             corners: None,
         })
         .expect("a layer");
-        let run = |app: &mut App| {
-            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let run = |app: &mut App, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
                 ui.horizontal(|ui| page_bar(app, ui));
             });
             out.textures_delta.clear();
         };
-        run(&mut app);
+        let click = |app: &mut App, at: egui::Pos2| {
+            run(app, vec![egui::Event::PointerMoved(at)]);
+            for pressed in [true, false] {
+                run(
+                    app,
+                    vec![egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+            run(app, Vec::new());
+        };
+        run(&mut app, Vec::new());
         assert!(app.autofit_preview.is_none(), "closed");
         egui::Popup::open_id(&ctx, autofit_popup_id());
         assert!(app.settings.fit_page_preview, "on at first");
-        run(&mut app);
+        run(&mut app, Vec::new());
+        run(&mut app, Vec::new());
         assert!(app.autofit_preview.is_some());
         assert!(app
             .autofit_preview_rect(ctx.cumulative_frame_nr())
             .is_some());
-        app.settings.fit_page_preview = false;
-        run(&mut app);
+        // A click on the box turns it off and leaves the popup open.
+        let live = ctx
+            .data(|d| d.get_temp::<egui::Rect>(autofit_live_id()))
+            .expect("the Live preview box");
+        click(&mut app, live.center());
+        assert!(!app.settings.fit_page_preview);
         assert!(egui::Popup::is_id_open(&ctx, autofit_popup_id()));
         assert!(app.autofit_preview.is_none());
         assert!(app
             .autofit_preview_rect(ctx.cumulative_frame_nr())
             .is_none());
+        // On again; a click outside closes the popup and its preview.
+        click(&mut app, live.center());
+        assert!(app.settings.fit_page_preview);
+        assert!(app.autofit_preview.is_some());
+        click(&mut app, egui::pos2(1000.0, 700.0));
+        assert!(!egui::Popup::is_id_open(&ctx, autofit_popup_id()));
+        assert!(app.autofit_preview.is_none());
     }
 
     #[test]

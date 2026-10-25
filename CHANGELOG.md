@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- The colour palette's menu has a Rows submenu (1, 2 or 3 rows), and the window showing every colour opens clear of all the rows of a palette along the top. Autofit Page's Live preview box now sits beside the Margin field and clicking it no longer closes the popup (#610, #659).
+
 - Convert Outline to Object (Ctrl+Shift+Q) on an outline with round ends or round corners: each round end is now two real curves meeting at its tip, with nodes where it meets the sides, and each round corner a curve, instead of many tiny straight segments. Curved sides also get fewer nodes (#623).
 
 - File > Export now starts with the choices of the last export of the session (format, resolution, quality, transparency, pages and PDF settings; Selected only starts off again) instead of resetting them each time. To keep them for the next session too, turn on Options > Global > File Formats > Remember the settings of the last export, which new preferences now have on and which now keeps WebP lossless as well (#617).

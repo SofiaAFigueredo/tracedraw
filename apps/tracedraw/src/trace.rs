@@ -121,8 +121,7 @@ fn outline(img: &RgbaImage, s: &Settings) -> Vec<Traced> {
     let palette: Vec<[u8; 3]> = if s.black_white {
         vec![[0, 0, 0], [255, 255, 255]]
     } else {
-        // Colours that differ by a hair are one region, not two (#611).
-        merge_close(median_cut(&src, s.colors.clamp(2, 256) as usize))
+        median_cut(&src, s.colors.clamp(2, 256) as usize)
     };
     let mut labels = vec![0usize; w * h];
     for (x, y, p) in src.enumerate_pixels() {
@@ -146,7 +145,10 @@ fn outline(img: &RgbaImage, s: &Settings) -> Vec<Traced> {
     // Thin bands of an in-between colour along the edge of two others
     // (the anti-aliasing of a black and yellow edge) go to the colours on
     // either side, so they do not become slivers of their own (#611).
-    despeckle_bands(&mut labels, w, h, &palette);
+    // Like the specks, kept at the highest detail.
+    if speck_area(s.detail) > 1 {
+        despeckle_bands(&mut labels, w, h, &palette);
+    }
     // 2. Background: the most common colour touching the border.
     let mut border_counts = vec![0usize; palette.len()];
     for x in 0..w {
@@ -186,24 +188,54 @@ fn outline(img: &RgbaImage, s: &Settings) -> Vec<Traced> {
     for (k, ci) in order.iter().enumerate() {
         rank[*ci] = k;
     }
+    // The box of each colour's pixels, in one pass.
+    let mut boxes = vec![(w, h, 0usize, 0usize); palette.len()];
+    for (i, l) in labels.iter().enumerate() {
+        if let Some(b) = boxes.get_mut(*l) {
+            let (x, y) = (i % w, i / w);
+            *b = (b.0.min(x), b.1.min(y), b.2.max(x), b.3.max(y));
+        }
+    }
+    let present: Vec<bool> = boxes.iter().map(|b| b.0 <= b.2).collect();
     let mut out = Vec::new();
     for ci in order {
-        if Some(ci) == background {
+        if Some(ci) == background || !present[ci] {
             continue;
         }
         // Each region reaches a little under the regions drawn above it,
         // so their curves, fitted each on its own, leave no page showing
-        // between neighbours (#611).
-        let own: Vec<bool> = labels.iter().map(|l| *l == ci).collect();
-        let near = dilate(&own, w, h, UNDERLAP);
-        let mask: Vec<bool> = labels
-            .iter()
-            .zip(own.iter().zip(&near))
-            .map(|(l, (o, n))| {
-                *o || (*n && *l != usize::MAX && Some(*l) != background && rank[*l] > rank[ci])
-            })
+        // between neighbours (#611). Only the box of its pixels, grown by
+        // that much, is looked at, and nothing grows with no lighter
+        // region drawn above it.
+        let above =
+            (0..palette.len()).any(|l| present[l] && Some(l) != background && rank[l] > rank[ci]);
+        let grow = if above { UNDERLAP } else { 0 };
+        let (bx0, by0, bx1, by1) = boxes[ci];
+        let (x0, y0) = (bx0.saturating_sub(grow), by0.saturating_sub(grow));
+        let (x1, y1) = ((bx1 + grow).min(w - 1), (by1 + grow).min(h - 1));
+        let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
+        let label_at = |i: usize| labels[(y0 + i / cw) * w + x0 + i % cw];
+        let own: Vec<bool> = (0..cw * ch).map(|i| label_at(i) == ci).collect();
+        let mask: Vec<bool> = if above {
+            let near = dilate(&own, cw, ch, UNDERLAP);
+            (0..cw * ch)
+                .map(|i| {
+                    let l = label_at(i);
+                    own[i]
+                        || (near[i]
+                            && l != usize::MAX
+                            && Some(l) != background
+                            && rank[l] > rank[ci])
+                })
+                .collect()
+        } else {
+            own
+        };
+        let offset = tracedraw_core::geometry::Vec2::new(x0 as f64, y0 as f64);
+        let contours: Vec<Vec<Point>> = contours(&mask, cw, ch)
+            .into_iter()
+            .map(|ring| ring.into_iter().map(|p| p + offset).collect())
             .collect();
-        let contours = contours(&mask, w, h);
         let mut path = BezPath::new();
         for ring in contours {
             if ring.len() < 3 {
@@ -238,78 +270,57 @@ fn outline(img: &RgbaImage, s: &Settings) -> Vec<Traced> {
 const UNDERLAP: usize = 2;
 
 /// `mask` grown by `r` pixels in every direction (a square of side
-/// 2r + 1), as two passes of running maxima over the box of its set
-/// pixels.
+/// 2r + 1): running maxima along the rows, then down and up the columns
+/// a row at a time.
 fn dilate(mask: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
     let mut out = vec![false; w * h];
     if mask.len() != w * h {
         return out;
     }
-    // The box of the set pixels, grown by `r`: nothing outside it changes.
-    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
-    for (i, _) in mask.iter().enumerate().filter(|(_, m)| **m) {
-        let (x, y) = (i % w, i / w);
-        x0 = x0.min(x);
-        y0 = y0.min(y);
-        x1 = x1.max(x);
-        y1 = y1.max(y);
-    }
-    if x0 > x1 {
-        return out;
-    }
-    let (x0, y0) = (x0.saturating_sub(r), y0.saturating_sub(r));
-    let (x1, y1) = ((x1 + r).min(w - 1), (y1 + r).min(h - 1));
     let mut rows = vec![false; w * h];
-    for y in y0..=y1 {
+    for y in 0..h {
+        let line = &mask[y * w..(y + 1) * w];
+        let row = &mut rows[y * w..(y + 1) * w];
         let mut last: Option<usize> = None;
-        for x in x0..=x1 {
-            if mask[y * w + x] {
+        for x in 0..w {
+            if line[x] {
                 last = Some(x);
             }
-            rows[y * w + x] = last.is_some_and(|l| x - l <= r);
+            row[x] = last.is_some_and(|l| x - l <= r);
         }
         last = None;
-        for x in (x0..=x1).rev() {
-            if mask[y * w + x] {
+        for x in (0..w).rev() {
+            if line[x] {
                 last = Some(x);
             }
-            rows[y * w + x] |= last.is_some_and(|l| l - x <= r);
+            row[x] |= last.is_some_and(|l| l - x <= r);
         }
     }
-    for x in x0..=x1 {
-        let mut last: Option<usize> = None;
-        for y in y0..=y1 {
+    // The last set row seen in each column, going down, then going up.
+    let mut last: Vec<Option<usize>> = vec![None; w];
+    for y in 0..h {
+        for x in 0..w {
             if rows[y * w + x] {
-                last = Some(y);
+                last[x] = Some(y);
             }
-            out[y * w + x] = last.is_some_and(|l| y - l <= r);
+            out[y * w + x] = last[x].is_some_and(|l| y - l <= r);
         }
-        last = None;
-        for y in (y0..=y1).rev() {
+    }
+    last.fill(None);
+    for y in (0..h).rev() {
+        for x in 0..w {
             if rows[y * w + x] {
-                last = Some(y);
+                last[x] = Some(y);
             }
-            out[y * w + x] |= last.is_some_and(|l| l - y <= r);
+            out[y * w + x] |= last[x].is_some_and(|l| l - y <= r);
         }
     }
     out
 }
 
-/// The palette without colours closer than [`CLOSE`] to one kept before
-/// them: two shades of one flat colour, or two near-blacks, trace as one
-/// region.
-fn merge_close(palette: Vec<[u8; 3]>) -> Vec<[u8; 3]> {
-    let mut kept: Vec<[u8; 3]> = Vec::with_capacity(palette.len());
-    for c in palette {
-        if kept.iter().all(|k| distance2(*k, c) > CLOSE * CLOSE) {
-            kept.push(c);
-        }
-    }
-    kept
-}
-
-/// Palette colours nearer than this (RGB distance) are merged.
-const CLOSE: u32 = 18;
+/// How far apart (RGB distance) two colours must be for a thin band
+/// between them to count as their edge's anti-aliasing.
+const EDGE_CONTRAST: u32 = 64;
 
 fn distance2(a: [u8; 3], b: [u8; 3]) -> u32 {
     (0..3)
@@ -330,7 +341,7 @@ fn between(c: [u8; 3], a: [u8; 3], b: [u8; 3]) -> bool {
     }
     let t = (ab.iter().zip(&ac).map(|(p, q)| p * q).sum::<f64>() / len2).clamp(0.0, 1.0);
     let d2 = (0..3).map(|k| (ac[k] - t * ab[k]).powi(2)).sum::<f64>();
-    let slack = (0.2 * len2.sqrt()).max(24.0);
+    let slack = (0.08 * len2.sqrt()).max(12.0);
     d2 <= slack * slack
 }
 
@@ -404,7 +415,9 @@ fn despeckle_bands(labels: &mut [usize], w: usize, h: usize, palette: &[[u8; 3]]
         else {
             continue;
         };
-        if !between(cl, ca, cb) {
+        // Between two clearly different colours only: the steps of a
+        // gradient lie between their neighbours too, and stay.
+        if distance2(ca, cb) < EDGE_CONTRAST * EDGE_CONTRAST || !between(cl, ca, cb) {
             continue;
         }
         let nearer = if distance2(cl, ca) <= distance2(cl, cb) {
@@ -1465,6 +1478,50 @@ mod tests {
         }
     }
 
+    /// A pale logo close to its white ground keeps its colour, at the
+    /// Logo preset and with two colours; a grey gradient keeps the colour
+    /// count it was asked for (#611).
+    #[test]
+    fn close_colours_and_colour_counts_are_kept() {
+        let img: RgbaImage = ImageBuffer::from_fn(80, 80, |x, y| {
+            if (20..60).contains(&x) && (20..60).contains(&y) {
+                Rgba([246, 246, 246, 255])
+            } else {
+                Rgba([255, 255, 255, 255])
+            }
+        });
+        let mut s = Preset::Logo.settings();
+        assert_eq!(trace(&img, &s).len(), 1, "the logo");
+        s.colors = 2;
+        assert_eq!(trace(&img, &s).len(), 1, "with two colours");
+        let ramp: RgbaImage =
+            ImageBuffer::from_fn(256, 8, |x, _| Rgba([x as u8, x as u8, x as u8, 255]));
+        let mut s = Preset::HighQualityImage.settings();
+        s.colors = 96;
+        s.remove_background = false;
+        let n = trace(&ramp, &s).len();
+        assert!(n > 24, "{n} colours of 96");
+    }
+
+    /// At the highest detail an orange line of one pixel between red and
+    /// yellow stays, as the specks do.
+    #[test]
+    fn the_highest_detail_keeps_thin_lines() {
+        let img: RgbaImage = ImageBuffer::from_fn(40, 40, |_, y| match y {
+            0..=19 => Rgba([230, 20, 20, 255]),
+            20 => Rgba([240, 120, 20, 255]),
+            _ => Rgba([250, 220, 20, 255]),
+        });
+        let mut s = Preset::Logo.settings();
+        s.detail = 100.0;
+        s.remove_background = false;
+        let colours: Vec<[u8; 3]> = trace(&img, &s).iter().map(|t| t.color.to_rgb8()).collect();
+        assert!(
+            colours.iter().any(|c| c[1] > 90 && c[1] < 160),
+            "the orange line: {colours:?}"
+        );
+    }
+
     #[test]
     fn dilation_grows_a_mask_by_a_square() {
         let (w, h) = (7, 6);
@@ -1480,16 +1537,15 @@ mod tests {
         assert!(dilate(&vec![false; w * h], w, h, 2).iter().all(|v| !v));
     }
 
-    /// Palette colours a hair apart merge; thin in-between bands go to
-    /// their neighbours, a hairline on one colour stays.
+    /// Thin in-between bands go to their neighbours; a hairline on one
+    /// colour, or of a colour that is not between them, stays.
     #[test]
-    fn close_colours_merge_and_thin_edge_bands_go() {
-        assert_eq!(
-            merge_close(vec![[0, 0, 0], [8, 6, 4], [250, 200, 40], [255, 255, 255]]),
-            vec![[0, 0, 0], [250, 200, 40], [255, 255, 255]]
-        );
+    fn thin_edge_bands_go_to_their_neighbours() {
         assert!(between([130, 108, 25], [0, 0, 0], [250, 205, 40]));
         assert!(!between([250, 205, 40], [0, 0, 0], [255, 255, 255]));
+        // A pale blue line between black and white is a colour of its own.
+        assert!(!between([170, 200, 230], [0, 0, 0], [255, 255, 255]));
+        assert!(between([128, 128, 128], [0, 0, 0], [255, 255, 255]));
         let palette = [[0, 0, 0], [250, 205, 40], [125, 102, 20]];
         let (w, h) = (8, 6);
         // Black above, yellow below, an olive band of 1 px between.

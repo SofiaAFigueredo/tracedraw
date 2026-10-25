@@ -6,7 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
-- Tracing: neighbouring colour regions now overlap by 2 px under the lighter one, so no white hairlines of the page show between them; thin anti-aliased bands between two colours go to those colours instead of becoming slivers, and palette colours that differ by a hair trace as one region (#611).
+- Tracing: neighbouring colour regions now overlap by 2 px under the lighter one, so no white hairlines of the page show between them; thin anti-aliased bands between two colours go to those colours instead of becoming slivers (#611).
 
 - Browser version: the module is optimised for size with binaryen's wasm-opt and loses its name, debug and producer sections, 36.9 MB down to 31.6 MB (13.3 to 12.7 MB compressed). Nothing changes in what it does, and frame and script times stay the same.
 

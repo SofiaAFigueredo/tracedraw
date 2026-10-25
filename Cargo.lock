@@ -4204,6 +4204,7 @@ dependencies = [
  "tiny-skia",
  "tracedraw-core",
  "tracedraw-render",
+ "tracedraw-text",
  "ttf-parser",
  "usvg",
  "web-time",

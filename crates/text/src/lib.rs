@@ -571,43 +571,47 @@ fn script_runs(text: &str) -> Vec<Range<usize>> {
     runs.into_iter().map(|r| r.0).collect()
 }
 
-/// A virama of a Brahmic script: the consonant after it joins the one
-/// before it into a conjunct or a half form.
-fn virama(c: char) -> bool {
+/// A conjunct linker: the virama of the scripts whose consonants it
+/// joins into conjuncts and half forms (Devanagari, Bengali, Gujarati,
+/// Oriya, Telugu, Malayalam: the Unicode property Indic_Conjunct_Break
+/// = Linker).
+fn linker(c: char) -> bool {
     matches!(
         c,
-        '\u{094D}'
-            | '\u{09CD}'
-            | '\u{0A4D}'
-            | '\u{0ACD}'
-            | '\u{0B4D}'
-            | '\u{0BCD}'
-            | '\u{0C4D}'
-            | '\u{0CCD}'
-            | '\u{0D3B}'
-            | '\u{0D3C}'
-            | '\u{0D4D}'
-            | '\u{0DCA}'
-            | '\u{1039}'
-            | '\u{17D2}'
-            | '\u{A8C4}'
-            | '\u{A9C0}'
+        '\u{094D}' | '\u{09CD}' | '\u{0ACD}' | '\u{0B4D}' | '\u{0C4D}' | '\u{0D4D}'
     )
 }
 
+/// A letter of the Indian scripts' blocks (U+0900 to U+0DFF).
+fn indic_letter(c: char) -> bool {
+    matches!(c as u32, 0x0900..=0x0DFF) && c.is_alphabetic()
+}
+
 /// `c` after `prev` belongs to the syllable `prev` is in: a combining
-/// mark (vowel sign, virama, nukta, anusvara, accent), a joiner, or a
-/// consonant after a virama or a zero width joiner. Text is never cut
-/// for shaping, and lines never break, before such a character: a
-/// syllable shaped in pieces loses its half forms and conjuncts and shows
-/// its virama (#599).
+/// mark (vowel sign, virama, nukta, anusvara, accent), a joiner, a
+/// consonant of the same script after a linker, or a letter of the
+/// Indian scripts after a zero width joiner. Text is never cut for
+/// shaping, and lines never break, before such a character: a syllable
+/// shaped in pieces loses its half forms and conjuncts and shows its
+/// virama (#599). Plain ASCII text has none (see [`complex_text`]).
 fn continues_syllable(prev: char, c: char) -> bool {
     use unicode_general_category::{get_general_category, GeneralCategory as G};
+    if c.is_ascii() {
+        return false;
+    }
     matches!(
         get_general_category(c),
         G::NonspacingMark | G::SpacingMark | G::EnclosingMark
     ) || matches!(c, '\u{200C}' | '\u{200D}')
-        || ((virama(prev) || prev == '\u{200D}') && c.is_alphabetic())
+        || (linker(prev) && indic_letter(c) && (prev as u32 >> 7) == (c as u32 >> 7))
+        || (prev == '\u{200D}' && indic_letter(c))
+}
+
+/// Text in which a character may continue the syllable before it: any
+/// text but plain ASCII, the only text the syllable checks are skipped
+/// for (every frame of editing lays text out, #599).
+fn complex_text(text: &str) -> bool {
+    !text.is_ascii()
 }
 
 /// Characters drawn with the face of the letter before them: spaces,
@@ -2097,6 +2101,7 @@ impl FontSystem {
         let infos = glyphs.glyph_infos();
         let positions = glyphs.glyph_positions();
         let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let complex = complex_text(text);
         // The characters each glyph stands for: from its cluster to the
         // next cluster (in text order); the first glyph of a cluster
         // carries them.
@@ -2145,14 +2150,15 @@ impl FontSystem {
             let start = info.cluster as usize;
             let further = claimed.contains(&start);
             let joins = further
-                || text
-                    .get(..start)
-                    .and_then(|t| t.chars().next_back())
-                    .is_some_and(|p| {
-                        text.get(start..)
-                            .and_then(|t| t.chars().next())
-                            .is_some_and(|c| continues_syllable(p, c))
-                    });
+                || complex
+                    && text
+                        .get(..start)
+                        .and_then(|t| t.chars().next_back())
+                        .is_some_and(|p| {
+                            text.get(start..)
+                                .and_then(|t| t.chars().next())
+                                .is_some_and(|c| continues_syllable(p, c))
+                        });
             let cluster_text = if further {
                 String::new()
             } else {
@@ -2288,19 +2294,18 @@ impl FontSystem {
         let mut para_starts: Vec<usize> = vec![0];
         let mut char_idx = 0usize;
         // A syllable a span boundary cuts (a vowel sign or the second half
-        // of a conjunct in another colour) is shaped whole with the span
-        // it starts in, its glyphs keeping their own span (#599):
-        // `taken[j]` bytes at the start of span `j` went with the spans
-        // before it.
-        let mut taken = vec![0usize; spans.len()];
+        // of a conjunct in another colour) is shaped whole, in the style
+        // of the span it starts in (#599): `taken[j]` bytes at the start
+        // of span `j` went with the spans before it. Spans of plain ASCII
+        // text take nothing.
+        let mut taken: Vec<usize> = Vec::new();
         for (si, span) in spans.iter().enumerate() {
             let mut first = true;
-            let text = taken
-                .get(si)
-                .and_then(|&t| span.text.get(t..))
-                .unwrap_or(&span.text);
-            let last_piece = text.split('\n').count() - 1;
-            for (k, piece) in text.split('\n').enumerate() {
+            let skip = taken.get(si).copied().unwrap_or(0);
+            let text = span.text.get(skip..).unwrap_or(&span.text);
+            let mut pieces = text.split('\n').peekable();
+            while let Some(piece) = pieces.next() {
+                let last_piece = pieces.peek().is_none();
                 if !first {
                     // The newline itself.
                     char_idx += 1;
@@ -2310,8 +2315,8 @@ impl FontSystem {
                 first = false;
                 // Tabs are kept as glyph-less markers so the line breaker can
                 // expand them to the next tab stop.
-                let last_part = piece.split('\t').count() - 1;
-                for (ti, part) in piece.split('\t').enumerate() {
+                let mut parts = piece.split('\t').enumerate().peekable();
+                while let Some((ti, part)) = parts.next() {
                     if ti > 0 {
                         if let Some(p) = paragraphs.last_mut() {
                             p.push(Glyph {
@@ -2330,11 +2335,10 @@ impl FontSystem {
                         char_idx += 1;
                     }
                     let mut shaped = std::borrow::Cow::Borrowed(part);
-                    let mut owners: Vec<(usize, usize)> = Vec::new();
-                    if let (true, Some(mut prev)) =
-                        (k == last_piece && ti == last_part, part.chars().next_back())
-                    {
-                        let mut at = char_idx + part.chars().count();
+                    if let (true, Some(mut prev)) = (
+                        last_piece && parts.peek().is_none(),
+                        part.chars().next_back(),
+                    ) {
                         for (sj, next) in spans.iter().enumerate().skip(si + 1) {
                             let mut n = 0;
                             for c in next.text.chars() {
@@ -2344,11 +2348,11 @@ impl FontSystem {
                                 prev = c;
                                 n += c.len_utf8();
                             }
-                            if n > 0 {
-                                let more = &next.text[..n];
-                                owners.push((at, sj));
-                                at += more.chars().count();
+                            if let Some(more) = next.text.get(..n).filter(|m| !m.is_empty()) {
                                 shaped.to_mut().push_str(more);
+                                if taken.len() <= sj {
+                                    taken.resize(sj + 1, 0);
+                                }
                                 if let Some(t) = taken.get_mut(sj) {
                                     *t = n;
                                 }
@@ -2359,13 +2363,8 @@ impl FontSystem {
                         }
                     }
                     let pi = paragraphs.len().saturating_sub(1);
-                    let mut run =
+                    let run =
                         self.shape_run(span, si, &shaped, size_scale, char_idx, &style_of(pi).1);
-                    for g in &mut run {
-                        if let Some(&(_, sj)) = owners.iter().rev().find(|o| g.char_idx >= o.0) {
-                            g.span = sj;
-                        }
-                    }
                     char_idx += shaped.chars().count();
                     if let Some(p) = paragraphs.last_mut() {
                         p.extend(run);

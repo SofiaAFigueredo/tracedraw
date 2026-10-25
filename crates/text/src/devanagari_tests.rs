@@ -167,3 +167,36 @@ fn a_word_broken_across_lines_breaks_between_syllables() {
     assert!(broken > 50, "{broken}");
     assert!(bad.is_empty(), "{bad:?}");
 }
+
+/// Only a consonant of the same script continues a syllable after a
+/// linker: a Latin letter or another script's letter starts its own, so
+/// "क्a" does not send the Devanagari syllable to a Latin face. Tamil's
+/// pulli and Sinhala's al-lakuna are no linkers.
+#[test]
+fn a_letter_after_a_virama_joins_only_in_its_own_script() {
+    assert!(continues_syllable('\u{094D}', 'क'));
+    assert!(continues_syllable('\u{09CD}', 'ক'));
+    assert!(!continues_syllable('\u{094D}', 'a'));
+    assert!(!continues_syllable('\u{094D}', 'ক'));
+    assert!(!continues_syllable('\u{0BCD}', 'க'));
+    assert!(!continues_syllable('\u{0DCA}', 'ක'));
+    assert!(continues_syllable('\u{200D}', 'य'));
+    assert!(continues_syllable('क', '\u{093F}'));
+    assert!(!continues_syllable('a', 'b'));
+    let f = system();
+    let spans = [TextSpan::new("क्a", DEVA, 24.0)];
+    let para = ParagraphStyle::default();
+    let laid = f.glyph_layout(&TextRequest {
+        spans: &spans,
+        frame: None,
+        align: TextAlign::Left,
+        para: &para,
+        on_path: None,
+    });
+    let first = laid.glyphs.first().expect("glyphs");
+    assert_eq!(
+        first.font.data.len(),
+        NOTO_DEVA.len(),
+        "क् stays in its face"
+    );
+}

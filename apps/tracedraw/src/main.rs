@@ -41,7 +41,7 @@ mod curve_join;
 mod defaults;
 mod describe;
 #[cfg(test)]
-mod devanagari_pdf_tests;
+mod devanagari_join_tests;
 mod dimensions;
 mod distort_tool;
 mod doc_stats;

@@ -302,7 +302,7 @@ same group, else the status bar says so and nothing changes. One undo
 step; the first line's object keeps its fill and outline (#599,
 `ops2::tests::lines_of_text_join_into_a_paragraph_that_flows`). Hindi
 lines joined this way flow the same way, breaking only between syllables
-(`devanagari_pdf_tests::joined_hindi_lines_flow_and_break_between_syllables`).
+(`devanagari_join_tests::joined_hindi_lines_flow_and_break_between_syllables`).
 Lines kept as separate objects do not flow into each other: each grows
 on its own line, which is why the lines are joined first.
 
@@ -609,7 +609,11 @@ consonant after a virama or a zero width joiner. Text is never cut inside
 one for shaping (by face, by script or by span) and lines never break
 inside one. A syllable that a span boundary cuts (a vowel sign or the
 second half of a conjunct in another colour or style) is shaped whole
-with the span it starts in, each glyph keeping its own span's colour.
+in the style of the span it starts in: the font draws a syllable as one
+cluster, so the whole syllable takes that span's font, size and colour.
+After a linker (the virama of Devanagari, Bengali, Gujarati, Oriya,
+Telugu and Malayalam) only a consonant of the same script continues the
+syllable. Plain ASCII text skips these checks.
 Shaped in pieces, a half form showed with a visible halant, a vowel sign
 with a dotted circle, and a line broken inside a word could start with a
 vowel sign or the rest of a conjunct (#599). The corpus in

@@ -1,0 +1,46 @@
+# Throwaway check for #614 (not for merging): prints the Windows print
+# script, as TraceDraw runs it, on a printer that writes to a file.
+name: print check
+on:
+  push:
+    branches: [ci-print-check]
+permissions:
+  contents: read
+jobs:
+  print:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: A printer that writes to a file
+        shell: pwsh
+        run: |
+          Get-PrinterDriver | Format-Table Name
+          Add-PrinterPort -Name "C:\pc\new.pdf"
+          Add-PrinterPort -Name "C:\pc\old.pdf"
+          New-Item -ItemType Directory -Force C:\pc | Out-Null
+          Add-Printer -Name "Check New" -DriverName "Microsoft Print To PDF" -PortName "C:\pc\new.pdf"
+          Add-Printer -Name "Check Old" -DriverName "Microsoft Print To PDF" -PortName "C:\pc\old.pdf"
+          Get-Printer | Format-Table Name,DriverName,PortName
+      - name: The scripts
+        shell: pwsh
+        run: |
+          $env:PRINT_SCRIPT_OUT = "C:\pc\new.ps1"; $env:PRINTER_NAME = "Check New"
+          cargo test -p tracedraw --bins dump_windows_print_script -- --ignored
+          $env:PRINT_SCRIPT_OUT = "C:\pc\old.ps1"; $env:PRINTER_NAME = "Check Old"; $env:OLD_CONTROLLER = "1"
+          cargo test -p tracedraw --bins dump_windows_print_script -- --ignored
+      - name: Print as TraceDraw does (hidden window, no profile)
+        shell: pwsh
+        run: |
+          foreach ($k in "new", "old") {
+            $p = Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"C:\pc\$k.ps1" -WindowStyle Hidden -PassThru -RedirectStandardOutput "C:\pc\$k.out" -RedirectStandardError "C:\pc\$k.err"
+            $done = $p.WaitForExit(120000)
+            if (-not $done) { $p.Kill(); $code = "hung (killed after 120 s)" } else { $code = $p.ExitCode }
+            Start-Sleep -Seconds 10
+            $size = if (Test-Path "C:\pc\$k.pdf") { (Get-Item "C:\pc\$k.pdf").Length } else { "no file" }
+            $out = (Get-Content "C:\pc\$k.out" -Raw) -replace "`r?`n", " "
+            $err = (Get-Content "C:\pc\$k.err" -Raw) -replace "`r?`n", " "
+            Write-Output "::notice title=$k::exit $code; pdf $size; out: $out; err: $err"
+          }

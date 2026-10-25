@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Windows: printing to a printer from the Print dialog works. A print of one sheet, the usual case, failed before anything reached the printer, local or on the network, because the list of sheet sizes flattened in the PowerShell script; nothing came out and the spooler showed no job. The script also shows no "Printing page" box, gives up after five minutes instead of hanging, and writes what came of each print to `tracedraw.log` (#614).
+
 ## 0.18.0 (2026-10-25)
 
 - Large drawings with pictures use far less memory while editing: every undo step, background render and copied object now shares the picture data instead of copying it, so moving one curve in a drawing with 244 MB of pictures no longer adds 244 MB per step. Edit Fill and the font list preview no longer copy every step that can be redone. Saved files do not change.

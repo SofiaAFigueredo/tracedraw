@@ -605,7 +605,7 @@ pub fn warped_letters(shape: &Shape) -> Option<Vec<BezPath>> {
     Some(
         warped
             .iter()
-            .map(|p| crate::fit::fit_path(p, tolerance))
+            .map(|p| refit_path(p, tolerance))
             .collect(),
     )
 }
@@ -622,6 +622,14 @@ fn refit_tolerance(path: &BezPath) -> f64 {
     } else {
         0.01
     }
+}
+
+/// A baked warp's outline (short lines, and curves flattened first) as
+/// curves within `tolerance`, its corners kept sharp (#647, #840).
+fn refit_path(path: &BezPath, tolerance: f64) -> BezPath {
+    let mut lines = BezPath::new();
+    crate::geometry::flatten(path, tolerance * 0.25, &mut |el| lines.push(el));
+    crate::shaping::fit_polygon_curves(&lines, tolerance)
 }
 
 /// Whether outlines `a` and `b` run within `tol` of each other: every
@@ -674,7 +682,7 @@ pub(crate) fn same_outline(a: &BezPath, b: &BezPath, tol: f64) -> bool {
 fn refit_kind(kind: ShapeKind, tolerance: f64) -> ShapeKind {
     match kind {
         ShapeKind::Path { path, closed } => ShapeKind::Path {
-            path: crate::fit::fit_path(&path, tolerance),
+            path: refit_path(&path, tolerance),
             closed,
         },
         ShapeKind::Group { children } => ShapeKind::Group {
@@ -2361,6 +2369,44 @@ mod tests {
         let b = p.bounding_box();
         assert!((b.x0 - 0.0).abs() < 1e-6 && (b.x1 - 20.0).abs() < 1e-6);
         assert!((b.y1 - 20.0).abs() < 1e-6);
+    }
+
+    /// Convert to Curves of a square in perspective gives its four
+    /// corners joined by straight sides, and of a circle a few curves, not
+    /// a row of points (#840, #647).
+    #[test]
+    fn a_baked_perspective_is_a_few_nodes() {
+        let corners = [
+            Point::new(0.0, 0.0),
+            Point::new(20.0, 0.0),
+            Point::new(15.0, 20.0),
+            Point::new(5.0, 20.0),
+        ];
+        let pieces = |p: &BezPath| {
+            p.elements()
+                .iter()
+                .filter(|e| !matches!(e, PathEl::MoveTo(_) | PathEl::ClosePath))
+                .count()
+        };
+        let mut square = rect_shape();
+        square.effects = vec![Effect::Perspective { corners }];
+        let baked = bake_outline_warps(&square).expect("baked");
+        let p = baked.local_path();
+        assert!(pieces(&p) <= 4, "{:?}", p.elements());
+        assert!(p.elements().iter().all(|e| !matches!(e, PathEl::CurveTo(..))));
+        assert!(same_outline(&p, &evaluate(&square).main.local_path(), 0.02));
+        let mut circle = Shape::new(
+            crate::ShapeId(2),
+            ShapeKind::Ellipse {
+                rect: Rect::new(0.0, 0.0, 20.0, 20.0),
+                arc: None,
+            },
+        );
+        circle.effects = vec![Effect::Perspective { corners }];
+        let baked = bake_outline_warps(&circle).expect("baked");
+        let p = baked.local_path();
+        assert!(pieces(&p) <= 12, "{} pieces", pieces(&p));
+        assert!(same_outline(&p, &evaluate(&circle).main.local_path(), 0.05));
     }
 
     #[test]

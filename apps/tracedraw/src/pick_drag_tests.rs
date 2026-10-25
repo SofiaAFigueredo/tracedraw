@@ -6621,3 +6621,163 @@ fn an_idle_window_asks_for_no_frame() {
         );
     }
 }
+
+/// The Welcome Screen tab closes to its house while a drawing is open;
+/// the house shows the Welcome Screen again with its whole tab (#677).
+#[test]
+fn the_welcome_tab_closes_to_its_house() {
+    use crate::ui::tabs::{WELCOME_CLOSE, WELCOME_TAB};
+    let (ctx, mut app, _) = setup();
+    let rect_of =
+        |ctx: &egui::Context, id: &str| ctx.read_response(egui::Id::new(id)).map(|r| r.rect);
+    let press = |ctx: &egui::Context, app: &mut App, at: Pos2| {
+        frame(ctx, app, vec![Event::PointerMoved(at)], Modifiers::NONE);
+        click_at(ctx, app, at, Modifiers::NONE);
+        frame(ctx, app, Vec::new(), Modifiers::NONE);
+    };
+    app.show_welcome = true;
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let wide = rect_of(&ctx, WELCOME_TAB).expect("welcome tab");
+    let close = rect_of(&ctx, WELCOME_CLOSE).expect("close button");
+    press(&ctx, &mut app, close.center());
+    assert!(!app.show_welcome, "the drawing shows");
+    assert!(app.settings.welcome_tab_closed);
+    let house = rect_of(&ctx, WELCOME_TAB).expect("house");
+    assert!(house.width() < wide.width() / 2.0, "{house:?} {wide:?}");
+    assert!(rect_of(&ctx, WELCOME_CLOSE).is_none());
+    press(&ctx, &mut app, house.center());
+    assert!(app.show_welcome);
+    assert!(!app.settings.welcome_tab_closed);
+    let back = rect_of(&ctx, WELCOME_TAB).expect("welcome tab");
+    assert!(
+        (back.width() - wide.width()).abs() < 0.5,
+        "{back:?} {wide:?}"
+    );
+    // With no drawing open there is nothing else to show: no close button.
+    let ctx = crate::theme::ui_context();
+    let mut app = App::headless();
+    app.close_active_document();
+    assert!(!app.has_document());
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    assert!(rect_of(&ctx, WELCOME_TAB).is_some());
+    assert!(rect_of(&ctx, WELCOME_CLOSE).is_none());
+}
+
+#[test]
+fn the_export_dialog_starts_with_the_last_exports_choices() {
+    use crate::ui::dialogs::Dialog;
+    let (ctx, mut app, _) = setup();
+    let ctrl_e = |ctx: &egui::Context, app: &mut App| {
+        app.dialog = Dialog::None;
+        frame(
+            ctx,
+            app,
+            vec![key(egui::Key::E, Modifiers::COMMAND)],
+            Modifiers::COMMAND,
+        );
+        match &app.dialog {
+            Dialog::Export(st) => st.clone(),
+            other => panic!("no Export dialog: {other:?}"),
+        }
+    };
+    let first = ctrl_e(&ctx, &mut app);
+    assert!(first.remember);
+    assert!(app.settings.formats.remember_last, "on at first");
+    // A JPEG at quality 100 and 150 dpi exported...
+    let mut st = first.clone();
+    st.format = 3;
+    st.quality = 100;
+    st.dpi = 150.0;
+    st.title = "Poster".into();
+    st.selection_only = true;
+    st.all_pages = true;
+    app.settings.formats.remember_last = false;
+    app.keep_export_choices(&st);
+    // ...is what the next export starts with, the file's title and
+    // Selected only left out.
+    let next = ctrl_e(&ctx, &mut app);
+    assert_eq!((next.format, next.quality, next.dpi), (3, 100, 150.0));
+    assert!(next.title.is_empty());
+    assert!(!next.selection_only, "Selected only is for one export");
+    assert!(next.all_pages);
+    // "Do not show filter dialog" goes straight to the file with the same
+    // starting choices, so it never exports a selection that is gone.
+    assert_eq!(
+        app.last_export.as_ref().map(|e| e.selection_only),
+        Some(false)
+    );
+    // With Remember off the next session still starts as the options say.
+    assert_ne!(app.settings.formats.export_quality, 100);
+    app.settings.formats.remember_last = true;
+    app.keep_export_choices(&next);
+    assert_eq!(app.settings.formats.export_quality, 100);
+    assert_eq!(app.settings.formats.state().format, 3);
+    // Export for Web keeps nothing.
+    let mut web = crate::ui::dialogs::ExportState::web();
+    web.quality = 10;
+    app.keep_export_choices(&web);
+    assert_eq!(ctrl_e(&ctx, &mut app).quality, 100);
+    app.dialog = Dialog::None;
+}
+
+/// Drawing a rectangle or an ellipse with a wide black default outline:
+/// the outline is previewed at its width and the edge line (white with
+/// a black core) is drawn after it, on top, so the preview is not lost
+/// under the outline (#621).
+#[test]
+fn the_edge_of_the_shape_being_drawn_shows_over_a_wide_outline() {
+    let (ctx, mut app, _) = setup();
+    app.select(Vec::new());
+    app.set_default_properties(tracedraw_core::DefaultKind::Graphic, |p| {
+        p.stroke = Some(tracedraw_core::Stroke::new(
+            tracedraw_core::Color::BLACK,
+            3.0,
+        ));
+    });
+    let wide = 3.0 * app.view.zoom;
+    for (tool, y) in [(Tool::Rectangle, 80.0), (Tool::Ellipse, 140.0)] {
+        let a = app.view.to_screen(Point::new(80.0, y));
+        let b = app.view.to_screen(Point::new(140.0, y + 40.0));
+        app.set_tool(tool);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(a)],
+            Modifiers::NONE,
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![button(a, true, PointerButton::Primary, Modifiers::NONE)],
+            Modifiers::NONE,
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(a + (b - a) * 0.5)],
+            Modifiers::NONE,
+        );
+        let shapes = frame_shapes(&ctx, &mut app, vec![Event::PointerMoved(b)]);
+        let outline = shapes.iter().position(|s| {
+            matches!(s, egui::Shape::Path(p) if p.stroke.width >= wide - 0.01
+                && p.stroke.color == egui::epaint::ColorMode::Solid(egui::Color32::BLACK))
+        });
+        let edge = shapes.iter().rposition(|s| {
+            matches!(s, egui::Shape::LineSegment { stroke, .. }
+                if stroke.color == egui::Color32::WHITE
+                    && (stroke.width - crate::canvas::HALO_WIDTH).abs() < 1e-3)
+        });
+        assert!(
+            matches!((outline, edge), (Some(o), Some(e)) if e > o),
+            "{tool:?}: outline {outline:?}, edge {edge:?}"
+        );
+        frame(
+            &ctx,
+            &mut app,
+            vec![button(b, false, PointerButton::Primary, Modifiers::NONE)],
+            Modifiers::NONE,
+        );
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+}

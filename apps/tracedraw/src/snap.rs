@@ -59,37 +59,81 @@ pub struct AlignKey {
     options: live_guides::AlignOptions,
 }
 
-/// What stays put of the curves whose nodes are being dragged: per curve
-/// its bounds and its other nodes and the segments between two of them,
-/// on the page (#673).
+/// What stays put of the curves whose nodes are being dragged, on the
+/// page (#673): their other nodes and the segments between two of them,
+/// in pieces of at most [`STILL_PIECE`] segments (or nodes not on such a
+/// segment), each with its bounds. Built once a drag; a move looks only
+/// at the pieces near the pointer, so a long curve costs no more a frame
+/// than a short one.
 #[derive(Debug, Clone, Default)]
-pub struct StillGeometry(Vec<(Rect, Vec<Geo>)>);
+pub struct StillGeometry(Vec<(Rect, Geo)>);
+
+/// Segments (or lone nodes) in one piece of [`StillGeometry`].
+const STILL_PIECE: usize = 16;
 
 impl StillGeometry {
     pub fn of(start: &[crate::node_edit::StartCurve]) -> Self {
+        use tracedraw_core::geometry::{BezPath, PathEl, Shape as _};
         let mut out = Vec::new();
         for c in start {
             let moving: std::collections::HashSet<usize> = c.indices.iter().copied().collect();
-            let points: Vec<Point> = tracedraw_core::nodes::nodes(&c.path)
+            let path = c.transform
+                * tracedraw_core::nodes::segments_where(&c.path, |i| !moving.contains(&i));
+            // The segments in pieces, each starting where the last ended.
+            let mut ends: std::collections::HashSet<(i64, i64)> = Default::default();
+            let key = |p: Point| ((p.x * 1e6).round() as i64, (p.y * 1e6).round() as i64);
+            let mut piece = BezPath::new();
+            let mut count = 0;
+            let mut last = Point::ZERO;
+            let mut flush = |piece: &mut BezPath, count: &mut usize, at: Point| {
+                if *count > 0 {
+                    let done = std::mem::take(piece);
+                    out.push((
+                        done.bounding_box(),
+                        Geo::Outline {
+                            path: done,
+                            points: true,
+                        },
+                    ));
+                }
+                *count = 0;
+                piece.move_to(at);
+            };
+            for el in path.elements() {
+                match *el {
+                    PathEl::MoveTo(p) => {
+                        flush(&mut piece, &mut count, p);
+                        last = p;
+                    }
+                    PathEl::ClosePath => {}
+                    el => {
+                        if count == STILL_PIECE {
+                            flush(&mut piece, &mut count, last);
+                        }
+                        ends.insert(key(last));
+                        piece.push(el);
+                        count += 1;
+                        if let Some(p) = el.end_point() {
+                            ends.insert(key(p));
+                            last = p;
+                        }
+                    }
+                }
+            }
+            flush(&mut piece, &mut count, last);
+            // Nodes on no still segment, in pieces of their own.
+            let lone: Vec<Point> = tracedraw_core::nodes::nodes(&c.path)
                 .iter()
                 .filter(|n| !moving.contains(&n.index))
                 .map(|n| c.transform * n.pos)
+                .filter(|p| !ends.contains(&key(*p)))
                 .collect();
-            let Some(first) = points.first() else {
-                continue;
-            };
-            let mut bounds = points
-                .iter()
-                .fold(Rect::from_points(*first, *first), |r, q| r.union_pt(*q));
-            let path = c.transform
-                * tracedraw_core::nodes::segments_where(&c.path, |i| !moving.contains(&i));
-            let mut g = Vec::new();
-            if !path.elements().is_empty() {
-                bounds = bounds.union(tracedraw_core::geometry::Shape::bounding_box(&path));
-                g.push(Geo::Outline { path, points: true });
+            for chunk in lone.chunks(STILL_PIECE) {
+                let b = chunk
+                    .iter()
+                    .fold(Rect::from_points(chunk[0], chunk[0]), |r, q| r.union_pt(*q));
+                out.push((b, Geo::Nodes(chunk.to_vec())));
             }
-            g.push(Geo::Nodes(points));
-            out.push((bounds, g));
         }
         StillGeometry(out)
     }
@@ -108,9 +152,9 @@ impl App {
         self.settings.snap.threshold_px.clamp(1.0, 100.0) / self.view.zoom.max(1e-6) as f64
     }
 
-    /// The parts of `still` within the snapping radius of `p`: what a
+    /// The pieces of `still` within the snapping radius of `p`: what a
     /// node dragged there snaps to of its own curves.
-    pub(crate) fn still_near(&self, still: &StillGeometry, p: Point) -> Vec<Geo> {
+    pub(crate) fn still_near<'a>(&self, still: &'a StillGeometry, p: Point) -> Vec<&'a Geo> {
         if self.snap.off || !self.snap.objects || !self.snap_enabled() {
             return Vec::new();
         }
@@ -119,7 +163,7 @@ impl App {
             .0
             .iter()
             .filter(|(b, _)| b.inflate(tol, tol).contains(p))
-            .flat_map(|(_, g)| g.iter().cloned())
+            .map(|(_, g)| g)
             .collect()
     }
 
@@ -261,8 +305,8 @@ impl App {
 
     /// Snapping geometry of the page and of the objects whose bounds come
     /// within `tol` of `p`, leaving out `exclude`.
-    fn snap_geometry(&self, p: Point, tol: f64, exclude: &[ShapeId], own: &[Geo]) -> Vec<Geo> {
-        let mut g = own.to_vec();
+    fn snap_geometry(&self, p: Point, tol: f64, exclude: &[ShapeId]) -> Vec<Geo> {
+        let mut g = Vec::new();
         if self.snap.page {
             snap_points::page_geometry(self.page_rect(), &mut g);
         }
@@ -291,13 +335,19 @@ impl App {
         &self,
         p: Point,
         exclude: &[ShapeId],
-        own: &[Geo],
+        own: &[&Geo],
         points: bool,
         lines: bool,
     ) -> Option<Target> {
         let tol = self.snap_tolerance();
-        let geo = self.snap_geometry(p, tol, exclude, own);
-        let found = snap_points::targets(&geo, p, tol, self.snap_from(), &self.settings.snap.modes);
+        let geo = self.snap_geometry(p, tol, exclude);
+        let found = snap_points::targets(
+            own.iter().copied().chain(&geo),
+            p,
+            tol,
+            self.snap_from(),
+            &self.settings.snap.modes,
+        );
         snap_points::best(&found, points, lines)
     }
 
@@ -346,7 +396,7 @@ impl App {
     /// [`App::snap_point_excluding`], with `own` snapping geometry of the
     /// excluded objects that stays put meanwhile (a node being dragged
     /// snaps to the other nodes and segments of its own curve, #673).
-    pub fn snap_point_with(&self, p: Point, exclude: &[ShapeId], own: &[Geo]) -> Point {
+    pub fn snap_point_with(&self, p: Point, exclude: &[ShapeId], own: &[&Geo]) -> Point {
         if self.snap.off {
             return p;
         }
@@ -485,7 +535,7 @@ impl App {
     }
 
     /// An object's or the page's edge, or a text baseline, near `p`.
-    fn edge_snap(&self, p: Point, exclude: &[ShapeId], own: &[Geo]) -> Point {
+    fn edge_snap(&self, p: Point, exclude: &[ShapeId], own: &[&Geo]) -> Point {
         match self.object_snap(p, exclude, own, false, true) {
             Some(t) => {
                 self.snap_mark.set(Some(t));

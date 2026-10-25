@@ -316,9 +316,12 @@ fn segments(path: &BezPath) -> Vec<PathSeg> {
     path.segments().collect()
 }
 
-/// End points of the outline's segments, without repeats.
+/// End points of the outline's segments, without repeats. One pass: a
+/// point is looked up among those seen (to the nearest 1e-9), so a long
+/// outline is not compared node against node.
 fn nodes_of(path: &BezPath) -> Vec<Point> {
     let mut out: Vec<Point> = Vec::new();
+    let mut seen: std::collections::HashSet<(i64, i64)> = Default::default();
     for el in path.elements() {
         use tracedraw_core::geometry::PathEl;
         let p = match el {
@@ -326,7 +329,7 @@ fn nodes_of(path: &BezPath) -> Vec<Point> {
             PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => *p,
             PathEl::ClosePath => continue,
         };
-        if !out.iter().any(|q| (*q - p).hypot() < 1e-9) {
+        if seen.insert(((p.x * 1e9).round() as i64, (p.y * 1e9).round() as i64)) {
             out.push(p);
         }
     }
@@ -413,8 +416,8 @@ fn add_on(
 /// Every snap target of `geo` within `tol` of `p`, with its distance, for
 /// the modes on. `from` is where the line being drawn starts (for tangent
 /// and perpendicular points).
-pub fn targets(
-    geo: &[Geo],
+pub fn targets<'a>(
+    geo: impl IntoIterator<Item = &'a Geo>,
     p: Point,
     tol: f64,
     from: Option<Point>,
@@ -424,7 +427,7 @@ pub fn targets(
     // Segments near the pointer, for edges, intersections, tangents and
     // perpendiculars; with their outline's index.
     let mut near: Vec<(usize, usize, PathSeg)> = Vec::new();
-    for (gi, g) in geo.iter().enumerate() {
+    for (gi, g) in geo.into_iter().enumerate() {
         match g {
             Geo::Outline { path, points } => {
                 let points = *points;

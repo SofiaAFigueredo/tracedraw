@@ -73,7 +73,10 @@ impl App {
         // its other nodes and segments too (#673).
         let still =
             still.unwrap_or_else(|| std::rc::Rc::new(crate::snap::StillGeometry::of(&start)));
-        let own = self.still_near(&still, grab + d);
+        // Where the node goes once Ctrl keeps the move on one axis.
+        let mut along = d;
+        constrain_axis(&mut along, horizontal);
+        let own = self.still_near(&still, grab + along);
         d = self.snapped_node_move(grab, d, horizontal, &exclude, &own);
         self.move_start_nodes(&start, d, grab, begun);
         self.drag = Drag::NodeMove {
@@ -121,7 +124,7 @@ impl App {
         mut d: Vec2,
         horizontal: Option<bool>,
         exclude: &[ShapeId],
-        own: &[crate::snap_points::Geo],
+        own: &[&crate::snap_points::Geo],
     ) -> Vec2 {
         constrain_axis(&mut d, horizontal);
         let target = self.snap_point_with(grab + d, exclude, own);

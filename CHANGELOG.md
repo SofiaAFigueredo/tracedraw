@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Fonts embedded in an opened `.cdr` file (or carried by a `.tdraw` file) that are not installed say "Embedded" at the end of their row in the font lists and after the name in the font box, so it is clear the text is drawn with the copy that came with the drawing (#518).
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

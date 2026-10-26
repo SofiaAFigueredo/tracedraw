@@ -5339,13 +5339,22 @@ fn finish_on_the_symmetry_bar_leaves_one_object() {
 #[test]
 #[ignore]
 fn frame_times_of_the_pen_preview() {
-    for preview in [false, true] {
+    // With one segment placed, and with 300 (#672: the placed segments
+    // lie on a white line).
+    for (preview, placed) in [(false, 1), (true, 1), (true, 300)] {
         let (ctx, mut app, _) = setup();
         app.select(Vec::new());
         app.settings.curves.pen_preview = preview;
         app.set_tool(Tool::Pen);
         let a = Pos2::new(500.0, 400.0);
         click_at(&ctx, &mut app, a, Modifiers::NONE);
+        for k in 1..placed {
+            let q = a + egui::vec2(
+                (k as f32 * 37.0) % 600.0 - 300.0,
+                (k as f32 * 53.0) % 400.0 - 200.0,
+            );
+            click_at(&ctx, &mut app, q, Modifiers::NONE);
+        }
         let n = 300;
         let (mut ui_t, mut tess_t, mut verts) = (0.0, 0.0, 0usize);
         for i in 0..n {
@@ -5376,7 +5385,7 @@ fn frame_times_of_the_pen_preview() {
             out.textures_delta.clear();
         }
         eprintln!(
-            "pen preview {preview}: ui {:.3} ms, tessellation {:.3} ms, {} vertices a frame",
+            "pen preview {preview}, {placed} placed: ui {:.3} ms, tessellation {:.3} ms, {} vertices a frame",
             ui_t * 1000.0 / n as f64,
             tess_t * 1000.0 / n as f64,
             verts / n
@@ -7425,10 +7434,17 @@ fn the_edge_of_the_shape_being_drawn_shows_over_a_wide_outline() {
             matches!(s, egui::Shape::Path(p) if p.stroke.width >= wide - 0.01
                 && p.stroke.color == egui::epaint::ColorMode::Solid(egui::Color32::BLACK))
         });
-        let edge = shapes.iter().rposition(|s| {
-            matches!(s, egui::Shape::LineSegment { stroke, .. }
-                if stroke.color == egui::Color32::WHITE
-                    && (stroke.width - crate::canvas::HALO_WIDTH).abs() < 1e-3)
+        // Segments for a short edge, a path for a long one (#672).
+        let edge = shapes.iter().rposition(|s| match s {
+            egui::Shape::LineSegment { stroke, .. } => {
+                stroke.color == egui::Color32::WHITE
+                    && (stroke.width - crate::canvas::HALO_WIDTH).abs() < 1e-3
+            }
+            egui::Shape::Path(p) => {
+                p.stroke.color == egui::epaint::ColorMode::Solid(egui::Color32::WHITE)
+                    && (p.stroke.width - crate::canvas::HALO_WIDTH).abs() < 1e-3
+            }
+            _ => false,
         });
         assert!(
             matches!((outline, edge), (Some(o), Some(e)) if e > o),
@@ -9057,4 +9073,182 @@ fn a_toolbar_dragged_onto_another_row_shares_it() {
         frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
     }
     assert_eq!(rows(&app), vec![vec![Bar::Standard], vec![Bar::Property]]);
+}
+
+/// Over a black fill, what is being drawn shows (#672): a freehand stroke,
+/// a polyline in progress and a 3-point tool's base line waiting for the
+/// third click are black lines on white ones along them, the Bezier
+/// tool's placed segments, in the black outline they will get, lie on a
+/// white line too, and the polyline's node squares have a white edge.
+#[test]
+fn lines_being_drawn_show_on_a_black_fill() {
+    use egui::epaint::ColorMode;
+    let (ctx, mut app, _) = setup();
+    app.apply_fill(tracedraw_core::Fill::Solid(tracedraw_core::Color::BLACK));
+    app.select(Vec::new());
+    // Distance from `p` to the polyline `along`.
+    let off = |p: Pos2, along: &[Pos2]| {
+        along
+            .windows(2)
+            .map(|w| {
+                let (a, b) = (w[0], w[1]);
+                let ab = b - a;
+                let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                (a + ab * t - p).length()
+            })
+            .fold(f32::MAX, f32::min)
+    };
+    // The index of a line of `color` and `width` lying along `along`
+    // (within 3 px), segment or path.
+    let line_at = |shapes: &[egui::Shape], color: egui::Color32, width: f32, along: &[Pos2]| {
+        shapes.iter().position(|s| {
+            let (pts, w, c): (Vec<Pos2>, f32, bool) = match s {
+                egui::Shape::LineSegment { points, stroke } => {
+                    (points.to_vec(), stroke.width, stroke.color == color)
+                }
+                egui::Shape::Path(ps) => (
+                    ps.points.clone(),
+                    ps.stroke.width,
+                    ps.stroke.color == ColorMode::Solid(color),
+                ),
+                _ => return false,
+            };
+            c && (w - width).abs() < 1e-3
+                && pts.len() > 1
+                && pts.iter().all(|p| off(*p, along) < 3.0)
+        })
+    };
+    let haloed = |shapes: &[egui::Shape], inner: egui::Color32, along: &[Pos2]| {
+        let white = line_at(
+            shapes,
+            egui::Color32::WHITE,
+            crate::canvas::HALO_WIDTH,
+            along,
+        );
+        let line = line_at(shapes, inner, crate::canvas::HALO_INNER, along);
+        matches!((white, line), (Some(w), Some(l)) if l > w)
+    };
+    let a = app.view.to_screen(Point::new(20.0, 20.0));
+    let b = app.view.to_screen(Point::new(50.0, 30.0));
+    let c = app.view.to_screen(Point::new(40.0, 35.0));
+    // A freehand stroke, while the button is down.
+    app.set_tool(Tool::Freehand);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(a)],
+        Modifiers::NONE,
+    );
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(a, true, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    let mut stroke = vec![a];
+    for i in 1..=4 {
+        let p = a + (b - a) * (i as f32 / 4.0) + egui::vec2(0.0, (i % 2) as f32 * 6.0);
+        stroke.push(p);
+        frame(
+            &ctx,
+            &mut app,
+            vec![Event::PointerMoved(p)],
+            Modifiers::NONE,
+        );
+    }
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert!(haloed(&shapes, egui::Color32::BLACK, &stroke), "freehand");
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(b, false, PointerButton::Primary, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    // A polyline with two points placed, the pointer away.
+    app.select(Vec::new());
+    app.set_tool(Tool::Polyline);
+    click_at(&ctx, &mut app, a, Modifiers::NONE);
+    click_at(&ctx, &mut app, b, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(c)],
+        Modifiers::NONE,
+    );
+    assert!(app.curve.is_some(), "a polyline in progress");
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert!(
+        haloed(&shapes, egui::Color32::BLACK, &[a, b, c]),
+        "polyline"
+    );
+    // Its node squares have a white edge.
+    for p in [a, b] {
+        assert!(
+            shapes.iter().any(|s| matches!(s, egui::Shape::Rect(r)
+                if r.stroke.color == egui::Color32::WHITE
+                    && (r.rect.center() - p).length() < 1.5)),
+            "a white edge at {p:?}"
+        );
+    }
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::Escape, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    // The Bezier tool: a segment placed, in the default black outline,
+    // away from the freehand stroke and the polyline (Esc keeps the
+    // polyline): a click on their end nodes would go on from them.
+    app.curve = None;
+    app.select(Vec::new());
+    app.set_tool(Tool::Bezier);
+    // Snapping off: the nodes go where they are clicked.
+    app.snap.off = true;
+    let (a2, b2) = (
+        app.view.to_screen(Point::new(15.0, 37.0)),
+        app.view.to_screen(Point::new(55.0, 38.0)),
+    );
+    click_at(&ctx, &mut app, a2, Modifiers::NONE);
+    click_at(&ctx, &mut app, b2, Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(c)],
+        Modifiers::NONE,
+    );
+    assert!(app.curve.is_some(), "a curve in progress");
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let outline = app
+        .default_stroke()
+        .map(|s| crate::canvas::to_color32(s.color))
+        .expect("a default outline");
+    assert!(haloed(&shapes, outline, &[a2, b2]), "placed segments");
+    app.snap.off = false;
+    frame(
+        &ctx,
+        &mut app,
+        vec![key(egui::Key::Escape, Modifiers::NONE)],
+        Modifiers::NONE,
+    );
+    // A 3-point curve's base line, released and waiting for the
+    // third click.
+    app.curve = None;
+    app.select(Vec::new());
+    app.set_tool(Tool::ThreePointCurve);
+    drag(&ctx, &mut app, a, b, Modifiers::NONE, Vec::new());
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(c)],
+        Modifiers::NONE,
+    );
+    assert!(
+        app.three_point_base.is_some(),
+        "waiting for the third click"
+    );
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    assert!(
+        haloed(&shapes, egui::Color32::BLACK, &[a, b]),
+        "3-point base"
+    );
 }

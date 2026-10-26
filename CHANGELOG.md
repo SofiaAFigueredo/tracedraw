@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- What is being drawn shows over a black or dark fill: a freehand stroke, a polyline, 2-point line, B-spline or 3-point curve in progress and the 3-point tools' base line are a black hairline on a white line, the Bezier and Pen segments placed so far lie on a white line under their outline colour, the connector line and the zoom, text frame and rubber band boxes are on a white line too, and the node squares of a curve in progress have a white edge (#672).
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

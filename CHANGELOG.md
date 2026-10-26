@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Shape tool: a node being dragged snaps to the other nodes and segments of its own curve too, not only to other objects (#673).
+
 ## 0.19.3 (2026-10-26)
 
 - Blend panel: the Color Blend choices (Direct, Clockwise, Counterclockwise) show again; the Reset button's row took the rest of the panel and pushed them out of sight. An Apply button blends the two selected objects with the panel's settings (#815).

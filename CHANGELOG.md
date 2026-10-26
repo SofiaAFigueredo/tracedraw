@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Print Preview shows the printer choice at the top of its options, with the gear button that opens the chosen printer's Properties, its status and the number of copies with Collate, so the printer can be changed without going back to the Print dialog (#792).
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

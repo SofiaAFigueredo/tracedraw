@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- PDF import: Hindi written by office suites (the size set with the font, each glyph placed with a plain text matrix) comes in as whole words. A vowel sign placed a fraction of a point off the line, or the next syllable starting just before a sign's end, began a new text in the middle of a word, so क्षेत्र, शुद्धि or प्रार्थना came in as two texts and broke apart when edited; all 59 words of the test corpus and whole sentences now come back as typed (#771).
+
 - Print Preview with Print separations: the inks unticked under it no longer print; every plate printed before (#846).
 - Number fields keep the mouse wheel: turning it over a field on the property bar (the angle, the outline width, any spin box) or in a docker or dialog steps the value notch after notch. The bar or panel around the field slid on with the wheel after the first notch and carried the field away from under the pointer, so the wheel stopped working on it. Parts of a notch from a touchpad now add up to one step instead of a step each (#783).
 - Shape tool: a node being dragged snaps to the other nodes and segments of its own curve too, not only to other objects (#673).

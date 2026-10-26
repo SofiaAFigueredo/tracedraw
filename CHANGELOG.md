@@ -6,6 +6,10 @@ full, row-by-row status.
 
 ## Unreleased
 
+- A single click on an object with a drawing or shaping tool (the rectangle, ellipse, polygon and other box tools, Spiral, Common Shapes, Table outside a table, Knife, the connectors, Blend, Block Shadow, the shape brushes and others whose click had no job) selects it, Shift adds or takes it away, Ctrl reaches into groups, and a click on empty space lets go; a drag still draws. The line tools and Text keep their clicks (#271, by zalmanleib).
+- The shape brushes (Smooth, Smear, Twirl, Attract and Repel, Smudge, Roughen) change only the selected objects: with nothing selected a drag no longer takes the object under the pointer, and the status bar says to select one first (#271, by zalmanleib).
+- While typing text, Ctrl+L, Ctrl+E, Ctrl+R, Ctrl+J, Ctrl+H and Ctrl+N align it left, centre, right, justified, force justified or not at all, and a new alignment keeps text typed at a point in place at the reference point of the X and Y fields instead of moving it (#271, by zalmanleib).
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

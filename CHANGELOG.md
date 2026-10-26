@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- The main window starts as it was left: maximized when it was left maximized (a maximize the window system dropped while the window opened is asked for again, and the first frames no longer overwrite the kept state), and a kept size that comes back the same with a larger interface or system text size, where it shrank at every start. A kept size larger than the monitor starts maximized (#787).
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Shaping with open curves: an open curve or line as the target of Weld, Trim or Intersect is now cut by the closed objects and stays open (Trim keeps the parts outside, Intersect the part inside, Weld adds the parts outside to the welded shapes). An open curve acting on a closed object no longer distorts it: it takes no part, and the status bar points to the Knife tool for cutting a shape along a line (#828).
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

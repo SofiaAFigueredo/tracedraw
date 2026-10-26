@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Toolbars move into rows: the standard toolbar, the property bar, the Text, Zoom and Transform toolbars and the time tracker, docked at the top or the bottom, can share a row. Drag a toolbar's grip onto another toolbar's row to put it beside that one, or onto the line between two rows to give it a row of its own; the Text, Zoom and Transform toolbars and the time tracker now have grips and float or dock like the others. The rows are kept with the preferences (#837, #855).
+
 - Print Preview with Print separations: the inks unticked under it no longer print; every plate printed before (#846).
 - Number fields keep the mouse wheel: turning it over a field on the property bar (the angle, the outline width, any spin box) or in a docker or dialog steps the value notch after notch. The bar or panel around the field slid on with the wheel after the first notch and carried the field away from under the pointer, so the wheel stopped working on it. Parts of a notch from a touchpad now add up to one step instead of a step each (#783).
 - Shape tool: a node being dragged snaps to the other nodes and segments of its own curve too, not only to other objects (#673).

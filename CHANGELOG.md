@@ -6,6 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
+- TraceDraw opens faster. The splash screen no longer stays up for at least 1.6 s whether the start needs it or not: it goes as soon as the editor can be built (the editor opens in 0.1 s here instead of 1.75 s). The list of system fonts is read while the window and the graphics driver start up instead of after them, the system fonts for Chinese, Japanese, Arabic, Hindi and Bengali no longer hold the editor back unless the interface language needs one, and the file a start leaves for later starts to find the window by is no longer flushed to the disk. The browser version starts compiling the module while it downloads, and downloads it together with its script. Each start logs `the editor was built in N ms` and `first frame N s after the start`.
 - Tracing: the grain of photos and compressed images is taken out before the colours are picked (more at lower detail, none at the highest), so flat colours no longer come out full of white holes, scratches and specks, and the trace has far fewer curves; edges and corners keep their place (#611).
 - Text fitted to a path: with the Pick tool the property bar shows the path's own fields (placement with Top centre and Bottom centre, distance from the path, the two mirrors, Straighten Text) before the text fields, so text on the bottom of a circle can be turned to read left to right, as on a stamp. The text fields came first and hid them (#193).
 

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- TraceDraw opens faster. The splash screen no longer stays up for at least 1.6 s whether the start needs it or not: it goes as soon as the editor can be built (the editor opens in 0.1 s here instead of 1.75 s). The list of system fonts is read while the window and the graphics driver start up instead of after them, the system fonts for Chinese, Japanese, Arabic, Hindi and Bengali no longer hold the editor back unless the interface language needs one, and the file a start leaves for later starts to find the window by is no longer flushed to the disk. The browser version starts compiling the module while it downloads, and downloads it together with its script. Each start logs `the editor was built in N ms` and `first frame N s after the start`.
+
 ## 0.19.4 (2026-10-26)
 
 - Print Preview: a page smaller than the paper repeated on it (step and repeat, several pages per sheet) shows every copy. Only the copies in one band of the preview were drawn and white covered the rest; any group or clip frame moved by its own transform was left out the same way in large renders (#848).

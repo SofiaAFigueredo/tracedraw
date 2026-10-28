@@ -60,11 +60,13 @@ impl CharTracker {
             }
             WM_CHAR => {
                 // Lost: no key press before it, or the text of a key an
-                // input method took.
-                let lost = match self.key {
-                    None => true,
-                    Some(vk) => vk == VK_PROCESSKEY,
-                };
+                // input method took. The composing input methods of
+                // Chinese, Japanese and Korean hand their text over as
+                // a commit the windowing layer does deliver, often a
+                // frame later than the message: their scripts are not
+                // taken from a processed key, or they would type twice.
+                let processed = self.key == Some(VK_PROCESSKEY);
+                let lost = self.key.is_none() || processed;
                 let unit = (wparam & 0xFFFF) as u16;
                 let ch = match unit {
                     0xD800..=0xDBFF => {
@@ -82,7 +84,9 @@ impl CharTracker {
                         char::from_u32(wparam as u32)
                     }
                 };
-                if let Some(ch) = ch.filter(|c| lost && typed_char(*c)) {
+                if let Some(ch) =
+                    ch.filter(|c| lost && typed_char(*c) && !(processed && composed_script(*c)))
+                {
                     self.lost.push(ch);
                 }
             }
@@ -91,6 +95,24 @@ impl CharTracker {
             _ => {}
         }
     }
+}
+
+/// A character of the scripts typed with a composing input method
+/// (Chinese, Japanese, Korean, and their full-width forms), which comes
+/// through the input method's commit.
+fn composed_script(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11FF
+        | 0x2E80..=0x2FFF
+        | 0x3000..=0x30FF
+        | 0x3130..=0x318F
+        | 0x31A0..=0x9FFF
+        | 0xA960..=0xA97F
+        | 0xAC00..=0xD7FF
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFFEF
+        | 0x20000..=0x3FFFF)
 }
 
 /// A character that types (as the windowing layer filters them): no
@@ -185,6 +207,29 @@ pub fn install(builder: &mut eframe::EventLoopBuilder<eframe::UserEvent>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A composing input method's text (Chinese here) after a processed
+    /// key is left to the commit the windowing layer delivers, even when
+    /// that commit comes in a later frame, so it is never typed twice;
+    /// Tamil after a processed key is still kept (#1151).
+    #[test]
+    fn composed_scripts_are_left_to_the_commit() {
+        let mut t = CharTracker::default();
+        t.message(WM_KEYDOWN, VK_PROCESSKEY as usize);
+        t.message(WM_CHAR, '中' as usize);
+        t.message(WM_CHAR, '\u{3042}' as usize);
+        t.message(WM_CHAR, '\u{d55c}' as usize);
+        assert_eq!(t.lost, "");
+        t.message(WM_KEYUP, VK_PROCESSKEY as usize);
+        t.message(WM_KEYDOWN, VK_PROCESSKEY as usize);
+        t.message(WM_CHAR, '\u{0b95}' as usize);
+        assert_eq!(t.lost, "\u{0b95}");
+        // With no key before it, any script is kept.
+        t.lost.clear();
+        t.message(WM_KEYUP, VK_PROCESSKEY as usize);
+        t.message(WM_CHAR, '中' as usize);
+        assert_eq!(t.lost, "中");
+    }
 
     fn feed(msgs: &[(u32, usize)]) -> String {
         let mut t = CharTracker::default();

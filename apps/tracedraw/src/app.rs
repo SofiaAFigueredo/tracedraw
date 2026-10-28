@@ -2536,6 +2536,17 @@ impl App {
     }
 
     /// A new document with localised default page and layer names.
+    /// A command adding a page of `size` at the end, named in the
+    /// interface's language as the first page is, with its layer (#1127).
+    pub fn localized_page(&self, size: Size) -> Command {
+        let n = self.doc().pages.len() + 1;
+        Command::AddPage {
+            name: Some(crate::i18n::trf("doc.page_n", &[("n", &n.to_string())])),
+            size,
+            layer: Some(crate::i18n::trf("docker.layer_n", &[("n", "1")])),
+        }
+    }
+
     pub fn localized_document(title: impl Into<String>, size: Size) -> tracedraw_core::Document {
         let mut doc = tracedraw_core::Document::new(title, size);
         for (i, p) in doc.pages.iter_mut().enumerate() {
@@ -7279,7 +7290,7 @@ impl App {
 
     pub fn add_page(&mut self) {
         let size = self.page_size();
-        self.run(Command::AddPage { name: None, size });
+        self.run(self.localized_page(size));
         if let Some(p) = self.doc().pages.last() {
             self.page = p.id;
         }
@@ -7292,7 +7303,7 @@ impl App {
     pub fn insert_page(&mut self, after: bool) {
         let idx = self.page_index();
         let size = self.page_size();
-        self.run(Command::AddPage { name: None, size });
+        self.run(self.localized_page(size));
         let Some(new) = self.doc().pages.last().map(|p| p.id) else {
             return;
         };

@@ -11193,3 +11193,30 @@ fn the_pen_preview_is_a_blue_line_on_a_white_one() {
     assert!((white - span).abs() < 2.0, "white {white} of {span}");
     assert_eq!(crate::canvas::HALO_INNER * 2.0, crate::canvas::HALO_WIDTH);
 }
+
+/// Pages added to a drawing (Layout > Insert Page, the + of the page
+/// tabs, the navigator's insert buttons) are named in the interface's
+/// language, as the first page is, and so is their layer (#1127).
+#[test]
+fn added_pages_are_named_in_the_interface_language() {
+    crate::i18n::with_thread_language("de", || {
+        let (_, mut app, _) = setup();
+        app.add_page();
+        app.insert_page(true);
+        let names: Vec<(String, String)> = app
+            .doc()
+            .pages
+            .iter()
+            .map(|p| (p.name.clone(), p.layers[0].name.clone()))
+            .collect();
+        assert_eq!(names.len(), 3);
+        for (name, layer) in &names[1..] {
+            assert!(name.starts_with("Seite "), "{names:?}");
+            assert_eq!(layer, "Ebene 1", "{names:?}");
+        }
+        assert_eq!(names[1].0, "Seite 2", "{names:?}");
+        // Undo takes the page away again.
+        app.undo();
+        assert_eq!(app.doc().pages.len(), 2);
+    });
+}

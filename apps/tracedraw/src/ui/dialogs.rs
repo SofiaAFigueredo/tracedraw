@@ -1390,6 +1390,7 @@ pub fn show(app: &mut App, ctx: &Context) {
                                 &[("n", &(base + k as usize + 1).to_string())],
                             )),
                             size,
+                            layer: Some(trf("docker.layer_n", &[("n", "1")])),
                         })
                         .collect();
                     let _ = app.engine.run_batch("Insert Page", &cmds);

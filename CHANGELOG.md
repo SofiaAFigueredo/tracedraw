@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+## 0.19.12 (2026-10-28)
+
 - Blend tool: the squares at the ends of a picked blend's line (text blends too) now work: dragging one moves its object, so the blend changes direction, and dropping it on another object makes that object the new start or end with the blend's settings. They were only shown (#965).
 - Opening .cdr: blends saved by version 25 read their real step counts (the count is the low half of the field; every one read as 20 with a warning), a record the file counts as an object no longer makes a 150-step blend that floods the drawing, and blends between two open arcs draw open arcs end to end instead of closed shapes crossed through the middle, so the reporter's file opens as the program that saved it shows it (#980).
 - Export: the Preset list holds every saved preset from the moment the dialog opens, each with its format in brackets; choosing one of another format switches to that format, and changing the format leaves the preset unchosen while the list stays whole. Since 0.18.0 the list shrank to the chosen format's presets, so a dialog opening at a format without presets showed none (#612).

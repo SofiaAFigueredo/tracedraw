@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+## 0.20.0 (2026-10-28)
+
 - Variable fonts: the text follows the axis sliders (Text docker, and the button beside the font size) while they are dragged, so the weight, width or any other axis can be judged on the page. The text changed only when the slider was released. Releasing still keeps the value as one undo step (#870).
 - Fit Objects to Path panel: it no longer starts with the values and the preview left from earlier work (on other objects or in another drawing); for other objects it starts from the defaults and shows no preview until a value is entered (#1136).
 - Print and Print Preview, Selection: only the selected objects print (objects on master layers and the page background printed too), and the area they cover is the page printed: with the sheet sized to the page the paper is that area, on a fixed sheet they are centred at their size, the layouts (several per sheet, step and repeat) repeat that area and Keep page size keeps them at their size. Before, they printed where they stood on the whole page (#1001).

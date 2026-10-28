@@ -12,11 +12,15 @@ side of the edge and shading the other. It is a live effect, set in the
 2. In the [[docker.bevel]] panel, choose the style:
    - [[docker.soft_edge]]: the edge slopes into the object, lit on one side
      and shaded on the other;
-   - [[docker.emboss]]: the object seems pressed out of the page.
+   - [[docker.emboss]]: the object seems pressed out of the page; the
+     bevel is drawn around the outline instead of inside it.
 3. Set the [[docker.distance]] (how far the bevel reaches into the object),
    the [[docker.light_angle]], the [[docker.intensity]] of the light, the
    [[docker.shadow_color]] and the [[docker.light_color]].
 4. Click [[docker.apply]].
+
+When you select an object that already has a bevel, the panel shows that
+bevel, and changing a setting edits it right away.
 
 To copy a bevel from another object, use
 [[menu.object > menu.object.copy_effect > menu.object.copy_bevel_from]].

@@ -1568,6 +1568,29 @@ fn extrude(app: &mut App, ui: &mut Ui) {
 
 fn bevel(app: &mut App, ui: &mut Ui) {
     let cur = current_effect(app, |e| matches!(e, Effect::Bevel { .. }));
+    // The panel shows the selected object's own bevel, so its sliders edit
+    // that bevel instead of replacing it with the last settings used.
+    if let Some(Effect::Bevel {
+        distance,
+        light_angle,
+        intensity,
+        style,
+        shadow_color,
+        light_color,
+    }) = &cur
+    {
+        if app.bevel_synced_to != app.selection.first().copied() {
+            app.bevel = crate::effects_ui::BevelSettings {
+                distance: *distance,
+                light_angle: *light_angle,
+                intensity: *intensity,
+                style: *style,
+                shadow_color: *shadow_color,
+                light_color: *light_color,
+            };
+            app.bevel_synced_to = app.selection.first().copied();
+        }
+    }
     let b = &mut app.bevel;
     let mut changed = false;
     ui.horizontal(|ui| {

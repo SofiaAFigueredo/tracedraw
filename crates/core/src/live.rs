@@ -107,12 +107,14 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "crate::extrude3d::Solid::is_plain")]
         space: crate::extrude3d::Solid,
     },
-    /// Bevel inside the outline: an inset band lit from `light_angle`.
+    /// Bevel: a band of `distance` lit from `light_angle`, inside the
+    /// outline (soft edge) or around it (emboss).
     Bevel {
         distance: f64,
         light_angle: f64,
         intensity: f64,
-        /// Soft edge (0) or emboss (1).
+        /// Soft edge (0, the band inside the outline) or emboss (1, the
+        /// band around it, so the object stands out of the page).
         style: u8,
         shadow_color: Color,
         light_color: Color,
@@ -985,12 +987,13 @@ fn evaluate_now(shape: &Shape) -> Evaluated {
                 distance,
                 light_angle,
                 intensity,
-                style: _,
+                style,
                 shadow_color,
                 light_color,
             } => {
                 above.extend(bevel(
                     &main,
+                    *style,
                     *distance,
                     *light_angle,
                     *intensity,
@@ -1532,15 +1535,22 @@ pub fn extrude_body(
 
 fn bevel(
     shape: &Shape,
+    style: u8,
     distance: f64,
     light_angle: f64,
     intensity: f64,
     shadow: Color,
     light: Color,
 ) -> Vec<Shape> {
-    let outer = shape.local_path();
-    let inner = crate::shaping::offset(&outer, -distance.abs());
-    if inner.elements().is_empty() {
+    let path = shape.local_path();
+    // Soft edge: the band lies inside the outline. Emboss: around it.
+    let (outer, inner) = if style == 1 {
+        (crate::shaping::offset(&path, distance.abs()), path)
+    } else {
+        let inner = crate::shaping::offset(&path, -distance.abs());
+        (path, inner)
+    };
+    if outer.elements().is_empty() || inner.elements().is_empty() {
         return Vec::new();
     }
     // The band between outer and inner, split into lit and shaded halves
@@ -2126,6 +2136,53 @@ mod tests {
         );
         s.fill = Fill::Solid(Color::rgb8(255, 0, 0));
         s
+    }
+
+    fn bevelled(style: u8) -> Evaluated {
+        let mut s = rect_shape();
+        s.effects.push(Effect::Bevel {
+            distance: 2.0,
+            light_angle: 135.0,
+            intensity: 50.0,
+            style,
+            shadow_color: Color::BLACK,
+            light_color: Color::WHITE,
+        });
+        evaluate(&s)
+    }
+
+    #[test]
+    fn soft_edge_bevel_stays_inside_the_outline() {
+        let ev = bevelled(0);
+        assert!(!ev.above.is_empty());
+        for part in &ev.above {
+            let b = part.bounds();
+            assert!(
+                b.x0 >= -1e-6 && b.x1 <= 20.0 + 1e-6 && b.y0 >= -1e-6 && b.y1 <= 20.0 + 1e-6,
+                "{b:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn emboss_bevel_surrounds_the_outline() {
+        let soft = bevelled(0);
+        let emboss = bevelled(1);
+        assert!(!emboss.above.is_empty());
+        let mut reach = Rect::new(0.0, 0.0, 20.0, 20.0);
+        for part in &emboss.above {
+            reach = reach.union(part.bounds());
+        }
+        // The band stands out of the object by the distance.
+        assert!(
+            (reach.x0 + 2.0).abs() < 0.1 && (reach.x1 - 22.0).abs() < 0.1,
+            "{reach:?}"
+        );
+        // And it differs from the soft edge.
+        assert_ne!(
+            emboss.above.iter().map(|p| p.bounds()).collect::<Vec<_>>(),
+            soft.above.iter().map(|p| p.bounds()).collect::<Vec<_>>()
+        );
     }
 
     #[test]

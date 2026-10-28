@@ -146,7 +146,7 @@ Counts: works 189, partial 6 (`.cdr` content coverage; CMX import; print preview
 | Perspective (Add Perspective, node drag) | works |
 | Draw in Perspective: 1-, 2- and 3-point grids with draggable vanishing points and corners, ground, wall and ceiling planes; objects drawn with the drawing tools are laid onto the active plane (an exact Perspective effect, one undo step) | works (see `behavior/draw-in-perspective.md`) |
 | Extrude, live: six types (small and big back and front toward a vanishing point locked to the object or the page, back and front parallel), depth, colour from the object, solid or a shade, up to three lights with their elevation, the body turned in space, a bevel on the front edge; hidden faces left out, curved sides as one outlined surface, every subpath extruded; the tool's drag and handle, a bar (3D menu) and the panel (camera, rotation, lighting, colour and bevel pages; vanishing point measured from the page origin or the object centre) editing the selected extrusion (see `behavior/extrude.md`) | works |
-| Bevel (soft edge, emboss) | works |
+| Bevel (soft edge inside the outline, emboss around it; depth, levels that fade the light across the band, light direction and strength, light and shade colours, an emboss colour in place of the fill), live; the panel shows and edits the selected object's bevel (see `help/en/effects/bevel.md`) | works |
 | Block shadow (depth, direction, colour, gap on the property bar) | works |
 | Transparency: uniform, gradient, pattern, texture; merge modes; fill/outline/all | works |
 | Lens (12 types, frozen, rate, palette rotation), Bitmap Effects lens: any bitmap effects run over what lies beneath (Lens panel, Effect Picker > Apply as a lens) | works (see `behavior/lens.md`) |

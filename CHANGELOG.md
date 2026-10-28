@@ -8,7 +8,7 @@ full, row-by-row status.
 
 - Objects panel: selecting an object on the page scrolls the list to its row, so an object far down a long list comes into view; a selection that stays the same leaves the scroll alone (#1044).
 - Envelope: Copy Envelope Properties (and Object > Copy Effect > Envelope From) picking an object with no envelope, such as a circle, a star or a drawn curve, now fits the selected text or objects into that object's shape. It said the object had no envelope, so text could not be fitted into a drawn shape (#993).
-- Bevel: Emboss now does something. The style was stored but never read, so Emboss drew the same band as Soft edge; it now draws the band around the outline, so the object stands out of the page. The Bevel panel also shows the bevel of the selected object (it showed the last settings used, and the first slider moved overwrote the object's distance, angle, intensity and colours with them) (#1135).
+- Bevel: Emboss now does something, and the panel has more to set. The style was stored but never read, so Emboss drew the same band as Soft edge; it now draws the band around the outline, so the object stands out of the page. New Level (1 to 8) fades the light and the shade across the band instead of two flat tones, and Emboss color tones the band from a color of your own instead of the object's fill. The panel is laid out like the other effect panels (Depth, Level, Light angle, Intensity, the colors), and it shows the bevel of the selected object (it showed the last settings used, and the first slider moved overwrote the object's distance, angle, intensity and colors with them). Bevels saved before open as they were (#1135).
 
 ## 0.19.10 (2026-10-28)
 

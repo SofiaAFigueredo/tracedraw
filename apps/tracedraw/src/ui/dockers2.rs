@@ -1577,6 +1577,8 @@ fn bevel(app: &mut App, ui: &mut Ui) {
         style,
         shadow_color,
         light_color,
+        level,
+        emboss_color,
     }) = &cur
     {
         if app.bevel_synced_to != app.selection.first().copied() {
@@ -1587,62 +1589,95 @@ fn bevel(app: &mut App, ui: &mut Ui) {
                 style: *style,
                 shadow_color: *shadow_color,
                 light_color: *light_color,
+                level: *level,
+                emboss_color: *emboss_color,
             };
             app.bevel_synced_to = app.selection.first().copied();
         }
     }
+    use crate::ui::docker_form::{row, section};
+    use crate::ui::tips::{keyed, pair};
     let b = &mut app.bevel;
     let mut changed = false;
+    // The style: two equal buttons across the panel.
     ui.horizontal(|ui| {
-        changed |= ui
-            .selectable_label(b.style == 0, tr("docker.soft_edge"))
-            .rich_tip(crate::ui::tips::keyed("docker.soft_edge"))
-            .clicked()
-            .then(|| b.style = 0)
-            .is_some();
-        changed |= ui
-            .selectable_label(b.style == 1, tr("docker.emboss"))
-            .rich_tip(crate::ui::tips::keyed("docker.emboss"))
-            .clicked()
-            .then(|| b.style = 1)
-            .is_some();
+        let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        for (style, key) in [(0, "docker.soft_edge"), (1, "docker.emboss")] {
+            let pick = ui
+                .add_sized(
+                    [w, 26.0],
+                    egui::Button::selectable(b.style == style, tr(key)),
+                )
+                .rich_tip(keyed(key))
+                .clicked();
+            if pick && b.style != style {
+                b.style = style;
+                changed = true;
+            }
+        }
     });
-    changed |= ui
-        .add(crate::ui::Rail(
-            egui::Slider::new(&mut b.distance, 0.1..=50.0)
-                .text(tr("docker.distance"))
-                .logarithmic(true),
-        ))
-        .rich_tip(crate::ui::tips::pair(
-            "docker.distance",
-            "docker.bevel_distance_desc",
-        ))
-        .changed();
-    changed |= ui
-        .add(crate::ui::Rail(
-            egui::Slider::new(&mut b.light_angle, 0.0..=360.0)
-                .text(tr("docker.light_angle"))
-                .suffix("°"),
-        ))
-        .rich_tip(crate::ui::tips::pair(
-            "docker.light_angle",
-            "extrude.light_angle_desc",
-        ))
-        .changed();
-    changed |= ui
-        .add(crate::ui::Rail(
-            egui::Slider::new(&mut b.intensity, 0.0..=100.0).text(tr("docker.intensity")),
-        ))
-        .rich_tip(crate::ui::tips::pair(
-            "docker.intensity",
-            "extrude.light_intensity_desc",
-        ))
-        .changed();
-    ui.horizontal(|ui| {
-        ui.label(tr("docker.shadow_color"));
-        changed |= color_button(ui, &mut b.shadow_color);
-        ui.label(tr("docker.light_color"));
+    section(ui, None);
+    row(ui, &tr("docker.depth"), |ui| {
+        changed |= ui
+            .add(crate::ui::Rail(
+                egui::Slider::new(&mut b.distance, 0.1..=50.0).logarithmic(true),
+            ))
+            .rich_tip(pair("docker.depth", "docker.bevel_distance_desc"))
+            .changed();
+    });
+    row(ui, &tr("docker.level"), |ui| {
+        let mut level = i32::from(b.level);
+        let top = i32::from(tracedraw_core::live::MAX_BEVEL_LEVEL);
+        if ui
+            .add(crate::ui::Rail(egui::Slider::new(&mut level, 1..=top)))
+            .rich_tip(keyed("docker.level"))
+            .changed()
+        {
+            b.level = level.clamp(1, top) as u8;
+            changed = true;
+        }
+    });
+    section(ui, None);
+    row(ui, &tr("docker.light_angle"), |ui| {
+        changed |= ui
+            .add(crate::ui::Rail(
+                egui::Slider::new(&mut b.light_angle, 0.0..=360.0).suffix("°"),
+            ))
+            .rich_tip(pair("docker.light_angle", "extrude.light_angle_desc"))
+            .changed();
+    });
+    row(ui, &tr("docker.intensity"), |ui| {
+        changed |= ui
+            .add(crate::ui::Rail(egui::Slider::new(
+                &mut b.intensity,
+                0.0..=100.0,
+            )))
+            .rich_tip(pair("docker.intensity", "extrude.light_intensity_desc"))
+            .changed();
+    });
+    section(ui, None);
+    row(ui, &tr("docker.light_color"), |ui| {
         changed |= color_button(ui, &mut b.light_color);
+    });
+    row(ui, &tr("docker.shadow_color"), |ui| {
+        changed |= color_button(ui, &mut b.shadow_color);
+    });
+    row(ui, &tr("docker.emboss_color"), |ui| {
+        let mut own = b.emboss_color.is_some();
+        if ui
+            .checkbox(&mut own, "")
+            .rich_tip(keyed("docker.emboss_color"))
+            .changed()
+        {
+            // Switched on, it starts from the shade the band had.
+            b.emboss_color = own.then_some(b.emboss_color.unwrap_or(Color::rgb8(128, 128, 128)));
+            changed = true;
+        }
+        if let Some(c) = &mut b.emboss_color {
+            changed |= color_button(ui, c);
+        } else {
+            dim(ui, tr("docker.emboss_color_off"));
+        }
     });
     let bv = app.bevel.clone();
     let effect = Effect::Bevel {
@@ -1652,6 +1687,8 @@ fn bevel(app: &mut App, ui: &mut Ui) {
         style: bv.style,
         shadow_color: bv.shadow_color,
         light_color: bv.light_color,
+        level: bv.level,
+        emboss_color: bv.emboss_color,
     };
     let has = !app.selection.is_empty();
     if cur.is_some() && changed {

@@ -5193,27 +5193,35 @@ impl App {
 
     /// Add a colour to the document palette as a step of its own (its
     /// eyedropper, Add from selection); nothing when it is there already.
+    /// Either way its swatch gets the white frame of the last colour used,
+    /// so a colour picked again shows where it is (#1125).
     pub fn add_to_document_palette(&mut self, c: Color) {
-        if self.doc().palette.contains(&c) {
+        if let Some(i) = self.doc().palette.iter().position(|x| *x == c) {
+            self.doc_palette_current = Some(i);
             return;
         }
         let mut colors = self.doc().palette.clone();
         colors.push(c);
         self.run(Command::SetDocumentPalette { colors });
+        self.doc_palette_current = self.doc().palette.iter().position(|x| *x == c);
     }
 
     /// The document palette collects the colours applied to objects; the addition joins the step that applied it.
     pub fn remember_color(&mut self, c: Color) {
-        if !self.settings.palette.auto_update_document
-            || matches!(c, Color::Registration)
-            || self.doc().palette.contains(&c)
-        {
+        // A colour of the palette applied again: its swatch is the last
+        // used (#1125).
+        if let Some(i) = self.doc().palette.iter().position(|x| *x == c) {
+            self.doc_palette_current = Some(i);
+            return;
+        }
+        if !self.settings.palette.auto_update_document || matches!(c, Color::Registration) {
             return;
         }
         let mut colors = self.doc().palette.clone();
         colors.push(c);
-        if let Err(e) = self.engine.amend(&Command::SetDocumentPalette { colors }) {
-            self.status = e.to_string();
+        match self.engine.amend(&Command::SetDocumentPalette { colors }) {
+            Ok(_) => self.doc_palette_current = Some(self.doc().palette.len() - 1),
+            Err(e) => self.status = e.to_string(),
         }
     }
 

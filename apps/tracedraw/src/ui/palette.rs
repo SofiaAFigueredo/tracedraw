@@ -1212,6 +1212,27 @@ mod tests {
         assert_eq!(mix(a, b, 0.1), Color::cmyk_pct(10.0, 0.0, 0.0, 5.0));
     }
 
+    /// The eyedropper of the document palette picking a colour it has
+    /// already frames that swatch, as the last colour used; a new colour
+    /// joins and takes the frame, and applying a palette colour moves it
+    /// there (#1125).
+    #[test]
+    fn a_colour_picked_again_frames_its_swatch() {
+        let mut app = App::headless();
+        let red = Color::rgb8(255, 0, 0);
+        let blue = Color::rgb8(0, 0, 255);
+        app.add_to_document_palette(red);
+        app.add_to_document_palette(blue);
+        let n = app.doc().palette.len();
+        let at = |app: &App, c: Color| app.doc().palette.iter().position(|x| *x == c);
+        assert_eq!(app.doc_palette_current, at(&app, blue));
+        app.add_to_document_palette(red);
+        assert_eq!(app.doc().palette.len(), n, "no second red swatch");
+        assert_eq!(app.doc_palette_current, at(&app, red));
+        app.remember_color(blue);
+        assert_eq!(app.doc_palette_current, at(&app, blue));
+    }
+
     #[test]
     fn applying_a_colour_adds_it_to_the_document_palette_in_the_same_step() {
         use tracedraw_core::{geometry::Rect as R, ShapeKind};

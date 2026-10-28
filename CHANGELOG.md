@@ -8,6 +8,8 @@ full, row-by-row status.
 
 - Variable fonts: the text follows the axis sliders (Text docker, and the button beside the font size) while they are dragged, so the weight, width or any other axis can be judged on the page. The text changed only when the slider was released. Releasing still keeps the value as one undo step (#870).
 - Dimensions: a dimension placed between two edges of an object (the sides of a rectangle, say, not its corners) now holds to them like one placed on nodes: moving, resizing, turning or reshaping the object takes the dimension along, each end keeping its place along its edge, and the value follows. Only ends on nodes were held, so a dimension between two sides stayed where it was (#1178).
+- Color palettes: every palette ticked in Window > Color Palettes or the Palette Manager shows, each in a strip of its own next to the default palette, with Close Palette in its menu. Only the first palette ticked was shown, so a second or third one stayed in the menu with a tick but never appeared (#1164).
+- Options > Customization > Commands: the bars' buttons that run a menu command (New, Open, Save, Undo, Zoom In, Rulers and others) take shortcuts on their Shortcut Keys tab, the same keys as their menu command; they had no Shortcut Keys tab. Rows the menus show only at times (Finish Editing Contents, Vertical Text) are listed and take shortcuts too (#1148).
 
 ## 0.19.12 (2026-10-28)
 

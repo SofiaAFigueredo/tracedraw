@@ -1469,6 +1469,8 @@ pub struct App {
     /// The Color docker's views, hue and palette.
     pub color_docker: crate::ui::color_docker::ColorDockerState,
     pub lens_synced_to: Option<ShapeId>,
+    /// The object whose bevel the Bevel panel last took its settings from.
+    pub bevel_synced_to: Option<ShapeId>,
     pub pending_blend_path: bool,
     /// Text > Fit Text to Path waits for a click on the path.
     pub pending_text_path: bool,
@@ -2473,6 +2475,7 @@ impl App {
             mixer_color: Color::cmyk_pct(0.0, 0.0, 0.0, 100.0),
             color_docker: Default::default(),
             lens_synced_to: None,
+            bevel_synced_to: None,
             pending_blend_path: false,
             pending_text_path: false,
             pending_palette_sample: false,

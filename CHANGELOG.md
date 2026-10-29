@@ -10,6 +10,7 @@ full, row-by-row status.
 
 - Microsoft Store package: `tracedraw-cli` is now a command-line alias of the TraceDraw app instead of a second app hidden from the Start menu, which the Store refuses ("headless app"). The command works in a terminal as before and the Start menu still shows only TraceDraw; the `tracedraw` alias that opened the window from a terminal is not in the Store package (an app can declare only one alias). The installer and the portable zip are unchanged.
 - Font list filter: the choices now open beside the list, in sections: fonts shown, style (serif, sans serif, script, decorative, monospaced, symbol), weight (light, regular, bold), width (condensed, normal, expanded), technology (TrueType, OpenType, variable), scripts (Latin, Greek, Cyrillic, Arabic, Devanagari, CJK and more), each OpenType feature on its own, embedding rights and the folders the fonts are in. Every value is read from the font files once (OS/2 weight and width classes, embedding bits, Unicode ranges, variation axes, GSUB and GPOS feature lists). Monospaced and Symbol now widen the style choices like the other styles instead of narrowing them (#867).
+- Segment Delete: besides the click and the box, a freehand stroke deletes every stretch it crosses, up to the crossings with other lines, in one step. Choose Freehand on the property bar, or hold Alt as the drag starts to take the other way for that drag (#1150).
 
 ## 0.21.0 (2026-10-29)
 

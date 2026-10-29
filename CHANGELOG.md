@@ -7,6 +7,7 @@ full, row-by-row status.
 ## Unreleased
 
 - Fit Objects to Path panel: copies along the path (a number of objects, the selected ones and then copies of them in turn, or as many as fit at a fixed distance), spacing measured between centers or between edges, an end offset, a row at a fixed distance placed at the start, middle or end, the objects on, above or below the path at a set distance, turned with the path or all by a fixed angle, and the order (as selected, reversed, left to right, right to left, largest or smallest first, large and small in turn). Copies go into their original's layer and Apply stays one undo step; the preview is worked out only when a value, the selection or the drawing changes (#1091, #1196).
+- Welcome Screen, Recent documents: one drawing comes off the list by the x that shows at the right of its row while the pointer is on it, or by Remove from list in its right-click menu, a drawing whose file is gone too; the others stay. Clear list still empties the whole list (#1152).
 
 ## 0.23.0 (2026-10-29)
 

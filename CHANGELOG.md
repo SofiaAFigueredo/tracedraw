@@ -7,6 +7,7 @@ full, row-by-row status.
 ## Unreleased
 
 - Publish to PDF, Prepress tab: crop marks, registration marks, colour bars and file information can be added around every page, drawn by the same code as the Print dialog's marks. The page grows by a 12 mm margin outside the bleed to hold them; the TrimBox stays the page, the BleedBox the page and its bleed and the MediaBox takes in the marks, and the drawing is clipped to the bleed. Marks in registration colour print on every plate (the All separation), in printed files too. A page background now covers the bleed in PDF files (#789).
+- Find and Replace: a Properties mode finds objects by type, fill colour (or no fill), outline colour (or no outline), outline width and font, on the current page or in the whole drawing. From Selection takes these from the selected object; Previous and Next step through the objects found, going to their page; Find All selects them. Replace All puts a new fill colour (in gradients too), outline colour, outline width or font in every object found, as one undo step. Only text and names could be searched (#1071).
 
 ## 0.20.0 (2026-10-28)
 

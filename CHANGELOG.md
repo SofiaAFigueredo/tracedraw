@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+## 0.22.0 (2026-10-29)
+
 - Microsoft Store package: `tracedraw-cli` is now a command-line alias of the TraceDraw app instead of a second app hidden from the Start menu, which the Store refuses ("headless app"). The command works in a terminal as before and the Start menu still shows only TraceDraw; the `tracedraw` alias that opened the window from a terminal is not in the Store package (an app can declare only one alias). The installer and the portable zip are unchanged.
 
 ## 0.21.0 (2026-10-29)

@@ -457,7 +457,13 @@ is described in [`docs/code-signing.md`](docs/code-signing.md).
 Privacy policy: this program will not transfer any information to other
 networked systems unless specifically requested by the user or the person
 installing or operating it. TraceDraw opens web pages (help, the project's
-pages) in your browser only when you choose to. The full policy is in
+pages) in your browser only when you choose to. The one automatic
+connection is the update check: the first time TraceDraw starts it asks
+whether to check for updates (Always check / Never check) and connects to
+nothing before you answer; with Always check it asks GitHub
+(`api.github.com`) once a day whether a newer release is out, sending no
+data about you or your drawings. Turn it off at any time in Tools >
+Options > Global > General, "Check for updates at start". The full policy is in
 [`PRIVACY.md`](PRIVACY.md).
 
 ## Documentation

@@ -858,6 +858,8 @@ pub enum Dialog {
     Recover(Vec<crate::recovery::Found>),
     /// Help > Updates: where the check stands, and a newer release.
     Updates,
+    /// First start: check for updates once a day, or never?
+    UpdatePolicy,
     /// After a drawing opens: objects that could not be read, fonts that
     /// are not installed (Options > Global > Warnings).
     OpenNotes(OpenNotes),
@@ -1837,6 +1839,25 @@ pub fn show(app: &mut App, ctx: &Context) {
                     close = true;
                 }
                 Some(_) => close = true,
+                None => {}
+            }
+        }
+        Dialog::UpdatePolicy => {
+            let (always, never) = (tr("updates.policy_always"), tr("updates.policy_never"));
+            match crate::ui::chrome::message_box(
+                ctx,
+                crate::ui::chrome::MessageIcon::Question,
+                &tr("updates.policy_question"),
+                &[&always, &never],
+            ) {
+                Some(0) => {
+                    app.set_update_policy(true);
+                    close = true;
+                }
+                Some(_) => {
+                    app.set_update_policy(false);
+                    close = true;
+                }
                 None => {}
             }
         }
@@ -6330,6 +6351,7 @@ pub(crate) mod tests {
             Dialog::ConfirmClose,
             Dialog::ConfirmResetSettings,
             Dialog::Updates,
+            Dialog::UpdatePolicy,
             Dialog::Recover(vec![crate::recovery::Found {
                 marker: "/nowhere/session-x.json".into(),
                 backups: vec!["/nowhere/AutoBackup_of_art.tdraw".into()],

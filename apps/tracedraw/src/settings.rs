@@ -440,9 +440,15 @@ pub struct Settings {
     #[serde(default)]
     pub mcp_window: bool,
     /// Options > Global > General: look for a newer release once a day at
-    /// start (desktop).
+    /// start (desktop). Nothing is checked before the user answered the
+    /// question at first start (`update_check_asked`).
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    /// The user answered the first-start question about checking for
+    /// updates (Always check / Never check). Until then no check runs on
+    /// its own, so the first start makes no network connection unasked.
+    #[serde(default)]
+    pub update_check_asked: bool,
     /// When that check last ran, seconds since 1970.
     #[serde(default)]
     pub last_update_check: u64,
@@ -1436,6 +1442,7 @@ impl Default for Settings {
             ai_image: None,
             mcp_window: false,
             check_updates: true,
+            update_check_asked: false,
             last_update_check: 0,
             skipped_update: String::new(),
             script_filters: Vec::new(),

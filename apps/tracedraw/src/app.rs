@@ -6372,6 +6372,20 @@ impl App {
         if crate::files::WEB || cfg!(test) {
             return;
         }
+        self.update_tick_desktop(now, ctx);
+    }
+
+    /// [`Self::update_tick`] on a desktop: first ask whether to check at
+    /// all (once, at first start), then the daily check.
+    fn update_tick_desktop(&mut self, now: u64, ctx: Option<egui::Context>) {
+        if !self.settings.update_check_asked {
+            // No check before the answer; the question waits for any
+            // other start-up dialog (recovery, notes) to close.
+            if matches!(self.dialog, crate::ui::dialogs::Dialog::None) {
+                self.dialog = crate::ui::dialogs::Dialog::UpdatePolicy;
+            }
+            return;
+        }
         if self.settings.check_updates
             && now.saturating_sub(self.settings.last_update_check) >= crate::updates::DAILY
             && self.updates.get() == crate::updates::UpdateState::Idle
@@ -6394,6 +6408,14 @@ impl App {
                 _ => self.update_quiet = false,
             }
         }
+    }
+
+    /// The answer to the first-start question: check for updates once a
+    /// day (`always`) or never. Options > Global > General changes it later.
+    pub fn set_update_policy(&mut self, always: bool) {
+        self.settings.check_updates = always;
+        self.settings.update_check_asked = true;
+        self.settings.save();
     }
 
     /// A clean exit: this session's marker and auto-backups go.
@@ -8776,5 +8798,49 @@ mod tests {
                 span.font_family
             );
         }
+    }
+
+    /// First start: no update check runs before the user answers; the
+    /// question opens instead, and waits for another start-up dialog.
+    #[test]
+    fn no_update_check_before_the_first_start_question() {
+        let mut app = App::headless();
+        app.settings.update_check_asked = false;
+        app.settings.check_updates = true;
+        app.dialog = crate::ui::dialogs::Dialog::ConfirmClose;
+        app.update_tick_desktop(10 * crate::updates::DAILY, None);
+        assert!(matches!(app.dialog, crate::ui::dialogs::Dialog::ConfirmClose));
+        app.dialog = crate::ui::dialogs::Dialog::None;
+        app.update_tick_desktop(10 * crate::updates::DAILY, None);
+        assert!(matches!(
+            app.dialog,
+            crate::ui::dialogs::Dialog::UpdatePolicy
+        ));
+        assert_eq!(app.updates.get(), crate::updates::UpdateState::Idle);
+        assert_eq!(app.settings.last_update_check, 0);
+    }
+
+    /// Never check: the daily check stays off and the question is not
+    /// asked again; Always check turns it on.
+    #[test]
+    fn the_first_start_answer_sets_the_update_option() {
+        let mut app = App::headless();
+        app.set_update_policy(false);
+        assert!(app.settings.update_check_asked);
+        assert!(!app.settings.check_updates);
+        app.update_tick_desktop(10 * crate::updates::DAILY, None);
+        assert!(matches!(app.dialog, crate::ui::dialogs::Dialog::None));
+        assert_eq!(app.updates.get(), crate::updates::UpdateState::Idle);
+        app.set_update_policy(true);
+        assert!(app.settings.check_updates);
+    }
+
+    /// Settings saved by older versions have no answer yet, so the
+    /// question is asked once after updating.
+    #[test]
+    fn older_settings_have_not_answered_the_update_question() {
+        let s: crate::settings::Settings = serde_json::from_str("{}").expect("defaults");
+        assert!(!s.update_check_asked);
+        assert!(s.check_updates);
     }
 }

@@ -6391,8 +6391,13 @@ impl App {
         self.show_transform_toolbar = false;
     }
 
-    /// Help > Updates: check now and show the answer.
+    /// Help > Updates: check now and show the answer. A copy installed from
+    /// the Microsoft Store opens its Store page instead: the Store updates it.
     pub fn check_for_updates(&mut self, ctx: Option<egui::Context>) {
+        if crate::updates::store_install() {
+            self.open_url(crate::updates::STORE_PAGE);
+            return;
+        }
         self.update_quiet = false;
         self.updates.start(ctx);
         self.dialog = crate::ui::dialogs::Dialog::Updates;
@@ -6400,9 +6405,10 @@ impl App {
 
     /// Called every frame with the time in seconds: once a day (Options >
     /// Global > General), start a quiet check; when it finds a release
-    /// newer than this one that the user did not skip, show it.
+    /// newer than this one that the user did not skip, show it. A copy
+    /// installed from the Microsoft Store never checks: the Store updates it.
     pub fn update_tick(&mut self, now: u64, ctx: Option<egui::Context>) {
-        if crate::files::WEB || cfg!(test) {
+        if crate::files::WEB || cfg!(test) || crate::updates::store_install() {
             return;
         }
         self.update_tick_desktop(now, ctx);

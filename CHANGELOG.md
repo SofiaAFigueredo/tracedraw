@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+## 0.24.0 (2026-10-29)
+
 - Fit Objects to Path panel: Keep originals places copies and leaves the selected objects where they are; Group all objects groups what was placed; Treat subpaths as contiguous walks every subpath of the path one after another (on at first; off, only the first subpath, as before); Reference and Origin choose the point of each object that goes on the path (its center of rotation, or one of nine points of its bounding box, with or without the outline); Ignore initial rotation takes the objects' turn off them first; Modify rotation adds a uniform, progressive, jittered or progressive jittered turn, with a start angle, spin angle, revolutions, range and direction. The panel shows how many objects are selected and what the path is (#1091, #1196).
 - Internal: while a `.cdr` file opens, the reader now keeps every chunk and `loda` argument it does not interpret in a side table keyed by object (bytes shared with the file's streams, so a large file costs no more memory), the first piece of the standalone `.cdr` library's lossless round trip; the writer does not use it yet. `tracedraw-cli info file.cdr --unknown` lists the unknown tags with their counts.
 - Internal: the `.cdr` container, chunk tree, embedded font and compound file readers moved to a crate of their own, `tracedraw-cdr-format`, which depends on nothing else in the workspace; `tracedraw-cdr` re-exports them, so nothing changes for users. First step of splitting the `.cdr` support into a standalone library with a neutral document model.

@@ -994,6 +994,9 @@ pub enum Dialog {
     SaveAs(crate::ui::save_as::SaveAsState),
     /// File > Package: the drawing, its pictures and fonts in a folder.
     Package(crate::ui::package_dialog::PackageState),
+    /// After opening a drawing with fonts that are not installed: the
+    /// font drawing each, to choose (#936).
+    MissingFonts(crate::ui::missing_fonts::MissingFontsState),
 }
 
 /// Convert to Bitmap: Resolution (a list and a value), Color mode,
@@ -1374,6 +1377,7 @@ pub fn show(app: &mut App, ctx: &Context) {
         Dialog::ChangeDefaults(st) => crate::ui::defaults_dialog::dialog(app, ctx, st, &mut close),
         Dialog::SaveAs(st) => crate::ui::save_as::dialog(app, ctx, st, &mut close),
         Dialog::Package(st) => crate::ui::package_dialog::dialog(app, ctx, st, &mut close),
+        Dialog::MissingFonts(st) => crate::ui::missing_fonts::dialog(app, ctx, st, &mut close),
         Dialog::BitmapDuotone(st) => {
             crate::ui::bitmap_dialogs::duotone_dialog(app, ctx, st, &mut close)
         }

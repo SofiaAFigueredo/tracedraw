@@ -11,7 +11,7 @@
 use crate::app::App;
 use crate::i18n::{tr, trf};
 use crate::ui::dialogs::window;
-use egui::{Context, RichText};
+use egui::Context;
 use tracedraw_core::Command;
 
 /// One missing family.

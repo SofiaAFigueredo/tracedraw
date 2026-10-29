@@ -122,6 +122,9 @@ pub struct Settings {
     /// Default action of the mouse wheel: zoom (the default) or scroll.
     #[serde(default = "default_true")]
     pub wheel_zooms: bool,
+    /// The view a drawing opens in (#1134).
+    #[serde(default)]
+    pub open_view: OpenView,
     /// Arrowheads created with Object > Create > Arrowhead.
     #[serde(default)]
     pub custom_arrowheads: Vec<tracedraw_core::Arrowhead>,
@@ -440,9 +443,15 @@ pub struct Settings {
     #[serde(default)]
     pub mcp_window: bool,
     /// Options > Global > General: look for a newer release once a day at
-    /// start (desktop).
+    /// start (desktop). Nothing is checked before the user answered the
+    /// question at first start (`update_check_asked`).
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    /// The user answered the first-start question about checking for
+    /// updates (Always check / Never check). Until then no check runs on
+    /// its own, so the first start makes no network connection unasked.
+    #[serde(default)]
+    pub update_check_asked: bool,
     /// When that check last ran, seconds since 1970.
     #[serde(default)]
     pub last_update_check: u64,
@@ -546,7 +555,7 @@ fn default_desktop() -> [u8; 3] {
 }
 
 /// How many one-time upgrades `Settings::upgrade` knows.
-const UPGRADES: u32 = 3;
+const UPGRADES: u32 = 4;
 
 fn default_outline_units() -> String {
     "pt".into()
@@ -631,6 +640,48 @@ fn default_precision() -> u32 {
 
 fn default_text_increment() -> f64 {
     1.0
+}
+
+/// The view a drawing opens in (Options > Display, #1134).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenView {
+    /// The whole page in the window.
+    #[default]
+    FitPage,
+    /// The objects on the page, or the page when it is empty.
+    FitObjects,
+    /// The page's width across the window.
+    PageWidth,
+    /// The page's height down the window.
+    PageHeight,
+    /// Real size, the page in the middle.
+    Actual,
+    /// The page, place and zoom it was saved with (TraceDraw files), else
+    /// the whole page.
+    AsSaved,
+}
+
+impl OpenView {
+    pub const ALL: [OpenView; 6] = [
+        OpenView::FitPage,
+        OpenView::FitObjects,
+        OpenView::PageWidth,
+        OpenView::PageHeight,
+        OpenView::Actual,
+        OpenView::AsSaved,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            OpenView::FitPage => "options.open_view_page",
+            OpenView::FitObjects => "options.open_view_objects",
+            OpenView::PageWidth => "options.open_view_width",
+            OpenView::PageHeight => "options.open_view_height",
+            OpenView::Actual => "options.open_view_actual",
+            OpenView::AsSaved => "options.open_view_saved",
+        }
+    }
 }
 
 /// What opens when the application starts (Options > General).
@@ -1060,6 +1111,8 @@ pub struct ToolPrefs {
     pub sketch: crate::recognize::SketchSettings,
     /// The Knife's mode, gap and pieces.
     pub knife: crate::knife::KnifeSettings,
+    /// Segment Delete's drag is a freehand stroke, not a box (#1150).
+    pub segment_freehand: bool,
 }
 
 impl Default for ToolPrefs {
@@ -1107,6 +1160,7 @@ impl Default for ToolPrefs {
             recognize: Default::default(),
             sketch: Default::default(),
             knife: Default::default(),
+            segment_freehand: false,
         }
     }
 }
@@ -1345,6 +1399,7 @@ impl Default for Settings {
             color: ColorPrefs::default(),
             show_outline_flyout: false,
             wheel_zooms: true,
+            open_view: OpenView::default(),
             toolbox: Vec::new(),
             custom_arrowheads: Vec::new(),
             custom_dashes: Vec::new(),
@@ -1436,6 +1491,7 @@ impl Default for Settings {
             ai_image: None,
             mcp_window: false,
             check_updates: true,
+            update_check_asked: false,
             last_update_check: 0,
             skipped_update: String::new(),
             script_filters: Vec::new(),
@@ -1512,7 +1568,9 @@ impl Settings {
 
     /// Bring preferences saved by an older version up to date, once:
     /// 1. objects are treated as filled (a click inside an unfilled one
-    ///    selects it), which older versions saved switched off.
+    ///    selects it), which older versions saved switched off;
+    /// 2. new rectangles keep their corners; 3. the alignment and dynamic
+    ///    guides start off; 4. the last export's settings are remembered.
     pub fn upgrade(mut self) -> Settings {
         self.autocorrect.upgrade();
         if self.upgrades < 1 {
@@ -1531,6 +1589,14 @@ impl Settings {
         if self.upgrades < 3 {
             self.snap.alignment_guides = false;
             self.snap.dynamic_guides = false;
+        }
+        // Remember the settings of the last export came on for new
+        // preferences only (#617); files saved before kept the old off,
+        // so for everyone who had used an earlier version File > Export
+        // still started at SVG in each new session and the feature could
+        // not be found (#691). On once; switched off afterwards it stays.
+        if self.upgrades < 4 {
+            self.formats.remember_last = true;
         }
         self.upgrades = self.upgrades.max(UPGRADES);
         self.migrate_ai();
@@ -1821,6 +1887,31 @@ mod tests {
         assert!(!again.upgrade().treat_all_filled);
         // New preferences start up to date.
         assert_eq!(Settings::default().upgrades, UPGRADES);
+    }
+
+    /// Preferences saved before the last export's settings were kept
+    /// between sessions stored the old off (the option existed with that
+    /// default), so File > Export went on starting at SVG every session
+    /// for anyone upgrading, and the feature of #617 seemed missing
+    /// (#691). The upgrade turns it on once; off again afterwards, it
+    /// stays off.
+    #[test]
+    fn older_preferences_get_the_last_export_remembered_once() {
+        let old: Settings = serde_json::from_str(
+            r#"{"upgrades": 3, "formats": {"remember_last": false, "export_format": 3}}"#,
+        )
+        .expect("old preferences");
+        assert!(!old.formats.remember_last);
+        let s = old.upgrade();
+        assert!(s.formats.remember_last);
+        assert_eq!(s.formats.export_format, 3, "the other choices stay");
+        assert_eq!(s.upgrades, UPGRADES);
+        let mut s = s;
+        s.formats.remember_last = false;
+        let saved = serde_json::to_string(&s).expect("saved");
+        let again: Settings = serde_json::from_str(&saved).expect("read back");
+        assert!(!again.upgrade().formats.remember_last);
+        assert!(Settings::default().formats.remember_last);
     }
 
     #[test]

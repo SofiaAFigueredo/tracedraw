@@ -35,10 +35,13 @@ you save to your own GitHub repository (see below).
 
 ## When TraceDraw uses the network
 
-Only when you ask it to, plus one update check a day that you can turn
-off:
+Only when you ask it to, plus one update check a day that you choose
+at first start and can turn off at any time:
 
-- Update check (desktop): once a day at start, and when you choose
+- Update check (desktop): the first time TraceDraw starts, it asks
+  whether to check for updates (Always check / Never check) and makes
+  no connection on its own before you answer. With Always check, once
+  a day at start, and whenever you choose
   Help > Updates, TraceDraw asks GitHub's public API
   (`api.github.com`) for the project's latest release. The request
   carries only TraceDraw's version in its User-Agent header; no
@@ -47,6 +50,8 @@ off:
   downloaded or installed unless you press Download (or, for the Linux
   AppImage, Install), and downloads come from the project's GitHub
   releases. GitHub sees these requests under its own privacy policy.
+  The copy installed from the Microsoft Store makes no update check:
+  the Store updates it, and Help > Updates opens its Store page.
 
 - Help, the project's pages and links you click open in your web
   browser, which then follows its own privacy policy.
@@ -92,4 +97,4 @@ Files you open in it stay in your browser.
 Questions about this policy: open an issue at
 <https://github.com/igtoth/tracedraw/issues>.
 
-Last updated: 2026-10-28.
+Last updated: 2026-10-29.

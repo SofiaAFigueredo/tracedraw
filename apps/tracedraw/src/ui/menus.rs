@@ -128,6 +128,19 @@ fn menu_row(
     enabled: bool,
     mark: Mark,
 ) -> (egui::Response, egui::layers::ShapeIdx) {
+    menu_row_at(ui, label, shortcut, enabled, mark, LABEL_X)
+}
+
+/// [`menu_row`] with the label starting `label_x` from the row's left
+/// edge (further right than usual when a picture sits after the gutter).
+fn menu_row_at(
+    ui: &mut Ui,
+    label: &str,
+    shortcut: &str,
+    enabled: bool,
+    mark: Mark,
+    label_x: f32,
+) -> (egui::Response, egui::layers::ShapeIdx) {
     // Fixed width like a native menu; longer translations widen their row.
     let needed = ui.fonts_mut(|f| {
         let l = f
@@ -149,7 +162,7 @@ fn menu_row(
             .size()
             .x + 32.0
         };
-        LABEL_X + l + s + SHORTCUT_PAD
+        label_x + l + s + SHORTCUT_PAD
     });
     // As wide as the widest row (remembered by `body` from the last frame).
     let width = MENU_WIDTH.max(needed).max(ui.min_rect().width());
@@ -186,7 +199,7 @@ fn menu_row(
     if let Some((at, _)) = access {
         access::underline(
             painter,
-            egui::pos2(rect.left() + LABEL_X, rect.center().y),
+            egui::pos2(rect.left() + label_x, rect.center().y),
             label,
             at,
             FONT,
@@ -213,7 +226,7 @@ fn menu_row(
         _ => {}
     }
     painter.text(
-        egui::pos2(rect.left() + LABEL_X, rect.center().y),
+        egui::pos2(rect.left() + label_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(FONT),
@@ -623,6 +636,56 @@ fn menu_pic(key: &str) -> Option<crate::ui::propbar::Pic> {
 /// A checkable item (check mark in the gutter when `on`).
 pub(crate) fn check(ui: &mut Ui, key: &str, shortcut: &str, on: bool) -> bool {
     mark_item(ui, key, shortcut, Mark::Check(on))
+}
+
+/// The width of the picture slot of a [`check_pic`] row, between the
+/// gutter and the label.
+const PIC_SLOT: f32 = 22.0;
+
+/// A checkable item with a picture after the gutter (check mark, picture,
+/// name): `pic` paints the picture in a 16 px square, `None` leaves the
+/// slot blank so the names of a list stay aligned.
+pub(crate) fn check_pic(
+    ui: &mut Ui,
+    key: &str,
+    on: bool,
+    pic: Option<&dyn Fn(&egui::Painter, egui::Rect)>,
+) -> bool {
+    if invoke::active() {
+        return invoke::hit(key, "", true);
+    }
+    let shortcut = invoke::shown_shortcut(key, "");
+    let (r, _) = menu_row_at(
+        ui,
+        &tr(key),
+        &shortcut,
+        true,
+        Mark::Check(on),
+        LABEL_X + PIC_SLOT,
+    );
+    if marked_new(key) {
+        paint_new_mark(ui, r.rect);
+    }
+    #[cfg(test)]
+    if replay::hit(key, true) {
+        return true;
+    }
+    if let Some(pic) = pic {
+        let ir = egui::Rect::from_center_size(
+            egui::pos2(
+                r.rect.left() + LABEL_X + PIC_SLOT / 2.0 - 2.0,
+                r.rect.center().y,
+            ),
+            egui::vec2(16.0, 16.0),
+        );
+        pic(ui.painter(), ir);
+    }
+    if r.clicked() {
+        ui.close();
+        true
+    } else {
+        false
+    }
 }
 
 /// One of a set of exclusive items (a dot in the gutter when `on`).
@@ -1962,6 +2025,10 @@ fn file_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.file.publish_to_pdf", "", doc) {
         app.publish_pdf();
     }
+    // Folders are a desktop thing (#852).
+    if item(ui, "menu.file.package", "", doc && !crate::files::WEB) {
+        app.package_dialog();
+    }
     sep(ui);
     sub(ui, "menu.file.print_merge", |ui| {
         if item(ui, "menu.file.print_merge_create", "", doc) {
@@ -2450,11 +2517,15 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
                 app.run(Command::ExtractContents { clip: c });
             }
         }
-        if app.clip_frame_edit.is_some() {
-            if item(ui, "menu.object.clip_frame_finish", "", true) {
-                app.finish_clip_frame_edit();
-            }
-        } else if item(ui, "menu.object.clip_frame_edit", "", is_clip) {
+        // Walked for the list of commands (Options > Customization >
+        // Commands) both rows count, so each can take a shortcut (#1148).
+        let editing = app.clip_frame_edit.is_some();
+        if (editing || invoke::active()) && item(ui, "menu.object.clip_frame_finish", "", editing) {
+            app.finish_clip_frame_edit();
+        }
+        if (!editing || invoke::active())
+            && item(ui, "menu.object.clip_frame_edit", "", is_clip && !editing)
+        {
             app.edit_clip_frame();
         }
         let locked = app
@@ -3055,9 +3126,12 @@ fn text_menu(app: &mut App, ui: &mut Ui) {
     sep(ui);
     // Vertical text, offered with a CJK interface language or for text
     // in those scripts (#257).
-    if app.vertical_text_offered() {
+    // (Listed in Options > Customization > Commands all the same, so it
+    // can take a shortcut, #1148.)
+    let offered = app.vertical_text_offered();
+    if offered || invoke::active() {
         let on = app.vertical_text_on();
-        if check(ui, "menu.text.vertical_text", "", on) {
+        if mark_item_if(ui, "menu.text.vertical_text", "", Mark::Check(on), offered) {
             app.set_vertical_text(!on);
         }
     }
@@ -3353,6 +3427,9 @@ fn tools_menu(app: &mut App, ui: &mut Ui) {
     sep(ui);
     if item(ui, "menu.tools.color_management", "", true) {
         app.dialog = Dialog::ColorManagement(Default::default());
+    }
+    if item(ui, "menu.tools.convert_colors", "", true) {
+        app.convert_colors_dialog();
     }
     sep(ui);
     sub(ui, "menu.tools.scripts", |ui| {

@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Microsoft Store package: `tracedraw-cli` is now a command-line alias of the TraceDraw app instead of a second app hidden from the Start menu, which the Store refuses ("headless app"). The command works in a terminal as before and the Start menu still shows only TraceDraw; the `tracedraw` alias that opened the window from a terminal is not in the Store package (an app can declare only one alias). The installer and the portable zip are unchanged.
+
 ## 0.21.0 (2026-10-29)
 
 - Publish to PDF, Prepress tab: crop marks, registration marks, colour bars and file information can be added around every page, drawn by the same code as the Print dialog's marks. The page grows by a 12 mm margin outside the bleed to hold them; the TrimBox stays the page, the BleedBox the page and its bleed and the MediaBox takes in the marks, and the drawing is clipped to the bleed. Marks in registration colour print on every plate (the All separation), in printed files too. A page background now covers the bleed in PDF files (#789).

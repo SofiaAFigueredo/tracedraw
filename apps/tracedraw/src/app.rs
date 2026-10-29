@@ -863,6 +863,9 @@ pub struct App {
     /// The last trace made (its preset and settings), for Repeat Last
     /// Trace and Open Last Trace Settings (#452).
     pub last_trace: Option<(crate::trace::Preset, crate::trace::Settings)>,
+    /// The Trace dialog's live preview: the trace of the selected bitmap
+    /// worked out off the interface thread as the settings change.
+    pub trace_live: crate::trace_preview::Live,
     /// The digits typed with Alt held while editing text, for a character
     /// by its number (#447; the system does it on Windows).
     pub alt_code: String,
@@ -1073,6 +1076,9 @@ pub struct App {
     /// The Outline Pen dialog's outline is shown on the selection as an
     /// engine preview (#741).
     pub outline_preview: bool,
+    /// A bitmap effect dialog's effect shown on the selection while it is
+    /// open, made off the interface thread (see `fx::preview`).
+    pub fx_preview: crate::fx::preview::FxPreview,
     /// The selected objects in page space, for the drawing, its revision
     /// and the selection they were gathered for (see
     /// [`App::selected_rc`]).
@@ -2163,6 +2169,7 @@ impl App {
             text_edit: None,
             ime_preedit: String::new(),
             last_trace: None,
+            trace_live: Default::default(),
             alt_code: String::new(),
             alt_composed: None,
             current_colors: (Color::BLACK, Color::WHITE),
@@ -2270,6 +2277,7 @@ impl App {
             visual_cache: std::cell::RefCell::new((u64::MAX, Default::default())),
             fill_preview: false,
             outline_preview: false,
+            fx_preview: Default::default(),
             selected_cache: std::cell::RefCell::new(None),
             outline_cache: std::cell::RefCell::new(None),
             view_anchor: None,
@@ -5331,6 +5339,34 @@ impl App {
                 self.remember_color(c);
             }
         }
+    }
+
+    /// The Colour panel with its fill and outline locked together: the
+    /// selection gets `c` as its fill and as its outline colour, in one
+    /// undo step.
+    pub fn apply_fill_and_outline(&mut self, c: Color) {
+        if self.selection.is_empty() {
+            return;
+        }
+        let mark = self.engine.begin_group();
+        self.apply_fill(Fill::Solid(c));
+        self.apply_outline_color(Some(c));
+        self.engine.end_group(mark, "Fill and Outline");
+    }
+
+    /// Swap Colors (Colour panel): each selected object's fill colour
+    /// becomes its outline colour and its outline colour its solid fill,
+    /// objects inside groups each on their own, in one undo step (see
+    /// [`Command::SwapColors`], which walks the drawing once however many
+    /// objects there are). The panel's current colours are left alone:
+    /// they are not part of the drawing, so Undo could not give them back.
+    pub fn swap_colors(&mut self) {
+        // The objects of the selection that exist, gathered in one pass.
+        let shapes: Vec<ShapeId> = self.selected_rc().iter().map(|s| s.id).collect();
+        if shapes.is_empty() {
+            return;
+        }
+        self.run(Command::SwapColors { shapes });
     }
 
     pub fn apply_outline_width(&mut self, width: f64) {

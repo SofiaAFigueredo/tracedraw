@@ -95,6 +95,13 @@ To save a drawing under a new name:
      [Packaging a drawing](../file-formats/package.md).
 
    These choices are kept for the next time.
+5. For `.cdr` files from version 16, [[dialog.embed_color_profile_none]]
+   stores the drawing's CMYK profile in the file, and
+   [[dialog.embed_fonts]] stores the fonts the text uses when their license
+   allows it. A note under the box names any font the file will not carry
+   and why: its license forbids embedding, or there is no font file to
+   embed (the text is drawn by a stand-in font, or the font is in a
+   collection file). Both choices are kept for the next time.
 6. Optionally fill in [[dialog.title]], [[dialog.subject]] and a
    [[dialog.rating]] (click the lit last star again to take it off). They
    are the drawing's properties, also shown in

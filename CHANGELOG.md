@@ -7,6 +7,7 @@ full, row-by-row status.
 ## Unreleased
 
 - Extrude: each side of the body is one object, filled with the side's colours (a curved side with a fountain that follows the light) and outlined once, so a square's body is its two sides and a circle's its one curved side, to colour, paint with Smart Fill or break apart as whole parts; the far face, hidden behind a filled object and its sides, is no longer drawn. Before, a curved side was a row of dozens of slats (#1281).
+- Dialog boxes: Tab goes to the first box you can type in and on through the dialog's controls, and Shift+Tab back, without leaving the dialog. Tab with nothing focused (a dialog just opened) or from a dialog's last control went to the menu bar, so the File menu took the next keys (#1258).
 
 ## 0.28.0 (2026-10-30)
 

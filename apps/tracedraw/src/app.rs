@@ -846,7 +846,9 @@ impl App {
                 | Drag::NodeTransform { begun: true, .. }
                 | Drag::Handle { .. }
         );
-        self.node_drag_shown.filter(|_| dragging).map(|s| s.revision)
+        self.node_drag_shown
+            .filter(|_| dragging)
+            .map(|s| s.revision)
     }
 }
 

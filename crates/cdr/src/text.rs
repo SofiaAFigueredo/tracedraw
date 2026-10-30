@@ -2242,14 +2242,21 @@ mod tests {
         let s = parse_style_string(&decode_style_bytes(&gbk, 134));
         assert_eq!(s.family.as_deref(), Some("方正黑体_GBK"));
         assert_ne!(
-            parse_style_string(&decode_style_bytes(&gbk, 0)).family.as_deref(),
+            parse_style_string(&decode_style_bytes(&gbk, 0))
+                .family
+                .as_deref(),
             Some("方正黑体_GBK")
         );
         // Big5 and Shift JIS the same way; a Latin or symbol set falls
         // back to Windows-1252.
-        let big5 = encoding_rs::BIG5.encode("{\"character\":{\"latin\":{\"font\":\"華康黑體\"}}}").0.into_owned();
+        let big5 = encoding_rs::BIG5
+            .encode("{\"character\":{\"latin\":{\"font\":\"華康黑體\"}}}")
+            .0
+            .into_owned();
         assert_eq!(
-            parse_style_string(&decode_style_bytes(&big5, 136)).family.as_deref(),
+            parse_style_string(&decode_style_bytes(&big5, 136))
+                .family
+                .as_deref(),
             Some("華康黑體")
         );
         assert_eq!(decode_style_bytes(b"Caf\xe9", 2), "Caf\u{e9}");
@@ -2676,7 +2683,8 @@ mod tests {
             );
         }
         // With every record naming style 0 the lengths still cut the runs.
-        let t = read_txsm(&txsm15("MASS 941kg", &[0; 10], false), 15, 0, &mut |_| {}).expect("txsm");
+        let t =
+            read_txsm(&txsm15("MASS 941kg", &[0; 10], false), 15, 0, &mut |_| {}).expect("txsm");
         assert_eq!(t.paragraphs[0].runs[0].text.len(), 10);
     }
 
@@ -2735,8 +2743,8 @@ mod tests {
     fn version_8_frames_of_either_layout() {
         for bytes in [32, 34] {
             let mut notes = Vec::new();
-            let t =
-                read_txsm(&txsm8_frames(b"Lorem", bytes), 8, 0, &mut |w| notes.push(w)).expect("txsm");
+            let t = read_txsm(&txsm8_frames(b"Lorem", bytes), 8, 0, &mut |w| notes.push(w))
+                .expect("txsm");
             assert!(notes.is_empty(), "{bytes}: {notes:?}");
             assert_eq!(t.paragraphs[0].runs[0].text, "Lorem", "{bytes}");
         }
@@ -2744,7 +2752,8 @@ mod tests {
 
     #[test]
     fn version_8_letters_take_the_style_their_records_number() {
-        let t = read_txsm(&txsm8(b"x\xc4y", &[0, 1, 0]), 8, 0, &mut |w| panic!("{w}")).expect("txsm");
+        let t =
+            read_txsm(&txsm8(b"x\xc4y", &[0, 1, 0]), 8, 0, &mut |w| panic!("{w}")).expect("txsm");
         let runs: Vec<(&str, Option<u16>)> = t.paragraphs[0]
             .runs
             .iter()

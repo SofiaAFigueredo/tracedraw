@@ -7394,6 +7394,11 @@ mod many_tuples {
         // The width axis at its narrowest makes the word narrower.
         let narrow = draw(Some(25.0));
         assert!(!narrow.path.elements().is_empty());
-        assert!(width(&narrow) < width(&plain), "{} vs {}", width(&narrow), width(&plain));
+        assert!(
+            width(&narrow) < width(&plain),
+            "{} vs {}",
+            width(&narrow),
+            width(&plain)
+        );
     }
 }

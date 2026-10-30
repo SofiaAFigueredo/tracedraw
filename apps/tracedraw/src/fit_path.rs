@@ -1218,7 +1218,10 @@ mod tests {
             let cb = pb.transform * Point::new(20.0, 170.0);
             assert!((ca - cb).hypot() < 1e-6, "{ca:?} vs {cb:?}");
             let r = (ca - Point::new(100.0, 100.0)).hypot();
-            assert!((r - 60.0).abs() < 0.05, "centre {ca:?} is {r} from the path's");
+            assert!(
+                (r - 60.0).abs() < 0.05,
+                "centre {ca:?} is {r} from the path's"
+            );
         }
     }
 

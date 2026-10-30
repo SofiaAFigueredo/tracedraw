@@ -10120,7 +10120,11 @@ fn a_node_drag_keeps_the_pages_picture_until_release() {
             Modifiers::NONE,
         );
     }
-    assert_eq!(renders(&app), before, "no render while the pointer moves again");
+    assert_eq!(
+        renders(&app),
+        before,
+        "no render while the pointer moves again"
+    );
     let end = from + egui::vec2(40.0, 60.0);
     frame(
         &ctx,
@@ -10170,7 +10174,12 @@ fn a_handle_drag_keeps_the_pages_picture_until_release() {
     assert_eq!(app.node_selection, vec![(curve, 100)]);
     frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
     let from = app.view.to_screen(Point::new(110.4, 28.0));
-    frame(&ctx, &mut app, vec![Event::PointerMoved(from)], Modifiers::NONE);
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(from)],
+        Modifiers::NONE,
+    );
     frame(
         &ctx,
         &mut app,
@@ -14305,7 +14314,12 @@ fn step_and_repeat_typed_then_applied(
     click_at(ctx, app, field, Modifiers::NONE);
     frame(ctx, app, vec![Event::Text(typed.into())], Modifiers::NONE);
     if enter_first {
-        frame(ctx, app, vec![key(egui::Key::Enter, Modifiers::NONE)], Modifiers::NONE);
+        frame(
+            ctx,
+            app,
+            vec![key(egui::Key::Enter, Modifiers::NONE)],
+            Modifiers::NONE,
+        );
     }
     let apply = trace_text_at(ctx, app, &crate::i18n::tr("docker.apply")).expect("Apply");
     frame(ctx, app, vec![Event::PointerMoved(apply)], Modifiers::NONE);
@@ -14318,7 +14332,12 @@ fn step_and_repeat_typed_then_applied(
     frame(
         ctx,
         app,
-        vec![button(apply, false, PointerButton::Primary, Modifiers::NONE)],
+        vec![button(
+            apply,
+            false,
+            PointerButton::Primary,
+            Modifiers::NONE,
+        )],
         Modifiers::NONE,
     );
     frame(ctx, app, Vec::new(), Modifiers::NONE);

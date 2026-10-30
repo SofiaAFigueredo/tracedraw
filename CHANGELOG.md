@@ -20,6 +20,7 @@ full, row-by-row status.
 - Colour palette: every click on a colour applies it to the selection. A click whose pointer slipped a few pixels on the swatch was taken for a drag and did nothing, and after a hold that opened the shades the next click on any colour was lost (#1336).
 - Browser version: a right click during a move, scale, rotation or skew with the left button let go first ends the drag with its copy; the browser sent no release for the left button then, so the object stayed on the pointer until Esc (#1334).
 - Attributes eyedropper: copies transparency (uniform, or a gradient, pattern or texture mask with its merge mode), on by default in the Properties menu; it copied the colour only. The Transparency tool's bar and the Properties docker have a Clear Transparency button (#1338).
+- Ctrl+Shift+A opens Copy Properties From: a dialog to tick what to copy (outline pen, outline colour, fill, text properties), then a click on the object to copy from; the shortcut did nothing in the browser. The Align and Distribute panel keeps its menu entry and button and no longer has Ctrl+Shift+A (#1345).
 
 ## 0.28.0 (2026-10-30)
 

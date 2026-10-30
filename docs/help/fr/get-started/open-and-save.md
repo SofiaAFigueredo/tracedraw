@@ -78,6 +78,10 @@ Pour enregistrer un dessin sous un nouveau nom :
    le fichier, et [[dialog.embed_fonts]] stocke les polices utilisées par le
    texte quand leur licence le permet. Les deux choix sont conservés pour la
    fois suivante.
+   Pour les fichiers TraceDraw sur l'ordinateur, [[dialog.save_package]] enregistre le
+   dessin dans un dossier à son nom avec les images liées, les fichiers de
+   polices et un rapport, et [[package.pdf]] ajoute un PDF. Voir
+   [Créer un paquet](../file-formats/package.md).
 6. Si vous le souhaitez, remplissez [[dialog.title]], [[dialog.subject]] et
    une [[dialog.rating]] (cliquez de nouveau sur la dernière étoile allumée
    pour l'enlever). Ce sont les propriétés du dessin, affichées aussi dans

@@ -35,6 +35,7 @@ TraceDraw 以自己的格式 `.tdraw` 儲存繪圖，這種格式會保留所有
 3. 選擇 [[dialog.save_as_type]]：TraceDraw（`*.tdraw`）或 [[file.cdr_files]]。
 4. 選擇 [[dialog.cdr_version]]。對於 TraceDraw 檔案，這是格式的版本，最新的在最前面。對於 `.cdr` 檔案，這是檔案的版本，從 27 到 14；較舊的程式只能開啟與其本身同樣舊或更舊的版本。您選擇的版本會隨繪圖保留，因此「儲存」會直接再次以該版本寫入，不會詢問。
 5. 對於版本 16 以上的 `.cdr` 檔案，[[dialog.embed_color_profile_none]] 會將繪圖的 CMYK 描述檔儲存在檔案中，[[dialog.embed_fonts]] 則會在授權允許時儲存文字使用的字型。這兩個選擇都會保留到下一次。
+   對於桌面版的 TraceDraw 檔案，[[dialog.save_package]] 會將繪圖連同其連結的圖片、字型檔案和一份報告儲存在以其名稱命名的資料夾中，[[package.pdf]] 則會加上一個 PDF。請參閱[封裝繪圖](../file-formats/package.md)。
 6. 視需要填寫 [[dialog.title]]、[[dialog.subject]] 和 [[dialog.rating]]（再按一下亮起的最後一顆星即可取消）。這些是繪圖的屬性，也會顯示在[文件屬性](../pages-layout/document-properties.md)中。
 7. 按一下 [[dialog.save]] 或按 <kbd>Enter</kbd>。如果檔案已存在，TraceDraw 會詢問是否要 [[dialog.replace]]。
 

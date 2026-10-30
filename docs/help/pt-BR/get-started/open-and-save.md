@@ -72,6 +72,10 @@ Para salvar um desenho com um nome novo:
    [[dialog.embed_color_profile_none]] guarda o perfil CMYK do desenho no
    arquivo, e [[dialog.embed_fonts]] guarda as fontes que o texto usa quando a
    licença permite. As duas escolhas são lembradas para a próxima vez.
+   Para arquivos TraceDraw no computador, [[dialog.save_package]] salva o
+   desenho numa pasta com o seu nome, com as imagens ligadas, os arquivos de
+   fontes e um relatório, e [[package.pdf]] acrescenta um PDF. Veja
+   [Empacotar um desenho](../file-formats/package.md).
 6. Se quiser, preencha [[dialog.title]], [[dialog.subject]] e uma
    [[dialog.rating]] (clique de novo na última estrela acesa para tirá-la). São
    as propriedades do desenho, também mostradas em

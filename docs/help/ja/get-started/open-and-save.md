@@ -35,6 +35,7 @@ TraceDraw は、すべてを保持する独自の形式 `.tdraw` で図面を保
 3. [[dialog.save_as_type]] を選びます: TraceDraw (`*.tdraw`) または [[file.cdr_files]]。
 4. [[dialog.cdr_version]] を選びます。TraceDraw ファイルでは形式のバージョンで、新しい順に並びます。`.cdr` ファイルではファイルのバージョンで、27 から 14 までです。古いプログラムは、自分と同じかそれより古いバージョンしか開けません。選んだバージョンは図面に記憶されるので、次の保存では尋ねずにそのバージョンで書き込みます。
 5. バージョン 16 以降の `.cdr` ファイルでは、[[dialog.embed_color_profile_none]] は図面の CMYK プロファイルをファイルに格納し、[[dialog.embed_fonts]] はライセンスが許す場合にテキストで使うフォントを格納します。どちらの選択も次回のために記憶されます。
+   デスクトップ版の TraceDraw ファイルでは、[[dialog.save_package]] は図面をその名前のフォルダーに、リンクした画像、フォントファイル、レポートとともに保存し、[[package.pdf]] は PDF を加えます。[図面のパッケージ](../file-formats/package.md) を参照してください。
 6. 必要に応じて [[dialog.title]]、[[dialog.subject]]、[[dialog.rating]] を入力します (点灯している最後の星をもう一度クリックすると外れます)。これらは図面のプロパティで、[ドキュメントのプロパティ](../pages-layout/document-properties.md) にも表示されます。
 7. [[dialog.save]] をクリックするか <kbd>Enter</kbd> を押します。ファイルが既にある場合は、[[dialog.replace]] するかどうかを TraceDraw が尋ねます。
 

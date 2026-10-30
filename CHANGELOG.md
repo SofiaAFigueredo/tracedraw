@@ -31,6 +31,7 @@ full, row-by-row status.
 - Typing on Windows with AltGr (Polish ą ć ę ł ń ś ź ż, the extra letters of Czech, Croatian, Hungarian and other layouts, German @ € { } [ ]): the letters type into artistic and paragraph text and into fields. Windows reports AltGr as Ctrl and Alt held, so its keys selected all (and the letter replaced the text), aligned or resized the text, or became copy, cut and paste, and the windowing layer dropped their characters (#1271).
 - Convert Colors to RGB or CMYK: the Color Eyedropper's readout and the Color panel show a converted object's colour in the model it went to. The readout always showed the drawing's colour mode (CMYK by default) and the panel kept its sliders' model and did not read the fill again, so an object converted to RGB still looked CMYK (#1254).
 - Blend between an object and a turned copy of it: every step turns by the same share and keeps its size. The steps were mixed point by point, so they shrank toward the middle and turned unevenly, the first and last most of all (#1260).
+- Text: a font picked for several text objects changes only their font. Each kept its own size before only when the bar showed it, so texts of 9 and 11 pt all became 11 pt, and bold or italic went to all of them too; now only the setting changed goes to every selected text (#1304).
 
 ## 0.28.0 (2026-10-30)
 

@@ -177,6 +177,9 @@ const ARG_PROPS: u32 = 12000;
 /// versions 7 to 12: 0, the transform holding any turn.
 const ARG_ROTATION: u32 = 12030;
 const ARG_GUID: u32 = 40050;
+/// A page's own size (width and height in coordinate units) in its
+/// `lgob`, when it differs from the document's (version 16+ files).
+const ARG_PAGE_SIZE: u32 = 19130;
 /// On text objects of version 16 and later: 1.
 const ARG_TEXT_LINK: u32 = 16015;
 /// Version 21: 1 hides the object (it is kept but not drawn).
@@ -3101,6 +3104,9 @@ struct Writer<'a> {
     /// The drawing's layers as the master page and every page list them
     /// before version 14 (see [`layer_slots`]).
     layer_slots: Vec<LayerSlot>,
+    /// The document's page size (`mcfg`): the first page's. A page of
+    /// another size carries its own from version 16.
+    doc_size: tracedraw_core::geometry::Size,
 }
 
 /// One of the drawing's layers as files before version 14 list them: by
@@ -3225,6 +3231,7 @@ impl<'a> Writer<'a> {
             split_families: HashMap::new(),
             run_faces: Vec::new(),
             layer_slots: Vec::new(),
+            doc_size: tracedraw_core::geometry::Size::new(210.0, 297.0),
         }
     }
 
@@ -3338,6 +3345,7 @@ impl<'a> Writer<'a> {
             .first()
             .map(|p| p.size)
             .unwrap_or(tracedraw_core::geometry::Size::new(210.0, 297.0));
+        self.doc_size = first;
         // Pages first: they fill the tables.
         self.layer_slots = layer_slots(doc);
         let mut pages = Vec::new();
@@ -3586,7 +3594,16 @@ impl<'a> Writer<'a> {
     /// slot of [`layer_slots`], empty where the page has no such layer.
     fn page(&mut self, page: &tracedraw_core::document::Page) -> (Node, Option<Rect>) {
         let v = self.v;
-        let centre = Point::new(page.size.width / 2.0, page.size.height / 2.0);
+        // A page of another size than the document's keeps its own in its
+        // `lgob` (argument 19130), as version 16+ files hold it; files of
+        // earlier versions give every page the document's size, so their
+        // objects are placed from that page's centre, where a reader puts
+        // them again.
+        let own_size = (page.size.width - self.doc_size.width).abs() > 1e-6
+            || (page.size.height - self.doc_size.height).abs() > 1e-6;
+        let own_size = own_size && v.redirects();
+        let size = if own_size { page.size } else { self.doc_size };
+        let centre = Point::new(size.width / 2.0, size.height / 2.0);
         let mut layers = vec![
             self.master_layer(MasterLayer::Guides, true),
             self.master_layer(MasterLayer::Desktop, true),
@@ -3628,6 +3645,15 @@ impl<'a> Writer<'a> {
         children.push(chunk(b"bbox", box_bytes(page_box)));
         children.push(chunk(b"obbx", obbx_bytes(page_box, 0.0)));
         children.push(list(b"gobj", layers));
+        if own_size {
+            let mut size = Buf::default();
+            size.i32(units(page.size.width))
+                .i32(units(page.size.height));
+            children.push(list(
+                b"lgob",
+                vec![chunk(b"loda", loda(0, vec![(ARG_PAGE_SIZE, size.done())]))],
+            ));
+        }
         (list(b"page", children), content)
     }
 
@@ -3686,7 +3712,15 @@ impl<'a> Writer<'a> {
         ]
     }
 
-    fn group(&mut self, children: &[Shape], centre: Point, depth: usize) -> Placed {
+    /// A group list of `children`, named `name` (argument 1000 of its
+    /// `loda`, as files name groups).
+    fn group(
+        &mut self,
+        children: &[Shape],
+        name: Option<&str>,
+        centre: Point,
+        depth: usize,
+    ) -> Placed {
         let inner = self.objects(children, centre, depth + 1);
         let Some(b) = inner.bounds else {
             return Placed {
@@ -3707,6 +3741,11 @@ impl<'a> Writer<'a> {
                         vec![(ARG_ID, id.to_le_bytes().to_vec()), (ARG_PROPS, vec![0; 4])];
                     if self.v.rotation_arg() {
                         args.push((ARG_ROTATION, vec![0; 4]));
+                    }
+                    // From version 14, where a file's group carries one;
+                    // the records of older versions stay as they were.
+                    if let Some(n) = name.filter(|n| !n.is_empty() && self.v.zip()) {
+                        args.push((ARG_NAME, name_bytes(self.v, n)));
                     }
                     loda(0, args)
                 }),
@@ -4039,7 +4078,7 @@ impl<'a> Writer<'a> {
             if blends && all.len() > 1 {
                 let start = ev.below.len();
                 let before = self.next_usdn;
-                let placed = self.group(&all, centre, depth + 1);
+                let placed = self.group(&all, s.name.as_deref(), centre, depth + 1);
                 // A blend that is the object's only effect opens live
                 // again in TraceDraw: the package names the group (#986).
                 if let [blend @ tracedraw_core::live::Effect::Blend { end_id, .. }] =
@@ -4070,7 +4109,7 @@ impl<'a> Writer<'a> {
                         c
                     })
                     .collect();
-                return self.group(&kids, centre, depth);
+                return self.group(&kids, s.name.as_deref(), centre, depth);
             }
             ShapeKind::Table(_) | ShapeKind::SymbolInstance { .. } => {
                 let kids: Vec<Shape> = s
@@ -4081,7 +4120,7 @@ impl<'a> Writer<'a> {
                         c
                     })
                     .collect();
-                return self.group(&kids, centre, depth);
+                return self.group(&kids, s.name.as_deref(), centre, depth);
             }
             ShapeKind::ClipFrame { frame, contents }
                 if contents.len() == 1
@@ -4115,7 +4154,7 @@ impl<'a> Writer<'a> {
                     f.fill = Fill::None;
                     kids.push(f);
                 }
-                return self.group(&kids, centre, depth);
+                return self.group(&kids, s.name.as_deref(), centre, depth);
             }
             ShapeKind::Bitmap { .. } => return self.bitmap_object(s, centre, None),
             _ => {}

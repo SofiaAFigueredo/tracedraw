@@ -25,6 +25,7 @@ full, row-by-row status.
 - Browser version: its notice now opens with the warning that a browser is slower, marked in red and underlined, then says it is the same program compiled to WebAssembly, and last points to the desktop app, in every language.
 - Shape tool: while a node is dragged (a segment bent, the chosen nodes stretched or turned), the page keeps the picture it had before the drag and the curve follows the pointer as the thin line the tool draws over it; the outline with its width nodes, brush, arrowheads and effects is made again once, on release, not every frame (#1259, #509). On a page with much text the outline was made again at every pointer move and the drag lagged.
 - Tools > Border and Grommet with Source: Selection mirrors (or stretches) the selection's own edges on the first run, also when the selection reaches past the page, as a large imported photo does; the strips were cut from what the page showed of it, so they came from inside the picture and only a second run was right (#1283).
+- Remove Background: removes several colours at once. The colours to remove are a list: the first is Automatic or picked, "+" adds another picked on the preview or the drawing, each row has its own tolerance and a remove button; with the eyedropper on, Shift+click adds a colour and Alt+click removes the nearest one. A pixel within the tolerance of any listed colour is background, and with Contiguous the fill also starts where colours were picked. The Tolerance shows whole numbers, and the settings are kept for the session.
 
 ## 0.27.0 (2026-10-30)
 

@@ -22,6 +22,7 @@ full, row-by-row status.
 - Attributes eyedropper: copies transparency (uniform, or a gradient, pattern or texture mask with its merge mode), on by default in the Properties menu; it copied the colour only. The Transparency tool's bar and the Properties docker have a Clear Transparency button (#1338).
 - Ctrl+Shift+A opens Copy Properties From: a dialog to tick what to copy (outline pen, outline colour, fill, text properties), then a click on the object to copy from; the shortcut did nothing in the browser. The Align and Distribute panel keeps its menu entry and button and no longer has Ctrl+Shift+A (#1345).
 - Clip frames: editing the contents ends with a Ctrl+click off them, besides the bar's Finish; Alt held while objects are dropped on a frame puts them inside, as W does (#1337).
+- Selecting with Alt: Alt+drag with the Pick and Freehand Pick tools starts the touching frame or lasso also over an object that is not selected (it moved that object, so a selection could not start over a background); with the Shape tool Alt+drag draws a freehand node marquee, Alt+Shift adds to the chosen nodes (#1341, #1350).
 
 ## 0.28.0 (2026-10-30)
 

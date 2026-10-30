@@ -7080,3 +7080,7 @@ bars.palette_top_edge = "Zadokuj u góry, na całą szerokość okna" # mt
 bars.palette_bottom_edge = "Zadokuj na dole, na całą szerokość okna" # mt
 bars.palette_left_beside = "Zadokuj po lewej, obok rysunku" # mt
 bars.palette_right_beside = "Zadokuj po prawej, obok rysunku" # mt
+docker.palette_lock = "Zablokuj" # mt
+docker.palette_unlock = "Odblokuj" # mt
+docker.palette_lock_desc = "Zablokowanej palety nie można zmieniać w edytorze palet, dopóki nie zostanie odblokowana." # mt
+dialog.locked_palette_hint = "Ta paleta jest zablokowana; odblokuj ją w menedżerze palet, aby ją edytować." # mt

@@ -7080,3 +7080,7 @@ bars.palette_top_edge = "Bovenaan andocken, over het hele venster" # mt
 bars.palette_bottom_edge = "Onderaan andocken, over het hele venster" # mt
 bars.palette_left_beside = "Links andocken, naast de tekening" # mt
 bars.palette_right_beside = "Rechts andocken, naast de tekening" # mt
+docker.palette_lock = "Vergrendelen" # mt
+docker.palette_unlock = "Ontgrendelen" # mt
+docker.palette_lock_desc = "Een vergrendeld palet kan pas in de paleteditor worden gewijzigd als het is ontgrendeld." # mt
+dialog.locked_palette_hint = "Dit palet is vergrendeld; ontgrendel het in Paletbeheer om het te bewerken." # mt

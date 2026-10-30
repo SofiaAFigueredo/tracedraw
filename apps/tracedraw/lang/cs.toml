@@ -7080,3 +7080,7 @@ bars.palette_top_edge = "Ukotvit nahoře, přes celé okno" # mt
 bars.palette_bottom_edge = "Ukotvit dole, přes celé okno" # mt
 bars.palette_left_beside = "Ukotvit vlevo, vedle kresby" # mt
 bars.palette_right_beside = "Ukotvit vpravo, vedle kresby" # mt
+docker.palette_lock = "Zamknout" # mt
+docker.palette_unlock = "Odemknout" # mt
+docker.palette_lock_desc = "Zamčenou paletu nelze v editoru palet měnit, dokud ji neodemknete." # mt
+dialog.locked_palette_hint = "Tato paleta je zamčená; chcete-li ji upravit, odemkněte ji ve správci palet." # mt

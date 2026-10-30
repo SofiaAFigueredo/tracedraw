@@ -7080,3 +7080,7 @@ bars.palette_top_edge = "Ancrer en haut, sur toute la fenêtre" # mt
 bars.palette_bottom_edge = "Ancrer en bas, sur toute la fenêtre" # mt
 bars.palette_left_beside = "Ancrer à gauche, contre le dessin" # mt
 bars.palette_right_beside = "Ancrer à droite, contre le dessin" # mt
+docker.palette_lock = "Verrouiller" # mt
+docker.palette_unlock = "Déverrouiller" # mt
+docker.palette_lock_desc = "Une palette verrouillée ne peut pas être modifiée dans l'éditeur de palettes tant qu'elle n'est pas déverrouillée." # mt
+dialog.locked_palette_hint = "Cette palette est verrouillée ; déverrouillez-la dans le gestionnaire de palettes pour la modifier." # mt

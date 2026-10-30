@@ -34,6 +34,7 @@ full, row-by-row status.
 - Blend between an object and a turned copy of it: every step turns by the same share and keeps its size. The steps were mixed point by point, so they shrank toward the middle and turned unevenly, the first and last most of all (#1260).
 - Text: a font picked for several text objects changes only their font. Each kept its own size before only when the bar showed it, so texts of 9 and 11 pt all became 11 pt, and bold or italic went to all of them too; now only the setting changed goes to every selected text (#1304).
 - Break Apart (Ctrl+K) on vertical text: its pieces stay in their columns, one word or letter under the other and the columns right to left. They came out side by side in a row, as if the text had turned horizontal (#1303).
+- Palettes: opening a palette file adds that palette in a row of its own next to the default palette, and opening the same file again does not add a second copy. The opened palette took the default palette's place, which moved to a row of its own, so two palettes seemed to come at once. The Palette Manager has a Lock button for each palette that is not built in: a locked palette cannot be changed in the Palette Editor until it is unlocked (#1343).
 
 ## 0.28.0 (2026-10-30)
 

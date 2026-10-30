@@ -7080,3 +7080,7 @@ bars.palette_top_edge = "Tambatkan di atas, selebar jendela" # mt
 bars.palette_bottom_edge = "Tambatkan di bawah, selebar jendela" # mt
 bars.palette_left_beside = "Tambatkan di kiri, di samping gambar" # mt
 bars.palette_right_beside = "Tambatkan di kanan, di samping gambar" # mt
+docker.palette_lock = "Kunci" # mt
+docker.palette_unlock = "Buka kunci" # mt
+docker.palette_lock_desc = "Palet yang dikunci tidak dapat diubah di Editor Palet sampai kuncinya dibuka." # mt
+dialog.locked_palette_hint = "Palet ini dikunci; buka kuncinya di Pengelola Palet untuk mengeditnya." # mt

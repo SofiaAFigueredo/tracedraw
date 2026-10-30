@@ -7080,3 +7080,7 @@ bars.palette_top_edge = "停靠在顶部，横跨窗口" # mt
 bars.palette_bottom_edge = "停靠在底部，横跨窗口" # mt
 bars.palette_left_beside = "停靠在左侧，紧靠绘图区" # mt
 bars.palette_right_beside = "停靠在右侧，紧靠绘图区" # mt
+docker.palette_lock = "锁定" # mt
+docker.palette_unlock = "解锁" # mt
+docker.palette_lock_desc = "锁定的调色板在解锁前无法在调色板编辑器中更改。" # mt
+dialog.locked_palette_hint = "此调色板已锁定；请在调色板管理器中解锁后再编辑。" # mt

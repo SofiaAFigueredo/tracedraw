@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Uniform transparency on a group: it was stored but never drawn, so a grouped object stayed opaque and a `.cdr` saved from it lost the transparency. The group is now drawn as one see-through picture (its members do not show through each other where they overlap), SVG export gives the group an `opacity`, and PDF export, saving `.cdr` and Ungroup lay the group's transparency over each of its members (#1386).
+
 ## 0.28.0 (2026-10-30)
 
 - Variable fonts with many axes (Roboto Flex) draw their text: the font was listed and its axis sliders showed, but every letter came out empty because the glyph reader refused glyphs with more than 32 variation tuples (#870).

@@ -14588,3 +14588,55 @@ fn tab_in_a_dialog_focuses_its_first_input_box() {
     assert_eq!(order, egui::Order::Foreground);
     assert!(is_box(&ctx, last) && last != first, "the last box");
 }
+
+/// The Smart Fill bar's Fill and Outline lists offer Specify first, then
+/// Use default, then None, read from the open list in the window; a
+/// choice still sets what it names.
+#[test]
+fn smart_fill_lists_offer_specify_then_default_then_none() {
+    crate::i18n::set_language("en");
+    let (ctx, mut app, _) = setup();
+    app.set_tool(Tool::AreaFill);
+    // The outline list shows None, so the fill list's "Use default" is
+    // the only one on the bar.
+    app.area_outline_mode = 2;
+    let texts = |shapes: &[egui::Shape]| -> Vec<(String, egui::Rect)> {
+        shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Text(t) => Some((
+                    t.galley.text().to_string(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let shapes = if texts(&shapes).iter().any(|(t, _)| t == "Use default") {
+        shapes
+    } else {
+        frame_shapes(&ctx, &mut app, Vec::new())
+    };
+    let button = texts(&shapes)
+        .into_iter()
+        .find(|(t, _)| t == "Use default")
+        .map(|(_, r)| r)
+        .expect("the Fill list on the bar");
+    click_at(&ctx, &mut app, button.center(), Modifiers::NONE);
+    let shapes = frame_shapes(&ctx, &mut app, Vec::new());
+    let mut listed: Vec<(String, egui::Rect)> = texts(&shapes)
+        .into_iter()
+        .filter(|(t, r)| {
+            ["Specify", "Use default", "None"].contains(&t.as_str())
+                && r.top() > button.bottom()
+                && (r.left() - button.left()).abs() < 60.0
+        })
+        .collect();
+    listed.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+    let order: Vec<&str> = listed.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(order, ["Specify", "Use default", "None"]);
+    // The first entry gives the new objects a colour of their own.
+    click_at(&ctx, &mut app, listed[0].1.center(), Modifiers::NONE);
+    assert_eq!(app.area_fill_mode, 1);
+}

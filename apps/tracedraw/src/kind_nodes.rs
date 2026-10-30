@@ -185,6 +185,7 @@ fn wrap(deg: f64) -> f64 {
 /// all four do. `turn` carries the angle (degrees)
 /// a whole ellipse's node has turned through since the drag began, which
 /// tells clockwise from counter-clockwise.
+#[cfg(test)]
 pub fn drag(
     start: &Shape,
     node: KindNode,

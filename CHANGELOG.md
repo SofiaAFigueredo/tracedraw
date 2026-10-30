@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+## 0.26.0 (2026-10-30)
+
 - Trace Bitmap: the preview rests once the trace of the settings on show is in. In the browser, where a large picture's whole trace waits for OK, the preview waited for that trace and traced the picture again every frame: the spinner beside the pan button never stopped, the preview flickered and the window lagged. The quick look is now the request's last result there, the counts show it without the dots sign, and an idle dialog asks for no frames; a trace whose thread died is not started again until a setting changes.
 - Before and After preview: one preview for every dialog that changes a picture (Trace Bitmap, Remove Background, Black and White, Duotone, Paletted, every bitmap effect and Image Adjustments). Each dialog is now a window the user sizes, the preview filling its left and growing with it: a Preview list (Before and After stacked, side by side, Before only, After only; the wireframe over the picture in Trace Bitmap, a split view with a draggable divider in Image Adjustments), zoom to fit, zoom out, zoom in and a pan button, the two panes with one zoom and place (a drag pans, the wheel zooms about the pointer), a checkerboard under transparent parts, and the dialog's settings in a column at the right. The previews are drawn at the size shown (a copy as large as the panes, worked out once per change and kept; a small copy while a slider is dragged) and nothing is worked out again while the settings stand.
 

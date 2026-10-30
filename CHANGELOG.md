@@ -25,6 +25,7 @@ full, row-by-row status.
 - Selecting with Alt: Alt+drag with the Pick and Freehand Pick tools starts the touching frame or lasso also over an object that is not selected (it moved that object, so a selection could not start over a background); with the Shape tool Alt+drag draws a freehand node marquee, Alt+Shift adds to the chosen nodes (#1341, #1350).
 - Saving .cdr: clicking a picture in the saved file no longer makes the program that reads `.cdr` files close at once. The outline of every bitmap object was written without the node marks curves carry, which that program's own files always have; `tracedraw-cli check` now reports such outlines (#1226).
 - Browser version on an iPhone, iPad or Android device: Open and Import offer every file, so `.cdr`, `.cmx` and `.tdraw` files can be picked. The system greyed out the files whose type it does not know as soon as the page listed the extensions it takes, so only files such as SVG and EPS could be chosen (#1311).
+- Distort, Push and Pull: a straight side bends from its middle (its control points start on its nodes and move along the lines from the centre), so pushed corners become spikes and pulled corners curl with the side's lobe reaching past them; the bend started at the corners (#1264). Twister: the handle is free, it reaches the pointer during a drag and stays as long as it was let go, instead of a fixed length (#1263).
 
 ## 0.28.0 (2026-10-30)
 

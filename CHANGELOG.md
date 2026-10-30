@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Browser version: its notice now opens with the warning that a browser is slower, marked in red and underlined, then says it is the same program compiled to WebAssembly, and last points to the desktop app, in every language.
+
 ## 0.27.0 (2026-10-30)
 
 - Browser version: the page can be installed as an app on an Android tablet, an iPad or a desktop (the browser's "Install app" or "Add to Home Screen"): it opens full screen with the TraceDraw icon, in any orientation, keeps clear of a notch or rounded corners, and starts without a network connection once it has been opened, at the version last used; a new deploy is taken at the next start after its pages are closed, never a stale module against a new script. It is the same WebAssembly build served from the same address, not a native Android program (#893).

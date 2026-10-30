@@ -1,5 +1,7 @@
 # Misturas
 
+> *Tradução automática: esta página pode estar atrasada em relação à versão em inglês.*
+
 Uma mistura desenha uma série de passos intermediários entre dois objetos,
 mudando forma, tamanho e cor de um para o outro. Use-a para sombreamentos
 suaves, padrões repetidos ou uma forma que se transforma em outra.

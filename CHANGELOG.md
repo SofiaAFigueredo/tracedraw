@@ -7,6 +7,7 @@ full, row-by-row status.
 ## Unreleased
 
 - Drop Shadow: a change on the property bar (Flat or an edge, offset, opacity, color...) applies at once to the selected objects, also to an object with no shadow yet, so a flat shadow can be given directly; it only set the default for new shadows before. The shadow handles are larger and can be grabbed from a little outside them. Native ellipses, polygons and stars are checked to cast and pick their shadow by their own outline, the same as after Convert to Curves. Shared code: desktop (Linux, Windows, macOS), web and Android (#1323).
+- Number fields: dragging left or right on a field's arrows, or on its label, slides the value down or up, a step every few pixels (Shift for bigger steps, Ctrl for finer ones) (#1303).
 
 - Extrude: each side of the body is one object, filled with the side's colours (a curved side with a fountain that follows the light) and outlined once, so a square's body is its two sides and a circle's its one curved side, to colour, paint with Smart Fill or break apart as whole parts; the far face, hidden behind a filled object and its sides, is no longer drawn. Before, a curved side was a row of dozens of slats (#1281).
 - Dialog boxes: Tab goes to the first box you can type in and on through the dialog's controls, and Shift+Tab back, without leaving the dialog. Tab with nothing focused (a dialog just opened) or from a dialog's last control went to the menu bar, so the File menu took the next keys (#1258).
@@ -32,6 +33,7 @@ full, row-by-row status.
 - Convert Colors to RGB or CMYK: the Color Eyedropper's readout and the Color panel show a converted object's colour in the model it went to. The readout always showed the drawing's colour mode (CMYK by default) and the panel kept its sliders' model and did not read the fill again, so an object converted to RGB still looked CMYK (#1254).
 - Blend between an object and a turned copy of it: every step turns by the same share and keeps its size. The steps were mixed point by point, so they shrank toward the middle and turned unevenly, the first and last most of all (#1260).
 - Text: a font picked for several text objects changes only their font. Each kept its own size before only when the bar showed it, so texts of 9 and 11 pt all became 11 pt, and bold or italic went to all of them too; now only the setting changed goes to every selected text (#1304).
+- Break Apart (Ctrl+K) on vertical text: its pieces stay in their columns, one word or letter under the other and the columns right to left. They came out side by side in a row, as if the text had turned horizontal (#1303).
 
 ## 0.28.0 (2026-10-30)
 

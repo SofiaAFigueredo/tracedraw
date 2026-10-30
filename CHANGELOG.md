@@ -35,6 +35,7 @@ full, row-by-row status.
 - Text: a font picked for several text objects changes only their font. Each kept its own size before only when the bar showed it, so texts of 9 and 11 pt all became 11 pt, and bold or italic went to all of them too; now only the setting changed goes to every selected text (#1304).
 - Break Apart (Ctrl+K) on vertical text: its pieces stay in their columns, one word or letter under the other and the columns right to left. They came out side by side in a row, as if the text had turned horizontal (#1303).
 - Palettes: opening a palette file adds that palette in a row of its own next to the default palette, and opening the same file again does not add a second copy. The opened palette took the default palette's place, which moved to a row of its own, so two palettes seemed to come at once. The Palette Manager has a Lock button for each palette that is not built in: a locked palette cannot be changed in the Palette Editor until it is unlocked (#1343).
+- Shape tool on rectangles, ellipses and polygons: Ctrl counts while a node is dragged, also when pressed after the button. On an ellipse's pie or arc node it now steps the angle by the constrain angle (15 degrees at first), and on a star's inner node it keeps the points from turning; before, Ctrl was read only at the press and only for rectangle corners (#1325, #1331, #1340).
 
 ## 0.28.0 (2026-10-30)
 

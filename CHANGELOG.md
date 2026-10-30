@@ -12,6 +12,7 @@ full, row-by-row status.
 - Area Fill: the Fill and Outline lists on the property bar now show Specify first, then Use default, then None. The choice kept in the preferences is unchanged.
 - Objects docker: the mouse wheel over the list makes the thumbnails larger or smaller, as the slider in the bottom bar does. While the list has nothing to scroll this works anywhere over it; a longer list still scrolls with the wheel, and the wheel over a thumbnail, or Ctrl+wheel anywhere, changes the size.
 - Saving .cdr: text with several colours in one line keeps them in the program that reads `.cdr` files. Each run of another colour was written with a style of its own but marked as a run that takes the paragraph's style, so that program left the style out and drew the whole line in one colour, embedded fonts or not; such runs are now marked as their files mark them (#1297, #1347, #1238).
+- Browser version on an iPhone or iPad: Open and Import offer every file, so `.cdr`, `.cmx` and `.tdraw` files can be picked. The system greyed out the files whose type it does not know as soon as the page listed the extensions it takes, so only files such as SVG and EPS could be chosen (#1311).
 
 ## 0.28.0 (2026-10-30)
 

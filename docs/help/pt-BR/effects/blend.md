@@ -81,3 +81,12 @@ pontas da curva.
 transforma os passos em objetos próprios.
 Os passos saem agrupados ao lado do objeto. [[menu.object > menu.object.break_blend_apart]] (<kbd>Ctrl+K</kbd>, também no
 menu do botão direito) faz o mesmo.
+
+## Salvar como `.cdr` {#cdr}
+
+Uma mistura salva como `.cdr` (versão 9 ou posterior) continua sendo uma mistura: o arquivo
+guarda os dois objetos e o registro da mistura entre eles, então o programa
+que abre o arquivo mostra os passos e deixa mudar a mistura. Os passos, o
+espaçamento e os dois objetos vão para o arquivo; aceleração, rotação, um caminho e a
+direção da cor voltam no TraceDraw (versão 14 ou posterior); outros programas começam
+com os seus padrões.

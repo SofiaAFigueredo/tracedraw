@@ -83,3 +83,12 @@ paso en los extremos de la curva.
 los pasos en objetos independientes.
 Los pasos salen agrupados junto al objeto. [[menu.object > menu.object.break_blend_apart]] (<kbd>Ctrl+K</kbd>, también en
 el menú del botón derecho) hace lo mismo.
+
+## Guardar como `.cdr` {#cdr}
+
+Una mezcla guardada como `.cdr` (versión 9 o posterior) sigue siendo una mezcla: el archivo
+guarda los dos objetos y el registro de la mezcla entre ellos, así que el programa
+que abre el archivo muestra los pasos y permite cambiar la mezcla. Los pasos, el
+espaciado y los dos objetos van al archivo; la aceleración, la rotación, un trayecto y
+la dirección del color vuelven en TraceDraw (versión 14 o posterior); otros programas
+empiezan con sus valores predeterminados.

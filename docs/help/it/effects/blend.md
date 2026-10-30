@@ -84,3 +84,12 @@ passaggio alle estremità della curva.
 **Separa** trasforma i passaggi in oggetti a sé stanti.
 I passaggi escono raggruppati accanto all'oggetto. [[menu.object > menu.object.break_blend_apart]] (<kbd>Ctrl+K</kbd>,
 anche nel menu del tasto destro) fa lo stesso.
+
+## Salvare come `.cdr` {#cdr}
+
+Una fusione salvata come `.cdr` (versione 9 o successiva) resta una fusione: il file
+contiene i due oggetti e il record della fusione tra loro, quindi il programma
+che apre il file mostra i passaggi e permette di cambiare la fusione. I passaggi, la
+spaziatura e i due oggetti vanno nel file; accelerazione, rotazione, un tracciato e la
+direzione del colore tornano in TraceDraw (versione 14 o successiva); gli altri programmi
+partono dai loro valori predefiniti.

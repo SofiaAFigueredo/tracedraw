@@ -17,6 +17,9 @@ find out what changed and lists the highlights of the latest versions.
 
 ## Highlights of recent versions {#highlights}
 
+- **Object thumbnails.** The [[docker.objects]] panel shows each object
+  drawn small beside its name; Ctrl+wheel over the list or the slider at its
+  bottom sets the size. See [Organizing objects and layers](../objects/objects-and-layers.md#objects-docker).
 - **Tablets and Android.** The browser version installs as an app on a
   tablet or a desktop, and an Android app runs on tablets, phones and
   Chromebooks. See [Tablets and the Android app](../get-started/tablets-and-android.md).

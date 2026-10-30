@@ -20,6 +20,10 @@ saber o que mudou e lista os destaques das versões mais recentes.
 
 ## Destaques das versões recentes {#highlights}
 
+- **Miniaturas dos objetos.** O painel [[docker.objects]] mostra cada objeto
+  desenhado em tamanho pequeno ao lado do nome; Ctrl+roda sobre a lista ou o
+  controle deslizante na parte de baixo define o tamanho. Veja
+  [Organizar objetos e camadas](../objects/objects-and-layers.md#objects-docker).
 - **Tablets e Android.** A versão para navegador se instala como app num
   tablet ou computador, e um app para Android roda em tablets, celulares e
   Chromebooks. Veja [Tablets e o app para Android](../get-started/tablets-and-android.md).

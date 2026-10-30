@@ -7,6 +7,7 @@ full, row-by-row status.
 ## Unreleased
 
 - Help: pages brought up to date with releases 0.19 to 0.27 (opening and saving, fonts, text, printing, export, drawing tools, objects, colours, effects, pages, options, menus and shortcuts), and new pages for Package, Missing Fonts, Convert Colors, finding by properties, PDF printers' marks, booklets, Fit Objects to Path, the Before and After preview, graphics tablets and tablets with the Android app; Brazilian Portuguese follows, other languages where the pages changed most. Docs only.
+- Saving `.cdr` (version 12 and later): a clip frame (Place Inside Frame) is written as a clip container, the way files saved by the program that reads them hold one: the frame as an object of its own fill and outline naming, in its record, a group of the document's clip contents list that holds the objects placed inside it. A picture inside a frame went out as a bitmap with a crop path and any other frame as a plain group of the frame and its contents, which that program showed without the picture and without the frame (#1222). Read back in TraceDraw the frame is a clip frame again, its contents inside it. Versions 7 to 11 keep the group. `tracedraw-cli check` reads clip containers (the number must name a group of the list).
 - Browser version: its notice now opens with the warning that a browser is slower, marked in red and underlined, then says it is the same program compiled to WebAssembly, and last points to the desktop app, in every language.
 
 ## 0.27.0 (2026-10-30)

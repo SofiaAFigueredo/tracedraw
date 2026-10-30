@@ -870,9 +870,27 @@ fn clip_frames() {
         );
         let cb = (first.transform * contents[0].page_path()).bounding_box();
         same_box(r.v, cb, Rect::new(10.0, 10.0, 70.0, 40.0), EPS);
-        // Not a clip container yet: the frame's fill under, the contents,
-        // the frame's outline over.
+        // From version 12 a clip container (#1222): the frame with its
+        // fill and outline, the contents inside it. Before, the frame's
+        // fill under, the contents, the frame's outline over.
         let second = r.shape(1);
+        if r.v >= 12 {
+            let ShapeKind::ClipFrame { frame, contents } = &second.kind else {
+                panic!("version {}: {}", r.v, kind_name(&second.kind));
+            };
+            solid(r.v, frame, Color::rgb8(220, 40, 40), "frame fill");
+            assert!(frame.stroke.is_some(), "version {}", r.v);
+            assert_eq!(contents.len(), 2, "version {}", r.v);
+            let fb = (second.transform * frame.page_path()).bounding_box();
+            same_box(r.v, fb, Rect::new(110.0, 15.0, 150.0, 55.0), EPS);
+            let cb = contents
+                .iter()
+                .map(|c| (second.transform * c.page_path()).bounding_box())
+                .reduce(|a, b| a.union(b))
+                .unwrap_or_default();
+            same_box(r.v, cb, Rect::new(100.0, 10.0, 160.0, 60.0), EPS);
+            return;
+        }
         let ShapeKind::Group { children } = &second.kind else {
             panic!("version {}: {}", r.v, kind_name(&second.kind));
         };
@@ -1630,8 +1648,19 @@ mod structure {
     fn required_chunks(tree: &Tree, main: &[u8], v: u16) {
         let mut objects = 0usize;
         let mut texts = 0usize;
-        tree.root.walk(&mut |c, _| {
+        // The depth of the `LIST clpt` being walked: the clip container
+        // groups in it and the objects they hold carry no static id
+        // (`usdn`), as the files have them (#1222).
+        let mut clpt: Option<usize> = None;
+        tree.root.walk(&mut |c, depth| {
+            if clpt.is_some_and(|d| depth <= d) {
+                clpt = None;
+            }
             let Some(kind) = list_type(c) else { return };
+            if kind == *b"clpt" {
+                clpt = Some(depth);
+            }
+            let id: &[&[u8; 4]] = if clpt.is_some() { &[] } else { &[b"usdn"] };
             let need = |names: &[&[u8; 4]]| {
                 for n in names {
                     assert!(
@@ -1656,12 +1685,16 @@ mod structure {
                 }
                 b"page" => need(&[b"flgs", b"bbox", b"gobj"]),
                 b"layr" => need(&[b"flgs", b"lgob"]),
-                b"grp " => need(&[b"flgs", b"bbox", b"obbx", b"usdn", b"lgob"]),
+                b"grp " => {
+                    need(&[b"flgs", b"bbox", b"obbx", b"lgob"]);
+                    need(id);
+                }
                 b"lgob" => need(&[b"loda"]),
                 b"trfl" => need(&[b"trfd"]),
                 b"obj " => {
                     objects += 1;
-                    need(&[b"flgs", b"bbox", b"obbx", b"usdn", b"lgob"]);
+                    need(&[b"flgs", b"bbox", b"obbx", b"lgob"]);
+                    need(id);
                     let lgob = c.find(b"lgob").expect("lgob");
                     assert!(
                         has(lgob, b"loda") && has(lgob, b"ftil") && has(lgob, b"trfl"),

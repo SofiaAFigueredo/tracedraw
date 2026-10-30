@@ -4630,6 +4630,8 @@ impl<'a> Writer<'a> {
                     kind: ShapeKind::Group { children },
                     transform: Affine::IDENTITY,
                     effects: Vec::new(),
+                    // The lines carry the text's transparency.
+                    opacity: 1.0,
                     ..s.clone()
                 },
             };
@@ -4643,6 +4645,9 @@ impl<'a> Writer<'a> {
                     .map(|c| {
                         let mut c = c.clone();
                         c.absorb(s.transform);
+                        // A group's transparency is written on each object
+                        // it holds.
+                        c.absorb_opacity(s.opacity);
                         c
                     })
                     .collect();

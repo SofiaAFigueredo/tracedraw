@@ -1,7 +1,5 @@
 # Novidades
 
-> *Tradução automática: esta página pode estar atrasada em relação à versão em inglês.*
-
 Cada versão do TraceDraw traz recursos e correções. Esta página explica como
 saber o que mudou e lista os destaques das versões mais recentes.
 

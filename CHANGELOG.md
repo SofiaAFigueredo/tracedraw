@@ -24,6 +24,7 @@ full, row-by-row status.
 - Clip frames: editing the contents ends with a Ctrl+click off them, besides the bar's Finish; Alt held while objects are dropped on a frame puts them inside, as W does (#1337).
 - Selecting with Alt: Alt+drag with the Pick and Freehand Pick tools starts the touching frame or lasso also over an object that is not selected (it moved that object, so a selection could not start over a background); with the Shape tool Alt+drag draws a freehand node marquee, Alt+Shift adds to the chosen nodes (#1341, #1350).
 - Saving .cdr: clicking a picture in the saved file no longer makes the program that reads `.cdr` files close at once. The outline of every bitmap object was written without the node marks curves carry, which that program's own files always have; `tracedraw-cli check` now reports such outlines (#1226).
+- Browser version on an iPhone, iPad or Android device: Open and Import offer every file, so `.cdr`, `.cmx` and `.tdraw` files can be picked. The system greyed out the files whose type it does not know as soon as the page listed the extensions it takes, so only files such as SVG and EPS could be chosen (#1311).
 
 ## 0.28.0 (2026-10-30)
 

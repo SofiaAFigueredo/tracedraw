@@ -6,6 +6,8 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Options > Tools: the pages come in a new order (Pick, Eraser, Zoom/Pan, Freehand/Bézier, Shape Recognition, Rectangle, Ellipse, Polygon, Graph Paper, Spiral, Table, Dimension, Connector, Mesh Fill); Curve tools is now Freehand/Bézier, and new Shape Recognition (recognition and smoothing levels), Dimension (precision, units, prefix and suffix of new dimensions), Connector (corner radius) and Mesh Fill (columns and rows) pages edit the same defaults as the property bars, kept across restarts and put back by Cancel.
+
 ## 0.30.0 (2026-10-31)
 
 - Saving .cdr in version 8: the style table no longer holds the table that only the bidirectional variant of version 8 and later versions have, so the file has the layout of the files version 8 itself saved. The version 8 file of the last test bundle crashed a 2010 release of the program that reads `.cdr` files on opening, while the same drawing's files of versions 7 and 9 to 15 opened (#1139; not yet confirmed in that program).

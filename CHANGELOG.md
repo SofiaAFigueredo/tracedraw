@@ -6,6 +6,9 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Update card: when a newer release is known, a card opens in the middle of the window at start with the icon, an UPDATE badge, the two versions and Update now, so TraceDraw can be updated from there without opening Help > Updates; it shows the download and then offers Restart now, What's new opens the release notes, and Dismiss closes it until the next start (which brings it back until the update is installed or skipped).
+- Help > Updates: Install now works for every kind of copy that has a release file, not only for a Linux AppImage: the Windows installer and portable zip, the macOS app, the Linux tar.gz and the Linux `.deb`, so a new version no longer needs the old one to be uninstalled first (the `.deb` asks for the administrator's password through the system's dialog; the portable zip keeps its settings folder). The download is checked against the release's digest; on Windows TraceDraw then closes (asking about unsaved drawings), the installer runs over the existing copy with your settings and file associations kept, and the new version starts by itself; on a Mac the app is replaced in place. After an in-place install a Restart now button opens the new version. A failed check leaves the installed copy untouched and offers Download.
+
 ## 0.28.0 (2026-10-30)
 
 - Variable fonts with many axes (Roboto Flex) draw their text: the font was listed and its axis sliders showed, but every letter came out empty because the glyph reader refused glyphs with more than 32 variation tuples (#870).

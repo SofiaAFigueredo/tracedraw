@@ -52,6 +52,12 @@ to add one for odd or even pages only. A master layer's menu has
 [[options.scope_even]]. You can select and edit master objects from any page
 they show on.
 
+To put a master layer over the page's own objects, tick
+[[docker.master_in_front]] in its menu, or select one of its objects and
+choose [[menu.object > menu.object.order > menu.object.to_front_of_page]]
+(<kbd>Ctrl</kbd>+<kbd>Home</kbd>); [[menu.object.to_back_of_page]]
+(<kbd>Ctrl</kbd>+<kbd>End</kbd>) puts the layer behind the page's objects again.
+
 ## Renaming objects and layers {#rename}
 
 Double-click a layer or an object in the panel, or choose [[docker.rename]]
@@ -72,6 +78,13 @@ Names help you find objects in the panel and in
 [[menu.object.forward_one]], [[menu.object.back_one]],
 [[menu.object.in_front_of]], [[menu.object.behind]] (click the object to go
 in front of or behind) and [[menu.object.reverse_order]].
+
+In the Objects panel, drag an object's row up or down the list: a line
+shows where it will go. Let go on the upper half of another object's row
+to put it in front of that object, on the lower half to put it behind; an
+object of another layer moves to that layer. Let go on a layer's row to
+put it on top of that layer. When the row is selected, the other selected
+objects come along. Undo puts everything back in one step.
 
 ## Grouping and combining {#combine}
 

@@ -141,6 +141,12 @@ pub const GROUPS: &[ToolGroup] = &[
         ],
         hidden: false,
     },
+    // The Variable Outline tool has a button of its own, under the brush
+    // tools.
+    ToolGroup {
+        tools: &[Tool::VariableOutline],
+        hidden: false,
+    },
     ToolGroup {
         tools: &[Tool::Rectangle, Tool::ThreePointRectangle],
         hidden: false,
@@ -205,11 +211,6 @@ pub const GROUPS: &[ToolGroup] = &[
     },
     ToolGroup {
         tools: &[Tool::InteractiveFill, Tool::AreaFill, Tool::MeshFill],
-        hidden: false,
-    },
-    // The Variable Outline tool has a button of its own at the bottom.
-    ToolGroup {
-        tools: &[Tool::VariableOutline],
         hidden: false,
     },
     ToolGroup {
@@ -476,6 +477,21 @@ impl Tool {
                     | Tool::Smudge
                     | Tool::Roughen
             )
+    }
+
+    /// The shaping brushes, which work with a round nib: Smooth, Smear,
+    /// Twirl, Attract and Repel, Smudge and Roughen. Shift+drag and the
+    /// wheel size their nib (see `brushes.rs`).
+    pub fn is_shaping_brush(self) -> bool {
+        matches!(
+            self,
+            Tool::Smooth
+                | Tool::Smear
+                | Tool::Twirl
+                | Tool::AttractRepel
+                | Tool::Smudge
+                | Tool::Roughen
+        )
     }
 
     /// Tools that draw by dragging a bounding box.

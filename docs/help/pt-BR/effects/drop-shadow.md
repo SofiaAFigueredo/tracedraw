@@ -18,6 +18,14 @@ seleciona o objeto dela; com a ferramenta [[tool.drop_shadow]] mostra as alças
 da sombra, e arrastar a sombra a move. As sombras aparecem em PDFs exportados
 e impressos, com a cor, a opacidade e o esfumado.
 
+Um clique duplo numa sombra com a ferramenta [[tool.pick]] escolhe a
+ferramenta [[tool.drop_shadow]] para o objeto dela, com as alças da sombra na
+página e as configurações na barra de propriedades. Clique com o botão direito
+num objeto com sombra e escolha [[context.edit_shadow]], ou use o mesmo botão
+na seção da sombra do painel Propriedades, para fazer o mesmo. Um objeto com
+sombra própria é sempre selecionado com um clique nele, também onde a sombra de
+outro objeto cai sobre ele.
+
 ## Configurações {#settings}
 
 Na barra de propriedades:
@@ -27,6 +35,11 @@ Na barra de propriedades:
 - a **opacidade** (50% de início);
 - o **esmaecimento**, quão suave é a borda (15% de início);
 - a **cor** (preto de início).
+
+Uma mudança ali vale na hora para os objetos selecionados, também para um
+objeto que ainda não tem sombra: escolha Plana, ou uma borda, para dar a ele
+esse tipo de sombra diretamente. As alças da sombra podem ser pegas um pouco
+fora dos quadrados.
 
 [[menu.object > menu.object.clear_effect]] remove a sombra. Para copiar a sombra
 de outro objeto, use

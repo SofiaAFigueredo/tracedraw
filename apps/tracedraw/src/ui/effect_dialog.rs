@@ -29,6 +29,9 @@ pub struct EffectState {
     /// The Preview box: the effect shows on the drawing while the dialog
     /// is open (see `fx::preview`).
     pub preview: bool,
+    /// The All pages box: OK also gives the effect to every picture on
+    /// the drawing's pages (#1551).
+    pub all_pages: bool,
 }
 
 impl EffectState {
@@ -46,6 +49,7 @@ impl EffectState {
             lab,
             pick: None,
             preview: PREVIEW_AT_START,
+            all_pages: false,
         }
     }
 }
@@ -92,7 +96,10 @@ pub const PICK_PARAMS: [&str; 4] = ["low_sample", "mid_sample", "high_sample", "
 
 /// One setting's control; true when it changed. `pick` is the colour
 /// setting whose eyedropper is on, if the dialog has eyedroppers.
-pub fn param_widget(
+/// The control of `spec` in the settings panel's column: a slider with
+/// its label above it, stretched to the column; a list, a colour or a
+/// dial with its label at the left; a check box alone.
+pub fn param_stacked(
     ui: &mut Ui,
     spec: &ParamSpec,
     values: &mut BTreeMap<String, f64>,
@@ -123,7 +130,7 @@ pub fn param_widget(
             default,
             step,
         } => {
-            ui.label(tr(&key));
+            ui.label(format!("{}:", tr(&key)));
             let mut v = values.get(spec.name).copied().unwrap_or(default);
             let mut s = crate::ui::Slider::new(&mut v, min..=max);
             if step >= 1.0 {
@@ -143,50 +150,55 @@ pub fn param_widget(
             }
         }
         ParamKind::Angle { default } => {
-            ui.label(tr(&key));
             let mut v = values.get(spec.name).copied().unwrap_or(default);
-            crate::ui::tips::tip_over(ui, tip(), |ui| {
-                ui.horizontal(|ui| {
-                    changed |= dial(ui, &mut v);
-                    changed |= ui
-                        .add(
-                            crate::ui::field::NumField::new(&mut v)
-                                .range(-360.0..=360.0)
-                                .suffix(" \u{b0}"),
-                        )
-                        .changed();
-                })
-            });
+            let draw = |ui: &mut Ui| {
+                ui.label(tr(&key));
+                crate::ui::tips::tip_over(ui, tip(), |ui| {
+                    ui.horizontal(|ui| {
+                        changed |= dial(ui, &mut v);
+                        changed |= ui
+                            .add(
+                                crate::ui::field::NumField::new(&mut v)
+                                    .range(-360.0..=360.0)
+                                    .suffix(" \u{b0}"),
+                            )
+                            .changed();
+                    })
+                });
+            };
+            ui.horizontal(draw);
             if changed {
                 values.insert(spec.name.to_string(), v);
             }
         }
         ParamKind::Choice { options, default } => {
-            ui.label(tr(&key));
             let cur = values
                 .get(spec.name)
                 .map(|v| v.max(0.0) as usize)
                 .unwrap_or(default)
                 .min(options.len().saturating_sub(1));
-            egui::ComboBox::from_id_salt(("fx_choice", spec.name))
-                .selected_text(tr(&format!("fxo.{}", options[cur])))
-                .width(170.0)
-                .show_ui(ui, |ui| {
-                    for (i, o) in options.iter().enumerate() {
-                        if ui
-                            .selectable_label(i == cur, tr(&format!("fxo.{o}")))
-                            .clicked()
-                        {
-                            values.insert(spec.name.to_string(), i as f64);
-                            changed = true;
+            let draw = |ui: &mut Ui| {
+                ui.label(tr(&key));
+                crate::ui::keynav::ComboBox::from_id_salt(("fx_choice", spec.name))
+                    .selected_text(tr(&format!("fxo.{}", options[cur])))
+                    .width(170.0)
+                    .show_ui(ui, |ui| {
+                        for (i, o) in options.iter().enumerate() {
+                            if ui
+                                .selectable_label(i == cur, tr(&format!("fxo.{o}")))
+                                .clicked()
+                            {
+                                values.insert(spec.name.to_string(), i as f64);
+                                changed = true;
+                            }
                         }
-                    }
-                })
-                .response
-                .rich_tip_with(tip);
+                    })
+                    .response
+                    .rich_tip_with(tip);
+            };
+            ui.horizontal(draw);
         }
         ParamKind::Check { default } => {
-            ui.label("");
             let mut on = values.get(spec.name).map(|v| *v != 0.0).unwrap_or(default);
             if ui.checkbox(&mut on, tr(&key)).rich_tip_with(tip).changed() {
                 values.insert(spec.name.to_string(), if on { 1.0 } else { 0.0 });
@@ -194,45 +206,48 @@ pub fn param_widget(
             }
         }
         ParamKind::Color { default } => {
-            ui.label(tr(&key));
             let c = values
                 .get(spec.name)
                 .copied()
                 .unwrap_or(default as f64)
                 .max(0.0) as u32;
             let mut rgb = crate::fx::util::rgb(c);
-            ui.horizontal(|ui| {
-                if ui
-                    .color_edit_button_srgb(&mut rgb)
-                    .rich_tip_with(tip)
-                    .changed()
-                {
-                    let v = ((rgb[0] as u32) << 16) | ((rgb[1] as u32) << 8) | rgb[2] as u32;
-                    values.insert(spec.name.to_string(), v as f64);
-                    changed = true;
-                }
-                if let Some(pick) = pick {
-                    if PICK_PARAMS.contains(&spec.name) {
-                        let on = pick.as_deref() == Some(spec.name);
-                        let (rect, resp) =
-                            ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
-                        crate::ui::propbar::frame(ui, rect, resp.hovered(), on);
-                        crate::ui::icons::draw(
-                            ui.painter(),
-                            Rect::from_center_size(rect.center(), Vec2::splat(16.0)),
-                            crate::tools::Tool::ColorEyedropper,
-                            crate::theme::Tokens::icon(),
-                        );
-                        if resp.rich_tip(tr("dialog.pick_from_image")).clicked() {
-                            *pick = if on {
-                                None
-                            } else {
-                                Some(spec.name.to_string())
-                            };
+            let draw = |ui: &mut Ui| {
+                ui.label(tr(&key));
+                ui.horizontal(|ui| {
+                    if ui
+                        .color_edit_button_srgb(&mut rgb)
+                        .rich_tip_with(tip)
+                        .changed()
+                    {
+                        let v = ((rgb[0] as u32) << 16) | ((rgb[1] as u32) << 8) | rgb[2] as u32;
+                        values.insert(spec.name.to_string(), v as f64);
+                        changed = true;
+                    }
+                    if let Some(pick) = pick {
+                        if PICK_PARAMS.contains(&spec.name) {
+                            let on = pick.as_deref() == Some(spec.name);
+                            let (rect, resp) =
+                                ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+                            crate::ui::propbar::frame(ui, rect, resp.hovered(), on);
+                            crate::ui::icons::draw(
+                                ui.painter(),
+                                Rect::from_center_size(rect.center(), Vec2::splat(16.0)),
+                                crate::tools::Tool::ColorEyedropper,
+                                crate::theme::Tokens::icon(),
+                            );
+                            if resp.rich_tip(tr("dialog.pick_from_image")).clicked() {
+                                *pick = if on {
+                                    None
+                                } else {
+                                    Some(spec.name.to_string())
+                                };
+                            }
                         }
                     }
-                }
-            });
+                });
+            };
+            ui.horizontal(draw);
         }
     }
     changed
@@ -283,7 +298,7 @@ fn tone_curve_part(
     hist: Option<&[u32; 256]>,
     image: Option<&image::RgbaImage>,
     picked: Option<image::Rgba<u8>>,
-    status: &mut String,
+    app: &mut App,
 ) {
     use crate::bitmap_modes::ToneCurve;
     use crate::fx::adjust::{
@@ -296,7 +311,7 @@ fn tone_curve_part(
     let mut style = curve_style(params, ch);
     ui.horizontal(|ui| {
         ui.label(tr("fxp.channel"));
-        egui::ComboBox::from_id_salt("tone_curve_channel")
+        crate::ui::keynav::ComboBox::from_id_salt("tone_curve_channel")
             .selected_text(tr(CURVE_CHANNELS[idx].1))
             .width(110.0)
             .show_ui(ui, |ui| {
@@ -311,7 +326,7 @@ fn tone_curve_part(
             ));
         ui.add_space(10.0);
         ui.label(tr("dialog.curve_style"));
-        egui::ComboBox::from_id_salt("tone_curve_style")
+        crate::ui::keynav::ComboBox::from_id_salt("tone_curve_style")
             .selected_text(tr(&format!("dialog.curve_style_{}", CURVE_STYLES[style])))
             .width(110.0)
             .show_ui(ui, |ui| {
@@ -527,16 +542,13 @@ fn tone_curve_part(
                     ))
                     .clicked()
                 {
-                    if let Some(path) = crate::files::Dialog::new()
-                        .add_filter(tr("dialog.tone_curve_preset"), &["json"])
-                        .set_file_name("tone curve.json")
-                        .save_path()
-                    {
-                        if let Ok(json) = serde_json::to_string_pretty(&*params) {
-                            if let Err(e) = crate::files::write(&path, json) {
-                                *status = e.to_string();
-                            }
-                        }
+                    // The save dialog, a download, or the system's save
+                    // picker on Android (#1402).
+                    if let Ok(json) = serde_json::to_string_pretty(&*params) {
+                        crate::files::Dialog::new()
+                            .add_filter(tr("dialog.tone_curve_preset"), &["json"])
+                            .set_file_name("tone curve.json")
+                            .save_bytes(app, json);
                     }
                 }
             });
@@ -943,55 +955,61 @@ fn effect_settings(
         let thumb = preview.map(|p| p.img);
         if spec.id == "tone_curve" {
             let hist = thumb.as_ref().map(|t| histogram(t));
-            tone_curve_part(
-                ui,
-                st,
-                hist.as_ref(),
-                thumb.as_deref(),
-                node_pick,
-                &mut app.status,
-            );
+            tone_curve_part(ui, st, hist.as_ref(), thumb.as_deref(), node_pick, app);
         } else if spec.params.is_empty() {
             ui.label(tr("dialog.no_settings"));
         } else {
-            if spec.id == "contrast_enhancement" {
-                // The chosen channel's histogram (brightness for all).
-                let ch = st
-                    .effect
-                    .params
-                    .get("channel")
-                    .map(|v| v.max(0.0) as usize)
-                    .unwrap_or(0)
-                    .min(3);
-                let hist = thumb.as_ref().map(|t| channel_histogram(t, ch));
-                levels_part(ui, st, hist.as_ref(), thumb.as_deref());
-            }
-            ui.spacing_mut().slider_width = 180.0;
-            let room = (ui.available_height() - 70.0).max(120.0);
-            egui::ScrollArea::vertical()
-                .id_salt("fx_params_scroll")
-                .max_height(room)
-                .show(ui, |ui| {
-                    egui::Grid::new("fx_params")
-                        .num_columns(2)
-                        .spacing([10.0, 6.0])
-                        .show(ui, |ui| {
-                            for p in spec.params {
-                                param_widget(ui, p, &mut st.effect.params, Some(&mut st.pick));
-                                ui.end_row();
-                            }
-                        });
-                });
-            if ui
-                .button(tr("dialog.reset"))
-                .rich_tip(crate::ui::tips::keyed("dialog.reset"))
-                .clicked()
-            {
-                st.effect.params.clear();
-            }
+            // The settings panel, with the Reset, undo and redo row and
+            // the Preview box under it.
+            let below = before_after::STEPS_H + 30.0;
+            before_after::panel(ui, "fx_params_scroll", below, |ui| {
+                if spec.id == "contrast_enhancement" {
+                    // The chosen channel's histogram (brightness for all).
+                    let ch = st
+                        .effect
+                        .params
+                        .get("channel")
+                        .map(|v| v.max(0.0) as usize)
+                        .unwrap_or(0)
+                        .min(3);
+                    let hist = thumb.as_ref().map(|t| channel_histogram(t, ch));
+                    levels_part(ui, st, hist.as_ref(), thumb.as_deref());
+                }
+                for p in spec.params {
+                    let r = ui
+                        .vertical(|ui| {
+                            param_stacked(ui, p, &mut st.effect.params, Some(&mut st.pick))
+                        })
+                        .response;
+                    before_after::mark(ui, p.name, r.rect);
+                    ui.add_space(2.0);
+                }
+            });
+            before_after::steps_for(
+                ui,
+                egui::Id::new("fx_steps"),
+                &mut st.effect.params,
+                BTreeMap::new(),
+                &crate::ui::tips::keyed("dialog.reset"),
+            );
         }
         preview_row(ui, app, &mut st.preview);
+        all_pages_row(ui, app, st);
     }
+}
+
+/// The All pages box, while adding an effect with a picture selected in a
+/// drawing of several pages: OK gives the effect to every picture on all
+/// pages too (#1551).
+pub fn all_pages_row(ui: &mut Ui, app: &App, st: &mut EffectState) {
+    if st.edit.is_some() || app.doc().pages.len() < 2 || !app.selection_has_picture() {
+        return;
+    }
+    ui.checkbox(&mut st.all_pages, tr("dialog.fx_all_pages"))
+        .rich_tip(crate::ui::tips::pair(
+            "dialog.fx_all_pages",
+            "dialog.fx_all_pages_desc",
+        ));
 }
 
 /// The Preview box (the effect on the drawing while the dialog is open)
@@ -1055,7 +1073,7 @@ pub fn fx_section(app: &mut App, ui: &mut Ui, id: ShapeId) {
             }
             ui.label(tr(&format!("fx.{}", e.id)));
             if ui
-                .small_button("\u{270E}")
+                .small_button("\u{270F}")
                 .rich_tip(tr("docker.edit_effect"))
                 .clicked()
             {
@@ -1066,17 +1084,18 @@ pub fn fx_section(app: &mut App, ui: &mut Ui, id: ShapeId) {
                     lab: Default::default(),
                     pick: None,
                     preview: PREVIEW_AT_START,
+                    all_pages: false,
                 });
             }
             if ui
-                .add_enabled(i > 0, egui::Button::new("\u{25B2}").small())
+                .add_enabled(i > 0, egui::Button::new("\u{23F6}").small())
                 .rich_tip(tr("docker.move_up"))
                 .clicked()
             {
                 app.edit_bitmap_effects(id, "Reorder Effects", move |l| l.swap(i, i - 1));
             }
             if ui
-                .add_enabled(i + 1 < n, egui::Button::new("\u{25BC}").small())
+                .add_enabled(i + 1 < n, egui::Button::new("\u{23F7}").small())
                 .rich_tip(tr("docker.move_down"))
                 .clicked()
             {

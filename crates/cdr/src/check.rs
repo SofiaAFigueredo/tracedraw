@@ -14,11 +14,18 @@
 //!   unique among the objects that carry one, fill and outline ids unique
 //!   in their tables;
 //! - text: every text object has a `txsm` record with at least one
-//!   paragraph, and every paragraph and run holds at least one letter;
+//!   paragraph and one letter, and every run of a paragraph that is not
+//!   a blank line holds at least one letter;
+//!   a version 16+ run record with a style of its own marks it as
+//!   applying (#1297);
 //! - references: every fill id, outline id and style id an object or a
 //!   text paragraph names exists in the tables, and a clip container's
 //!   argument 8005 names a group of the document's `LIST clpt` (whose
 //!   objects carry no `usdn`, as files have them);
+//! - bitmaps: an object's pixel size is its `bmp ` image's, and from
+//!   version 14 its box (from the origin) the image's size at the
+//!   image's resolution, as every bitmap of the files seen holds it
+//!   (#1222);
 //! - blends: a blend's linked group (`LIST lnkg` of object type 7 with a
 //!   step argument) stands between two objects of its list, its ends,
 //!   has a `usdn` of its own and a step count of 1 to 999 (#1192).
@@ -70,7 +77,7 @@ pub fn check_bytes(bytes: &[u8]) -> Result<Vec<Finding>> {
         fills: HashSet::new(),
         outlines: HashSet::new(),
         styles: HashSet::new(),
-        images: HashSet::new(),
+        images: HashMap::new(),
         usdn: HashMap::new(),
         spnd: HashMap::new(),
         objects: 0,
@@ -83,6 +90,28 @@ pub fn check_bytes(bytes: &[u8]) -> Result<Vec<Finding>> {
     Ok(c.findings)
 }
 
+/// What a `bmp ` record says of its image: the size in pixels and the
+/// resolution in pixels a kilometre (x, y; 0 when not given).
+#[derive(Debug, Clone, Copy)]
+struct Image {
+    width: u32,
+    height: u32,
+    res: (u32, u32),
+}
+
+impl Image {
+    /// The record's image (id, 50 bytes of header, colour model, 1, the
+    /// width and the height, 1, the bits, the row size, the pixel bytes,
+    /// 0, the x and y resolutions), when it holds that much.
+    fn of(d: &[u8]) -> Option<Self> {
+        Some(Self {
+            width: u32_at(d, 62)?,
+            height: u32_at(d, 66)?,
+            res: (u32_at(d, 90).unwrap_or(0), u32_at(d, 94).unwrap_or(0)),
+        })
+    }
+}
+
 struct Checker<'a> {
     v: u16,
     tree: &'a Tree,
@@ -91,8 +120,9 @@ struct Checker<'a> {
     fills: HashSet<u32>,
     outlines: HashSet<u32>,
     styles: HashSet<u32>,
-    /// The ids of the `bmp ` records.
-    images: HashSet<u32>,
+    /// The `bmp ` records by id: the image's size in pixels and its
+    /// resolution (pixels a kilometre, x and y), when the record holds them.
+    images: HashMap<u32, Option<Image>>,
     /// `usdn` number to the place that holds it.
     usdn: HashMap<u32, String>,
     spnd: HashMap<u32, String>,
@@ -196,6 +226,42 @@ pub(crate) fn loda_args(d: &[u8]) -> Option<(u32, Args<'_>)> {
 
 /// The matrix of a `trfd` record: (a, b, c, d, e, f) with
 /// x' = a x + c y + e and y' = b x + d y + f, e and f in millimetres.
+/// The `type` of an `outline` in an object's style string (argument 201:
+/// u32 1, the length, the JSON) when it is not 0. The program's own files
+/// of versions 16 to 27 give an outline `type` 0 or none (no outline);
+/// TraceDraw wrote 1 for no outline, and that program closed when such a
+/// picture, or a group of such curves, was clicked (#1226).
+fn odd_outline_type(body: &[u8]) -> Option<String> {
+    let text = style_text(body.get(8..)?);
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find(r#""outline":{"#) {
+        rest = &rest[at + 11..];
+        let outline = &rest[..rest.find('}').unwrap_or(rest.len())];
+        if let Some(t) = outline.find(r#""type":""#) {
+            let value = &outline[t + 8..];
+            let value = &value[..value.find('"').unwrap_or(value.len())];
+            if value != "0" {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// A style string's text: UTF-16LE in version 16 files (its second byte
+/// zero), UTF-8 after.
+pub(crate) fn style_text(b: &[u8]) -> String {
+    if b.len() >= 2 && b.len().is_multiple_of(2) && b[1] == 0 {
+        let units: Vec<u16> = b
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(b).into_owned()
+    }
+}
+
 fn trfd_matrix(d: &[u8], v: u16) -> Option<[f64; 6]> {
     let offsets = u32_at(d, 8)? as usize;
     let mut at = u32_at(d, offsets)? as usize;
@@ -266,10 +332,12 @@ impl<'a> Checker<'a> {
         });
         for d in images {
             match u32_at(d, 0) {
-                Some(id) if !self.images.insert(id) => {
+                Some(id) if self.images.contains_key(&id) => {
                     self.note("bmp ", format!("image id {id} used by two records"));
                 }
-                Some(_) => {}
+                Some(id) => {
+                    self.images.insert(id, Image::of(d));
+                }
                 None => self.note("bmp ", "record shorter than its id"),
             }
         }
@@ -319,8 +387,27 @@ impl<'a> Checker<'a> {
         });
         for clip in clips {
             for g in clip.children.iter().filter(|g| g.is(b"grp ")) {
-                if let Some(n) = g.find(b"spnd").and_then(|s| u32_at(self.data(s), 0)) {
-                    self.clip_groups.insert(n);
+                let Some(n) = g.find(b"spnd").and_then(|s| u32_at(self.data(s), 0)) else {
+                    continue;
+                };
+                self.clip_groups.insert(n);
+                // Argument 3500 holds the group's number plus one in every
+                // clip group of the files of versions 11, 14, 25, 26 and 27.
+                let link = g
+                    .find(b"lgob")
+                    .and_then(|l| l.find(b"loda"))
+                    .and_then(|l| loda_args(self.data(l)))
+                    .and_then(|(_, args)| {
+                        args.iter()
+                            .find(|(ty, _)| *ty == crate::write::ARG_CLIP_GROUP)
+                            .and_then(|(_, body)| u32_at(body, 0))
+                    });
+                if link != n.checked_add(1) {
+                    let found = link.map_or("none".to_string(), |l| l.to_string());
+                    self.note(
+                        &format!("clpt group {n}"),
+                        format!("clip group argument 3500 is {found}, not its number plus one"),
+                    );
                 }
             }
             clip.walk(&mut |c, _| {
@@ -465,6 +552,14 @@ impl<'a> Checker<'a> {
                     _ => {}
                 },
                 crate::parse::ARG_COORDS => coords = Some(body),
+                crate::parse::ARG_STYLE_STRING => {
+                    if let Some(t) = odd_outline_type(body) {
+                        self.note(
+                            place,
+                            format!("style string outline has type {t}, which no file holds"),
+                        );
+                    }
+                }
                 crate::parse::ARG_CLIP_CONTENTS => match u32_at(body, 0) {
                     Some(n) if !self.clip_groups.contains(&n) => {
                         self.note(
@@ -567,13 +662,18 @@ impl<'a> Checker<'a> {
             self.note(place, "bitmap image number is 0");
         }
         match u32_at(d, 48) {
-            Some(id) if !self.images.contains(&id) => {
-                self.note(
+            Some(id) => match self.images.get(&id).copied() {
+                None => self.note(
                     place,
                     format!("bitmap names image {id}, which has no record"),
-                );
-            }
-            Some(_) => {}
+                ),
+                // The object's pixel size is its image's (#1222), and from
+                // 14 its box the image's size at the image's resolution,
+                // which the object's `trfd` places and scales, as every
+                // bitmap of the files seen holds it.
+                Some(Some(image)) => self.bitmap_image(d, place, &corners, image, seen),
+                Some(None) => {}
+            },
             None => self.note(place, "bitmap record shorter than its image id"),
         }
         let tail_at = if self.v == 8 { 64 } else { 72 };
@@ -600,6 +700,29 @@ impl<'a> Checker<'a> {
         } else if self.v >= 14 && u32_at(d, types_at + n) != Some(0) {
             self.note(place, "bitmap record does not end with 4 zero bytes");
         }
+        // The outline's nodes carry the marks of a curve's (bit 2 on each
+        // node but the control points and the closing one, bit 3 also on
+        // the start of a closed outline), as every bitmap of the
+        // program's files has them; a bitmap without them closed that
+        // program when it was clicked (#1226).
+        if let Some(types) = d.get(types_at..types_at + n) {
+            // The bytes without the marks: bit 2 off everywhere, bit 3
+            // off the moves (on a closing node it closes the outline).
+            let mut want: Vec<u8> = types
+                .iter()
+                .map(|t| if t & 0xc0 == 0 { t & !0x0c } else { t & !0x04 })
+                .collect();
+            crate::write::mark_node_types(&mut want);
+            if let Some(k) = (0..n).find(|&k| types[k] & 0x0c != want[k] & 0x0c) {
+                self.note(
+                    place,
+                    format!(
+                        "bitmap crop outline's node {k} byte is {:#04x}, {:#04x} with the node marks of a curve",
+                        types[k], want[k]
+                    ),
+                );
+            }
+        }
         // Nodes inside the box, control points (type bits 7-6 set) around.
         let point = |k: usize| {
             Some(apply(
@@ -612,6 +735,45 @@ impl<'a> Checker<'a> {
         let outer = Box::of((0..n).filter_map(point))?;
         let inner = Box::of((0..n).filter(|k| !control(*k)).filter_map(point));
         Some((inner, outer))
+    }
+
+    /// A bitmap object's pixel size and box against its image's record.
+    fn bitmap_image(&mut self, d: &[u8], place: &str, corners: &[i32], image: Image, seen: bool) {
+        let size = (u32_at(d, 36), u32_at(d, 40));
+        if size != (Some(image.width), Some(image.height)) {
+            self.note(
+                place,
+                format!(
+                    "bitmap pixel size {:?} x {:?} is not its image's, {} x {}",
+                    size.0, size.1, image.width, image.height
+                ),
+            );
+        }
+        if !seen {
+            return;
+        }
+        let &[x0, y1, x1, y0] = corners else {
+            return;
+        };
+        let boxed = (f64::from(x1) - f64::from(x0), f64::from(y1) - f64::from(y0));
+        for (axis, (units, px, per_km)) in [
+            ("width", (boxed.0, image.width, image.res.0)),
+            ("height", (boxed.1, image.height, image.res.1)),
+        ] {
+            if per_km == 0 {
+                continue;
+            }
+            let mm = units * MM_PER_UNIT;
+            let at_resolution = f64::from(px) / f64::from(per_km) * 1_000_000.0;
+            if (mm - at_resolution).abs() > BOX_TOLERANCE_MM.max(at_resolution * 1e-4) {
+                self.note(
+                    place,
+                    format!(
+                        "bitmap box {axis} is {mm:.3} mm, its image's {at_resolution:.3} mm at its resolution"
+                    ),
+                );
+            }
+        }
     }
 
     /// The width of an outline of the table, in millimetres (0 when it is
@@ -847,6 +1009,31 @@ impl<'a> Checker<'a> {
         if parsed.paragraphs.is_empty() {
             self.note(place, "text record without paragraphs");
         }
+        for f in frame_text_findings(&parsed, self.v) {
+            self.note(place, f);
+        }
+        if parsed.inert_styles > 0 {
+            self.note(
+                place,
+                format!(
+                    "{} run style(s) marked as applying no member: the letters take the paragraph's look",
+                    parsed.inert_styles
+                ),
+            );
+        }
+        // A blank line is a paragraph of no letters, its record counting
+        // its end alone, as the program that wrote the samples writes one
+        // (a version 22 paragraph text "...SERVICIO.\n\nR.F.C. ..."); a text
+        // of no letters at all is a fault.
+        let all: usize = parsed
+            .paragraphs
+            .iter()
+            .flat_map(|p| &p.runs)
+            .map(|r| r.text.chars().count())
+            .sum();
+        if all == 0 && !parsed.paragraphs.is_empty() {
+            self.note(place, "text record without letters");
+        }
         for (i, p) in parsed.paragraphs.iter().enumerate() {
             if p.style_id != 0 && !self.styles.contains(&p.style_id) {
                 self.note(
@@ -862,7 +1049,7 @@ impl<'a> Checker<'a> {
             }
             let letters: usize = p.runs.iter().map(|r| r.text.chars().count()).sum();
             if letters == 0 {
-                self.note(place, format!("paragraph {i} has no letters"));
+                continue;
             }
             for (k, r) in p.runs.iter().enumerate() {
                 if r.text.is_empty() {
@@ -871,6 +1058,42 @@ impl<'a> Checker<'a> {
             }
         }
     }
+}
+
+/// Findings of a version 16+ paragraph text record (the frame flag
+/// clear), held against every paragraph text of the files of versions 16
+/// to 27: from version 19 layout 1700, which none holds (the files of
+/// the program's 2019 release hold 1500, those of its recent releases
+/// 1800),
+/// and paragraph styles with the hyphenation, bullet, drop cap, indent
+/// and tab members ([`crate::write::FRAME_TEXT_PARAGRAPH`]). TraceDraw
+/// wrote paragraph text with artistic text's layout 1700 and members,
+/// and the program that reads the files hung on opening it (#1698).
+pub(crate) fn frame_text_findings(t: &text::Txsm, v: u16) -> Vec<String> {
+    let mut out = Vec::new();
+    if t.frame_text_styles.is_empty() {
+        return out;
+    }
+    if v >= 19 && t.layout == Some(1700) {
+        out.push(
+            "paragraph text of layout 1700; the files of version 19 on hold 1500 or 1800"
+                .to_string(),
+        );
+    }
+    for (i, style) in t.frame_text_styles.iter().enumerate() {
+        let missing: Vec<&str> = crate::write::FRAME_TEXT_PARAGRAPH
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| !style.contains(&format!("\"{k}\":")))
+            .collect();
+        if !missing.is_empty() {
+            out.push(format!(
+                "paragraph {i} of a paragraph text lacks the paragraph style members {}",
+                missing.join(", ")
+            ));
+        }
+    }
+    out
 }
 
 /// Panics when `bytes` has findings: the writer's tests run it on every
@@ -1069,6 +1292,38 @@ mod tests {
             .collect()
     }
 
+    /// Paragraph text of version 19 on needs layout 1800 and the
+    /// paragraph style members every paragraph text of the files holds;
+    /// artistic text and earlier versions are left alone (#1698).
+    #[test]
+    fn paragraph_text_needs_the_layout_and_members_of_the_files() {
+        let full: String = crate::write::FRAME_TEXT_PARAGRAPH
+            .iter()
+            .map(|(k, v)| format!(r#""{k}":{v},"#))
+            .collect();
+        let full = format!(r#"{{"paragraph":{{{full}"justify":"2"}}}}"#);
+        let bare = r#"{"paragraph":{"justify":"2"}}"#.to_string();
+        let txsm = |layout: u16, styles: Vec<String>| text::Txsm {
+            layout: Some(layout),
+            frame_text_styles: styles,
+            ..text::Txsm::default()
+        };
+        assert!(frame_text_findings(&txsm(1800, vec![full.clone()]), 27).is_empty());
+        let old = frame_text_findings(&txsm(1700, vec![bare.clone()]), 27);
+        assert_eq!(old.len(), 2, "{old:?}");
+        assert!(old[0].contains("layout 1700"), "{old:?}");
+        assert!(
+            old[1].contains("tabs") && old[1].contains("leftMargin"),
+            "{old:?}"
+        );
+        // Layout 1700 before 19, where TraceDraw keeps it.
+        assert!(frame_text_findings(&txsm(1700, vec![full.clone()]), 18).is_empty());
+        // The 2019 release's paragraph text of layout 1500 (#1852, #1833).
+        assert!(frame_text_findings(&txsm(1500, vec![full]), 21).is_empty());
+        // Artistic text keeps its own.
+        assert!(frame_text_findings(&txsm(1700, Vec::new()), 27).is_empty());
+    }
+
     #[test]
     fn a_sound_file_has_no_findings() {
         assert_eq!(findings(&[square(), text()]), Vec::<String>::new());
@@ -1262,6 +1517,206 @@ mod tests {
         );
     }
 
+    /// A bitmap object whose crop outline's node bytes are `types`, as
+    /// version 13 files hold it: the box from the origin twice, 2 and 24
+    /// bits, the pixel size, image number 1, image id 1, 0, 0, -1, eight
+    /// zero bytes, then the outline.
+    fn bitmap(types: [u8; 5]) -> Obj {
+        let mut c = box_bytes(0.0, 0.0, 10.0, 10.0);
+        c.extend(box_bytes(0.0, 0.0, 10.0, 10.0));
+        c.extend(u16s(&[2, 24]));
+        c.extend(u32s(&[4, 4, 1, 1, 0, 0, u32::MAX, 0, 0]));
+        let corners = [
+            (0.0, 10.0),
+            (10.0, 10.0),
+            (10.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 10.0),
+        ];
+        let pts: Vec<(f64, f64, u8)> = corners
+            .iter()
+            .zip(types)
+            .map(|(&(x, y), t)| (x, y, t))
+            .collect();
+        c.extend(curve(&pts));
+        let b = box_bytes(5.0, 5.0, 15.0, 15.0);
+        let mut obbx = b.clone();
+        obbx.extend(box_bytes(5.0, 5.0, 15.0, 15.0));
+        Obj {
+            kind: crate::parse::OBJ_BITMAP,
+            args: vec![
+                (ARG_COORDS, c),
+                (ARG_FILL, u32s(&[0])),
+                (ARG_OUTLINE, u32s(&[0])),
+                (ARG_STYLE, u32s(&[77])),
+            ],
+            bbox: b,
+            obbx,
+            usdn: 1,
+            at: (5.0, 5.0),
+            txsm: None,
+        }
+    }
+
+    /// A bitmap outline whose nodes lack the marks curves carry (as
+    /// TraceDraw wrote them before, 0x00, 0x40, 0x40, 0x40, 0x48) is
+    /// reported; the marked one the writer now writes is not (#1226).
+    #[test]
+    fn bitmap_outlines_need_node_marks() {
+        let lacks = |types: [u8; 5]| {
+            check_bytes(&file(&[bitmap(types)]))
+                .expect("checks")
+                .iter()
+                .any(|f| f.what.contains("node marks of a curve"))
+        };
+        assert!(lacks([0x00, 0x40, 0x40, 0x40, 0x48]));
+        assert!(!lacks([0x0c, 0x44, 0x44, 0x44, 0x48]));
+        // Every node is looked at, not the first alone: a marked start
+        // with unmarked nodes after it, or a start without the closing
+        // mark, is reported too.
+        assert!(lacks([0x0c, 0x40, 0x40, 0x40, 0x48]));
+        assert!(lacks([0x0c, 0x44, 0x44, 0x40, 0x48]));
+        assert!(lacks([0x04, 0x44, 0x44, 0x44, 0x48]));
+    }
+
+    /// A bitmap object whose pixel size is not its image's is reported
+    /// (#1222): the object of `bitmap` says 4 x 4 pixels, so a 4 x 4
+    /// image passes and a 5 x 4 one does not; and a missing image is
+    /// named.
+    #[test]
+    fn a_bitmaps_pixel_size_is_its_images() {
+        let findings = |image: Option<(u32, u32)>| {
+            let mut page = obj(&bitmap([0x0c, 0x44, 0x44, 0x44, 0x48]));
+            let mut images = Vec::new();
+            if let Some((w, h)) = image {
+                let mut pm = tiny_skia::Pixmap::new(w, h).expect("pixmap");
+                pm.fill(tiny_skia::Color::from_rgba8(1, 2, 3, 255));
+                let png = pm.encode_png().expect("png");
+                let (rec, ..) = crate::write::bmp_record(1, &png, (10.0, 10.0)).expect("record");
+                images = list(b"bmpt", &chunk(b"bmp ", &rec));
+            }
+            images.append(&mut page);
+            let body = [
+                chunk(b"vrsn", &u16s(&[1300])),
+                chunk(b"mcfg", &mcfg(V, 2_540_000, 2_540_000)),
+                images,
+            ]
+            .concat();
+            let bytes = riff(b"CDRD", &body);
+            check_bytes(&bytes)
+                .expect("checks")
+                .into_iter()
+                .map(|f| f.what)
+                .filter(|w| w.contains("pixel size") || w.contains("no record"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(findings(Some((4, 4))), Vec::<String>::new());
+        let wrong = findings(Some((5, 4)));
+        assert_eq!(wrong.len(), 1, "{wrong:?}");
+        assert!(wrong[0].contains("pixel size"), "{wrong:?}");
+        let none = findings(None);
+        assert!(
+            none.iter().any(|w| w.contains("which has no record")),
+            "{none:?}"
+        );
+    }
+
+    /// A picture whose style string gives its outline `type` 1 with width
+    /// 0, as TraceDraw wrote every object without an outline, is reported
+    /// (the program's files hold no such type, and it closed when such a
+    /// picture was clicked, #1226); the program's own forms, without
+    /// `type` or with `type` 0, and a text's character outline, are not.
+    #[test]
+    fn style_strings_hold_no_outline_type_but_0() {
+        let with_style = |json: &str| {
+            let mut b = bitmap([0x0c, 0x44, 0x44, 0x44, 0x48]);
+            let mut arg = u32s(&[1, json.len() as u32]);
+            arg.extend_from_slice(json.as_bytes());
+            b.args.push((crate::parse::ARG_STYLE_STRING, arg));
+            check_bytes(&file(&[b]))
+                .expect("checks")
+                .iter()
+                .filter(|f| f.what.contains("style string outline has type"))
+                .count()
+        };
+        assert_eq!(
+            with_style(
+                r#"{"fill":{"type":"0"},"outline":{"type":"1","width":"0"},"transparency":{}}"#
+            ),
+            1
+        );
+        assert_eq!(
+            with_style(
+                r#"{"fill":{"type":"0"},"outline":{"width":"0","type":"2"},"transparency":{}}"#
+            ),
+            1
+        );
+        assert_eq!(
+            with_style(&format!(
+                r#"{{"fill":{{"type":"0"}},"outline":{},"transparency":{{}}}}"#,
+                crate::write::NO_OUTLINE_JSON
+            )),
+            0
+        );
+        assert_eq!(
+            with_style(
+                r#"{"outline":{"color":"CMYK,USER,0,0,0,100,100,0","type":"0","width":"1764"}}"#
+            ),
+            0
+        );
+        assert_eq!(
+            with_style(r#"{"character":{"outline":{"width":"0"}},"outline":{"width":"0"}}"#),
+            0
+        );
+    }
+
+    /// A clip group whose argument 3500 is not its `spnd` number plus one
+    /// is reported, as TraceDraw wrote 2 for every group (right for group
+    /// 1 alone); every clip group of the files holds its number plus one
+    /// (#1226).
+    #[test]
+    fn clip_groups_hold_their_number_plus_one() {
+        let group = |n: u32, link: u32| {
+            list(
+                b"grp ",
+                &[
+                    chunk(b"spnd", &u32s(&[n])),
+                    chunk(b"flgs", &[0, 8, 0x80, 0x10]),
+                    list(
+                        b"lgob",
+                        &chunk(
+                            b"loda",
+                            &loda(0, &[(crate::write::ARG_CLIP_GROUP, u32s(&[link]))]),
+                        ),
+                    ),
+                ]
+                .concat(),
+            )
+        };
+        let reported = |groups: &[(u32, u32)]| {
+            let clpt: Vec<u8> = groups.iter().flat_map(|&(n, l)| group(n, l)).collect();
+            let body = [
+                chunk(b"vrsn", &u16s(&[1300])),
+                chunk(b"mcfg", &mcfg(V, 2_540_000, 2_540_000)),
+                chunk(b"fild", &solid_fild_v13(1, (255, 0, 0))),
+                chunk(b"outl", &outl(7, 1.0)),
+                stlt(),
+                list(b"clpt", &clpt),
+                list(b"page", &list(b"layr", &obj(&square()))),
+            ]
+            .concat();
+            check_bytes(&riff(b"CDRD", &body))
+                .expect("checks")
+                .iter()
+                .filter(|f| f.what.contains("argument 3500"))
+                .count()
+        };
+        assert_eq!(reported(&[(1, 2)]), 0);
+        assert_eq!(reported(&[(1, 2), (3, 4), (26, 27)]), 0);
+        // The old writer's 2 on groups 3 and 5.
+        assert_eq!(reported(&[(1, 2), (3, 2), (5, 2)]), 2);
+    }
+
     #[test]
     fn text_records_must_hold_letters() {
         let mut t = text();
@@ -1276,7 +1731,7 @@ mod tests {
         let f = findings(&[t]);
         assert!(
             f.iter()
-                .any(|f| f.contains("no letters") || f.contains("no runs")),
+                .any(|f| f.contains("without letters") || f.contains("no runs")),
             "{f:?}"
         );
         let mut t = text();

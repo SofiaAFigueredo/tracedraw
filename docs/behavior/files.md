@@ -17,13 +17,32 @@ One window, 760 px wide, the same on every system:
   has). Down the left,
   shortcuts to the folders that exist: Home, Desktop, Documents,
   Downloads and Pictures (on Linux the names in
-  `~/.config/user-dirs.dirs`), then the drives (Windows) or `/`. On the
+  `~/.config/user-dirs.dirs`), then the drives (Windows: every drive
+  letter from C:) or `/`. Under them, each section only when it has
+  folders and the column scrolling when they are many (#1391):
+  **Drives**, the mounted drives, memory cards and network shares
+  (Linux: the folders mounted in or found under `/media/$USER`,
+  `/run/media/$USER`, `/media` and `/mnt`, then the desktop's shares and
+  phones in `$XDG_RUNTIME_DIR/gvfs`, a share shown as "photos (nas)";
+  macOS: `/Volumes` without the start-up disk; hidden folders left
+  out); **Bookmarks**, the folders bookmarked in the desktop's file
+  manager (`~/.config/gtk-3.0/bookmarks`, else `~/.gtk-bookmarks`, with
+  their names; addresses that are no folders here, like `sftp://`, are
+  left out), then those bookmarked here: a right click on a folder of
+  the list offers Add to bookmarks, a right click on such a bookmark
+  Remove bookmark, and they are kept in the preferences; **Recent**, up
+  to six folders used lately, the last folder a dialog used first, then
+  the folders of the recent drawings. They are read when the dialog
+  opens (`files::drives_in`, `files::parse_bookmarks`,
+  `files::recent_dirs`; `files::tests::mounted_drives_memory_cards_and_shares_are_listed`,
+  `ui::save_as::tests::drives_bookmarks_and_recent_folders_are_listed`). On the
   right, 250 px high and scrolling, the folder's contents: folders, then
   the files of the chosen type, by name ignoring case (hidden ones left
   out), with Name, Date modified (local time), Type ("File folder",
   "CDR file") and Size (KB, MB from 1 MB). A click picks an entry
   (a file's name becomes the name); a double click on a folder opens it;
-  a right click offers Open (folders) and Rename. With the list picked,
+  a right click offers Open (folders), Rename and Add to bookmarks
+  (folders). With the list picked,
   letters jump to the first entry starting with them (letters a second
   apart start again; one letter typed again goes on to the next entry
   with it), F2 renames the entry picked, Enter opens the folder picked
@@ -79,7 +98,7 @@ One window, 760 px wide, the same on every system:
 - Only the versions checked in other programs are offered (14 to 27).
 - **Title**, **Subject** and **Rating** (five stars; clicking the lit
   last star takes it off): the document's properties, also in File >
-  Document Properties; changed ones are set (one undo step each) before
+  Document Info; changed ones are set (one undo step each) before
   the file is written.
 - **Save** (or Enter) writes the file; a file that exists asks "<name>
   already exists. Replace it?" with Replace and Cancel. Cancel closes
@@ -136,7 +155,43 @@ pictures and the end objects of its blends included), so the member grows
 with them; a member that inflates past 64 MB is not read, and its
 objects open as drawn.
 
+## Open drawings keep their files (Windows, #2130)
+
+On Windows the file of every open drawing (the front tab's and the
+others') is kept open for reading for as long as the drawing is open
+under that name, shared with programs that read or write it but not with
+a delete, a rename or a move (`file_hold.rs`). The Explorer then refuses
+to delete, rename or move the file, or to replace it with another, and
+says it is open in TraceDraw. Save writes the file in place, so it goes
+on as before, and other programs still read the file (the thumbnail in
+the Explorer, a backup, a second TraceDraw window). The hold ends when
+the drawing is closed or saved under another name, and when TraceDraw
+ends. A drawing opened from a file it does not save to (a `.cdr`, an
+SVG, a PDF) holds that file until it is saved under a name of its own.
+A drawing never saved and one opened from a template hold nothing. A
+file that cannot be opened for the hold (it is gone, or its folder went
+away) is not held; it is tried again when the drawing is saved.
+
+On Linux and macOS nothing is kept open: these systems have no such
+hold, a file deleted there only loses its name while a program has it
+open, and Save writes it again.
+
+The open drawings are compared with the holds once a frame (paths only);
+a file is opened only when a drawing was opened, closed or saved under
+another name.
+
 ## Checks
+
+- Each open drawing's file is held from the frame after it is opened or
+  saved until it is closed or saved under another name, in the front tab
+  or another, the file a drawing was opened from until it is saved under
+  its own name; an untitled drawing holds nothing
+  (`documents::tests::open_drawings_hold_their_files_until_closed_or_renamed`,
+  `file_hold::tests::holds_follow_the_open_drawings`). On Windows a held
+  file cannot be deleted, renamed or replaced and is still read and
+  written in place
+  (`file_hold::tests::a_held_file_cannot_be_deleted_or_renamed_but_is_saved`,
+  run on the Windows build by `scripts/windows/spell-check`).
 
 - Given a folder with a subfolder, a `.cdr` and a `.txt` file, the
   TraceDraw type lists the subfolder only and CDR the subfolder and the
@@ -180,5 +235,79 @@ objects open as drawn.
   and 23 (`mcp::tests::export_and_save_write_files`).
 - Every version from 7 to 22 reads back with its pages, layers, objects,
   text runs and alignment (`write::tests` in `crates/cdr`).
+- A line of several colours saved as `.cdr` 16 to 27 holds a table of
+  its looks: the plain record (0, 0x04, `{"character":{}}`) for the
+  letters in the line's own look and its end, then one record per other
+  colour, complete (fill, angle, outline, the three fonts, shifts) and
+  marked as applying (0x3fff, 0x14); a colour met twice has one record,
+  and a text of one look keeps the plain record alone, so the program
+  that reads `.cdr` files keeps the colours (#1297, #1379;
+  `write::tests::runs_of_their_own_colour_are_a_table_of_looks_marked_as_applying`).
+  With Embed fonts on, the run styles name the embedded face exactly as
+  the paragraph's style does and the font table is the one a text of one
+  colour gets (`two_colours_name_the_embedded_font_as_one_colour_does`).
+  `tracedraw-cli check` reports a run style marked as applying no member.
+- With Embed fonts on, each embedded font is listed and embedded as the
+  face its file holds: the font table entry, the embedding's face block
+  and its font header carry the font's own weight and slant (a bold
+  file drawing regular text is listed bold, an upright light file
+  drawing bold italic text light and upright), one entry per face file
+  however many styles of the text it draws; the text's own style keeps a
+  font record beside it. The kind of the font (2 TrueType, 4 signed
+  TrueType, 5 PostScript outlines) and its version string go into the
+  table, the embedding and every font style that names it, and the
+  records and entries of underlined faces carry the underline bit, as
+  the files the program that reads `.cdr` files saves have them (#1455,
+  #1484; `write::tests::a_face_is_listed_as_the_face_its_font_file_holds`,
+  `write::tests::bold_text_in_a_light_face_is_written_as_the_family_bold`).
+- Text drawn by another face of its font than the one it asks for, a
+  face TraceDraw draws as it is, is saved to `.cdr` as that face (with
+  or without Embed fonts): regular Khand text whose only installed file
+  is Khand Bold, drawn bold, is saved as Khand bold (style `weight` 4096
+  and the bold face's font record), as the program that reads `.cdr`
+  files saves the same drawing. Saved as regular beside the embedded
+  bold face, that program asked for "Khand-Normal", reported it missing
+  although Khand was installed and dropped the embedded font when saving
+  again. A face told by its style bits within its family (bold, italic)
+  or by its weight within its typographic family ("Khand Medium" drawing
+  "Khand" is saved at 500); bold that TraceDraw makes by thickening a
+  face stays as the text asks. The text reads back as that face (#1733;
+  `write::tests::regular_text_drawn_by_the_bold_file_is_written_bold`,
+  `write::tests::text_is_written_as_the_face_that_draws_it`).
+- Italic text whose font has no italic face, which TraceDraw slants
+  itself, is saved to `.cdr` upright, as the upright face that draws it
+  and that Embed fonts embeds: "RAJ 100" Bold Italic with only the
+  "RAJ 100" Bold file is saved as "RAJ 100" bold (style `italic` 0,
+  `weight` 4096, no italic font record or font table entry); the same
+  for the other weights ("Khand Light" Italic is saved as "Khand" at
+  300). Saved italic, the program that reads `.cdr` files looked for
+  "RAJ 100-Bold-Italic", a face neither the file nor the system has,
+  reported it missing and drew "RAJ 100-Bold"; it offers no italic for
+  such a font itself, so it shows the text upright. From version 14
+  the file's own member (`tracedraw/effects.json`) keeps the text, so
+  TraceDraw opens it italic again; a file saved again elsewhere opens
+  upright (#1733;
+  `write::tests::italic_text_slanted_from_an_upright_file_is_written_upright`,
+  `write::tests::italic_text_of_a_weight_without_an_italic_face_is_written_upright`).
+- A version 16+ `.cdr` that the program reading `.cdr` files saved again
+  from a TraceDraw file, with embedded fonts, opens with its texts: its
+  run records marked as applying nothing still carry a style string,
+  which TraceDraw 0.29.0 did not read, skipping every text (#1467, read
+  since 0.30.0; `write::tests::a_run_record_of_no_marks_is_read_with_its_style_string`).
+- A line of more than 128 colours saved as `.cdr` in any version keeps
+  the colours of its first 128 and gives the letters of the others the
+  line's first colour: a letter names its record in 7 bits
+  (`a_line_of_more_looks_than_records_stays_readable`).
+- A picture saved as `.cdr` has its outline nodes marked as a curve's
+  (0x0c, 0x44, 0x44, 0x44, 0x48), as the files of the program that reads
+  `.cdr` files have them; unmarked, a click on the picture closed that
+  program (#1226; `write::tests::bitmap_objects_carry_their_pixel_size`,
+  `check::tests::bitmap_outlines_need_node_marks`).
+- A picture or shape without an outline saved as `.cdr` 16 to 27 holds,
+  in its style string, the outline the program's own files give such
+  objects (every member, width 0, no type); the outline type 1 TraceDraw
+  wrote is in no file of that program, and the checker reports it (#1226;
+  `write::tests::objects_without_an_outline_write_the_files_outline_of_width_0`,
+  `check::tests::style_strings_hold_no_outline_type_but_0`).
 - Checked on screen: the dialog with its shortcuts, list, type list,
   version and stars; Save as CDR wrote the file in the folder shown.

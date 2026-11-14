@@ -38,9 +38,6 @@ pub enum FountainHandle {
     Mid(usize),
 }
 
-/// Screen pixels within which a press takes a node or the line.
-const PICK_PX: f64 = 6.0;
-
 /// The point at `t` (0 at the start, 1 at the end) on the fill's line.
 pub fn on_line(s: Point, e: Point, t: f64) -> Point {
     s + (e - s) * t
@@ -85,7 +82,10 @@ pub fn fountain_handles(f: &Fountain, b: Rect) -> Vec<(FountainHandle, Point)> {
 
 /// The nodes `h` (page points `s`, `e`, `k`) after `handle` is dragged to
 /// `p`: the start carries the skew handle (and, with a centre, the end
-/// too); the end turns the skew handle by as much as the axis turned.
+/// too); the end turns the skew handle by as much as the axis turned,
+/// and with a centre (radial, conical, square) also sizes it as the axis
+/// grew, so a circle stays a circle and an ellipse keeps its ratio; the
+/// skew handle alone sets the ratio (#2373).
 pub fn moved_nodes(
     kind: FountainKind,
     (s, e, k): (Point, Point, Point),
@@ -108,7 +108,12 @@ pub fn moved_nodes(
             } else {
                 0.0
             };
-            let kv = k - s;
+            let grow = if kind != FountainKind::Linear && old.hypot() > 1e-9 {
+                new.hypot() / old.hypot()
+            } else {
+                1.0
+            };
+            let kv = (k - s) * grow;
             let (c, sn) = (turn.cos(), turn.sin());
             let kv = Vec2::new(kv.x * c - kv.y * sn, kv.x * sn + kv.y * c);
             (s, p, s + kv)
@@ -143,12 +148,13 @@ impl App {
         }
     }
 
-    /// The node under a page point, within 6 screen pixels: the start,
+    /// The node under a page point, within the pick distance (Options >
+    /// Nodes and Handles, 6 screen pixels at first): the start,
     /// the end and the skew handle first, then the colour nodes on the
     /// line, then the midpoint sliders.
     pub fn fountain_handle_at(&self, p: Point) -> Option<FountainHandle> {
         let (_, f, b) = self.selected_fountain()?;
-        let tol = PICK_PX / self.view.zoom as f64;
+        let tol = self.line_pick_tol();
         let hs = fountain_handles(&f, b);
         let nearest = |pts: Vec<(FountainHandle, Point)>| {
             pts.into_iter()
@@ -183,7 +189,7 @@ impl App {
     }
 
     /// Where a page point falls on the selected fill's line (0 at the
-    /// start, 1 at the end), within 6 screen pixels of it.
+    /// start, 1 at the end), within the pick distance of it.
     pub fn fountain_line_at(&self, p: Point) -> Option<f64> {
         let (_, f, b) = self.selected_fountain()?;
         let hs = fountain_handles(&f, b);
@@ -191,7 +197,7 @@ impl App {
             return None;
         };
         let t = line_param(*s, *e, p);
-        let tol = PICK_PX / self.view.zoom as f64;
+        let tol = self.line_pick_tol();
         ((0.0..=1.0).contains(&t) && (on_line(*s, *e, t) - p).hypot() <= tol).then_some(t)
     }
 
@@ -257,71 +263,82 @@ impl App {
         }
     }
 
-    /// A drag across the object with the Transparency tool: a linear mask
-    /// from opaque where the drag began to clear where it ended (a
-    /// gradient mask there already keeps its nodes and gets the new
-    /// line), its nodes then shown for editing (#448).
-    pub fn transparency_from_drag(&mut self, id: ShapeId, from: Point, to: Point) {
+    /// A drag with the Transparency tool across `ids` (the selection, or
+    /// the object the drag picked, #1661): a linear mask from opaque where
+    /// the drag began to clear where it ended (a gradient mask there
+    /// already keeps its nodes and gets the new line), its nodes then
+    /// shown for editing (#448). Every object gets the same line on the
+    /// page, placed on its own box, all in one undo step "Transparency";
+    /// they stay selected.
+    pub fn transparency_from_drag_on(&mut self, ids: &[ShapeId], from: Point, to: Point) {
         use tracedraw_core::geometry::Shape as _;
-        let Some(s) = self.doc().shape_on_page(id) else {
-            return;
-        };
-        let b = s.page_path().bounding_box();
-        let old = s.effects.iter().find_map(|e| match e {
-            tracedraw_core::live::Effect::Transparency {
-                mask: Fill::Fountain(f),
+        let mut cmds = Vec::new();
+        let mut done = Vec::new();
+        let mut last = None;
+        for &id in ids {
+            let Some(s) = self.doc().shape_on_page(id) else {
+                continue;
+            };
+            let b = s.page_path().bounding_box();
+            let old = s.effects.iter().find_map(|e| match e {
+                tracedraw_core::live::Effect::Transparency {
+                    mask: Fill::Fountain(f),
+                    merge,
+                    target,
+                } if f.kind != FountainKind::Shaped => Some((f.clone(), *merge, *target)),
+                _ => None,
+            });
+            let (mut f, merge, target) = old.unwrap_or_else(|| {
+                (
+                    Fountain::two(
+                        FountainKind::Linear,
+                        tracedraw_core::Color::WHITE,
+                        tracedraw_core::Color::BLACK,
+                        0.0,
+                    ),
+                    self.transparency_default.merge,
+                    self.transparency_default.target,
+                )
+            });
+            let d = to - from;
+            let skew = from + Vec2::new(-d.y, d.x);
+            let rel = |q: Point| Fountain::page_to_rel(b, q);
+            f.set_handles(
+                b,
+                FountainHandles {
+                    start: rel(from),
+                    end: rel(to),
+                    skew: rel(skew),
+                },
+            );
+            let mut effects: Vec<tracedraw_core::live::Effect> = s
+                .effects
+                .iter()
+                .filter(|e| !matches!(e, tracedraw_core::live::Effect::Transparency { .. }))
+                .cloned()
+                .collect();
+            effects.push(tracedraw_core::live::Effect::Transparency {
+                mask: Fill::Fountain(f.clone()),
                 merge,
                 target,
-            } if f.kind != FountainKind::Shaped => Some((f.clone(), *merge, *target)),
-            _ => None,
-        });
-        let (mut f, merge, target) = old.unwrap_or_else(|| {
-            (
-                Fountain::two(
-                    FountainKind::Linear,
-                    tracedraw_core::Color::WHITE,
-                    tracedraw_core::Color::BLACK,
-                    0.0,
-                ),
-                self.transparency_default.merge,
-                self.transparency_default.target,
-            )
-        });
-        let d = to - from;
-        let skew = from + Vec2::new(-d.y, d.x);
-        let rel = |q: Point| Fountain::page_to_rel(b, q);
-        f.set_handles(
-            b,
-            FountainHandles {
-                start: rel(from),
-                end: rel(to),
-                skew: rel(skew),
-            },
-        );
-        let mut effects: Vec<tracedraw_core::live::Effect> = s
-            .effects
-            .iter()
-            .filter(|e| !matches!(e, tracedraw_core::live::Effect::Transparency { .. }))
-            .cloned()
-            .collect();
-        effects.push(tracedraw_core::live::Effect::Transparency {
-            mask: Fill::Fountain(f.clone()),
-            merge,
-            target,
-        });
+            });
+            cmds.push(Command::SetEffects { shape: id, effects });
+            done.push(id);
+            last = Some(f);
+        }
+        let Some(f) = last else {
+            return;
+        };
         self.transparency_default.kind = 1;
         self.transparency_default.mask = Fill::Fountain(f);
-        let cmds = vec![
-            Command::SetEffects { shape: id, effects },
-            Command::SetOpacity {
-                shapes: vec![id],
-                opacity: 1.0,
-            },
-        ];
+        cmds.push(Command::SetOpacity {
+            shapes: done.clone(),
+            opacity: 1.0,
+        });
         if let Err(e) = self.engine.run_batch("Transparency", &cmds) {
             self.status = e.to_string();
         }
-        self.select(vec![id]);
+        self.select(done);
     }
 
     /// Add a colour node at `t` on the line, in the colour and opacity
@@ -431,6 +448,162 @@ impl App {
                 start: rel(s),
                 end: rel(e),
                 skew: rel(k),
+            },
+        );
+        self.set_selected_fountain(id, f, begun);
+    }
+
+    /// A drag pressed at `press` (and noticed at `at`) with Interactive
+    /// Fill or Transparency: on a node or a midpoint slider (they win), it
+    /// takes it; elsewhere on the line from the start to the end, within
+    /// the pick distance, it takes the whole fill, which the drag then
+    /// moves by its line. False when it is on neither.
+    pub fn begin_fountain_drag(&mut self, at: Point, press: Point) -> bool {
+        let held = self
+            .fountain_handle_at(at)
+            .or_else(|| self.fountain_handle_at(press));
+        if let Some(h) = held {
+            if let Some(i) = self.fountain_stop_of(h) {
+                self.fill_node = Some(i);
+            }
+            self.drag = crate::app::Drag::FountainHandle {
+                handle: h,
+                begun: false,
+            };
+            return true;
+        }
+        if !self.fountain_on_line(press) {
+            return false;
+        }
+        let Some((_, f, b)) = self.selected_fountain() else {
+            return false;
+        };
+        let Some(&(_, origin)) = fountain_handles(&f, b).first() else {
+            return false;
+        };
+        self.drag = crate::app::Drag::FountainLine {
+            press,
+            origin,
+            begun: false,
+        };
+        true
+    }
+
+    /// The selected fill's line from the start to the end passes within
+    /// the pick distance of `p`, away from its nodes and midpoint sliders:
+    /// a drag from there moves the whole fill.
+    pub fn fountain_on_line(&self, p: Point) -> bool {
+        if self.fountain_handle_at(p).is_some() {
+            return false;
+        }
+        let Some((_, f, b)) = self.selected_fountain() else {
+            return false;
+        };
+        let hs = fountain_handles(&f, b);
+        let [(_, s), (_, e), _] = hs.as_slice() else {
+            return false;
+        };
+        crate::effect_line::near_segment(*s, *e, p, self.line_pick_tol())
+    }
+
+    /// The pointer of a drag [`App::begin_fountain_drag`] took is at `p`:
+    /// the node it holds follows, or the whole fill moves by its line
+    /// (kept straight with `ctrl`). With `ctrl` the end node, and a linear
+    /// fill's start node, turn the line in steps of the constrain angle
+    /// about its other end (#2373). False when the drag holds neither.
+    pub fn fountain_drag_to(&mut self, p: Point, ctrl: bool) -> bool {
+        use crate::app::Drag;
+        match self.drag {
+            Drag::FountainHandle { handle, begun } => {
+                // A node snaps as the pointer does: onto the object's own
+                // corners and centre, other objects, guidelines and the
+                // grid (#2004); kept to the constrain angle, it does not.
+                let about = if ctrl {
+                    self.selected_fountain().and_then(|(_, f, b)| {
+                        let hs = fountain_handles(&f, b);
+                        let [(_, s), (_, e), _] = hs.as_slice() else {
+                            return None;
+                        };
+                        match handle {
+                            FountainHandle::End => Some(*s),
+                            FountainHandle::Start if f.kind == FountainKind::Linear => Some(*e),
+                            _ => None,
+                        }
+                    })
+                } else {
+                    None
+                };
+                let p = match about {
+                    Some(o) => {
+                        crate::interaction::constrain_from(o, p, self.settings.constrain_angle)
+                    }
+                    None => self.snap_point(p),
+                };
+                self.drag_fountain_handle(handle, p, begun);
+                self.drag = Drag::FountainHandle {
+                    handle,
+                    begun: true,
+                };
+                true
+            }
+            Drag::FountainLine {
+                press,
+                origin,
+                begun,
+            } => {
+                // The start node, carried by the pointer, snaps; kept
+                // straight with Ctrl, it does not.
+                let p = if ctrl {
+                    p
+                } else {
+                    let to = origin + (p - press);
+                    press + (self.snap_point(to) - origin)
+                };
+                self.drag_fountain_line(press, origin, p, ctrl, begun);
+                self.drag = Drag::FountainLine {
+                    press,
+                    origin,
+                    begun: true,
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Move the whole fill by its line: a drag pressed at `press`, when
+    /// the start node was at `origin`, is at `p`. The start, the end and
+    /// the skew handle all move by the pointer's way (kept horizontal or
+    /// vertical with `ctrl`), so the line keeps its length and angle and
+    /// the colour nodes and midpoints ride on it. The first move of a drag
+    /// is an undo step, the next ones join it (`begun`).
+    pub fn drag_fountain_line(
+        &mut self,
+        press: Point,
+        origin: Point,
+        p: Point,
+        ctrl: bool,
+        begun: bool,
+    ) {
+        let Some((id, mut f, b)) = self.selected_fountain() else {
+            return;
+        };
+        let pts = fountain_handles(&f, b);
+        let [(_, s), (_, e), (_, k)] = pts.as_slice() else {
+            return;
+        };
+        let to = origin + crate::effect_line::constrain_move(p - press, ctrl);
+        let d = to - *s;
+        if !(d.x.is_finite() && d.y.is_finite()) {
+            return;
+        }
+        let rel = |q: Point| Fountain::page_to_rel(b, q);
+        f.set_handles(
+            b,
+            FountainHandles {
+                start: rel(*s + d),
+                end: rel(*e + d),
+                skew: rel(*k + d),
             },
         );
         self.set_selected_fountain(id, f, begun);
@@ -667,7 +840,7 @@ mod tests {
         let fill = app.doc().find_shape(id).expect("square").fill.clone();
         app.tool = crate::tools::Tool::Transparency;
         let (from, to) = (Point::new(10.0, 20.0), Point::new(30.0, 20.0));
-        app.transparency_from_drag(id, from, to);
+        app.transparency_from_drag_on(&[id], from, to);
         let (_, f, b) = app.selected_fountain().expect("a gradient mask");
         assert_eq!(f.kind, FountainKind::Linear);
         let hs = fountain_handles(&f, b);
@@ -686,6 +859,82 @@ mod tests {
         assert!(app.add_fountain_stop(0.7).is_some());
         assert_eq!(app.selected_fountain().expect("mask").1.stops.len(), 3);
         assert_eq!(app.doc().find_shape(id).expect("square").fill, fill);
+    }
+
+    /// A transparency made radial on the bar is clear at its centre and
+    /// opaque at its edge, its centre node black (#2377); dragging its end
+    /// node sizes it as a circle still (the skew node keeps the ratio);
+    /// Ctrl or Shift on the end node turns the line in steps of the
+    /// constrain angle (#2373).
+    #[test]
+    fn a_radial_transparency_is_clear_at_the_centre_and_its_end_node_constrains() {
+        use crate::mixed::TransparencyField as F;
+        let mut app = App::headless();
+        let id = square(&mut app);
+        app.tool = crate::tools::Tool::Transparency;
+        app.transparency_from_drag_on(&[id], Point::new(10.0, 20.0), Point::new(30.0, 20.0));
+        let kind_to = |app: &mut App, k: FountainKind| {
+            let (mut set, ..) = crate::ui::toolbar::transparency_state(app);
+            let Fill::Fountain(f) = &mut set.mask else {
+                panic!("a gradient mask");
+            };
+            crate::mixed::set_mask_kind(f, k);
+            app.transparency_default = set.clone();
+            app.patch_transparency(&set, &[F::MaskKind]);
+            app.selected_fountain().expect("mask").1
+        };
+        let f = kind_to(&mut app, FountainKind::Radial);
+        assert_eq!(f.kind, FountainKind::Radial);
+        // The first stop is the centre: black, all clear; the edge white.
+        assert_eq!(
+            (f.stops[0].color, f.stops[1].color),
+            (Color::BLACK, Color::WHITE)
+        );
+        assert_eq!(
+            crate::ui::transparency_docker::gray_transparency(f.stops[0].color),
+            100.0
+        );
+        assert!(crate::ui::transparency_docker::gray_transparency(f.stops[1].color) < 1e-9);
+        // Back to linear: opaque at the start again; stops set by hand
+        // are kept.
+        let f = kind_to(&mut app, FountainKind::Linear);
+        assert_eq!(
+            (f.stops[0].color, f.stops[1].color),
+            (Color::WHITE, Color::BLACK)
+        );
+        let f = kind_to(&mut app, FountainKind::Radial);
+        assert_eq!(f.stops[0].color, Color::BLACK);
+
+        // The end node dragged out: a circle stays a circle.
+        let ratio = |app: &App| {
+            let (_, f, b) = app.selected_fountain().expect("mask");
+            let hs = fountain_handles(&f, b);
+            (hs[2].1 - hs[0].1).hypot() / (hs[1].1 - hs[0].1).hypot()
+        };
+        let before = ratio(&app);
+        let (_, f, b) = app.selected_fountain().expect("mask");
+        let hs = fountain_handles(&f, b);
+        let (centre, end) = (hs[0].1, hs[1].1);
+        app.drag_fountain_handle(FountainHandle::End, centre + (end - centre) * 1.5, false);
+        assert!(
+            (ratio(&app) - before).abs() < 1e-6,
+            "{} {before}",
+            ratio(&app)
+        );
+
+        // Held with the constrain key, 5 degrees off comes back level.
+        let (_, f, b) = app.selected_fountain().expect("mask");
+        let hs = fountain_handles(&f, b);
+        let (centre, end) = (hs[0].1, hs[1].1);
+        assert!(app.begin_fountain_drag(end, end));
+        let r = (end - centre).hypot();
+        let a = 5f64.to_radians();
+        assert!(app.fountain_drag_to(centre + Vec2::new(a.cos(), a.sin()) * r, true));
+        let (_, f, b) = app.selected_fountain().expect("mask");
+        let hs = fountain_handles(&f, b);
+        assert!((hs[1].1.y - centre.y).abs() < 1e-6, "{hs:?}");
+        assert!(hs[1].1.x > centre.x);
+        app.end_drag();
     }
 
     #[test]

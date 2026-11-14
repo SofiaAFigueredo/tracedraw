@@ -7,7 +7,7 @@ desktop version, with the same menus, tools and files.
 
 ## Installing the browser version as an app {#install}
 
-The [browser version](https://igtoth.github.io/tracedraw/) can be installed
+The [browser version](https://tracedraw.github.io/tracedraw/) can be installed
 from the browser. It then opens full screen with the TraceDraw icon, without
 the browser's address bar and tabs, in any orientation, and keeps clear of a
 notch or rounded screen corners.
@@ -16,7 +16,9 @@ notch or rounded screen corners.
   the browser's menu and **Install app** or **Add to Home screen**. Chrome
   may also offer it in a bar under the address bar.
 - **iPad** (Safari): open the page, tap **Share**, then **Add to Home
-  Screen**.
+  Screen**. On an iPad or iPhone, as on an Android tablet, the Open and
+  Import dialogs list every file, since the system would grey out `.cdr`
+  files otherwise; pick a drawing TraceDraw opens.
 - **Desktop** (Chrome, Edge): click the install icon at the right end of the
   address bar, or choose **Install TraceDraw** in the browser's menu.
 
@@ -43,7 +45,7 @@ the choice is kept. See [Workspaces](../customize/workspaces.md).
 
 What works differently:
 
-- **Files.** Open, Import, Save, Save As, Export and Publish to PDF go
+- **Files.** Open, Import, Save, Save As, Export and Export as PDF go
   through the system's document picker. Save writes an opened document back
   in place. The [[dialog.save_drawing]] dialog box asks only for the name,
   type and version; the system then asks where to save.
@@ -64,5 +66,13 @@ program, and choosing a folder (such as an export folder or a font folder).
 On a touch screen, a finger or a pen works the canvas, the toolbox, the bars
 and the menus. Tap to click, drag to draw or move. In the
 [[menu.window.workspace_touch]] workspace two fingers pan and a pinch zooms.
+Tap the drawing with two fingers together to undo, with three to redo; a
+pinch or a pan, which moves, does neither.
+
+Shift, Ctrl, Alt and Delete float over the bottom left corner of the
+drawing: a tap on Shift, Ctrl or Alt holds that key until you tap it again
+(it shows pressed meanwhile), so a tap adds to the selection with Shift,
+and Delete deletes what is selected. [[options.touch_keys]] in the Display
+page of the options shows or hides them.
 For pen pressure on desktop systems, see
 [Drawing with a graphics tablet](../lines-shapes/pen-pressure.md).

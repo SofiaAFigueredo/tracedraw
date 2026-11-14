@@ -8,8 +8,8 @@ them. This page names its parts, so the other pages of this Help make sense.
 From top to bottom and from left to right:
 
 - The **menu bar** holds every command, in the menus [[menu.file]],
-  [[menu.edit]], [[menu.view]], [[menu.layout]], [[menu.object]],
-  [[menu.effects]], [[menu.bitmaps]], [[menu.text]], [[menu.table]],
+  [[menu.edit]], [[menu.view]], [[menu.object]], [[menu.text]],
+  [[menu.bitmaps]], [[menu.effects]], [[menu.layout]],
   [[menu.tools]], [[menu.window]] and [[menu.help]]. Each command shows its
   shortcut beside it. With no drawing open, only [[menu.file]],
   [[menu.tools]], [[menu.window]] and [[menu.help]] are shown. The
@@ -33,14 +33,14 @@ The standard toolbar holds, in groups:
 2. Cut, Copy and Paste.
 3. Undo and Redo. Their arrows list the steps, so you can undo or redo
    several at once by choosing a step.
-4. Import, Export and Publish to PDF.
+4. Import, Export and Export as PDF.
 5. The zoom box: type a zoom level and press <kbd>Enter</kbd>, or open its
    list for zoom to selected, to all objects, to the page, to the page
    width or height, and levels from 10% to 1600%. Then full-screen preview.
 6. Show rulers, show grid and show guidelines, drawn pressed while on.
 7. Snap off (<kbd>Alt+Q</kbd>) and the list of what to snap to.
 8. Options, which opens the list of option pages.
-9. Launch: Font Manager, Welcome Screen and Color Management.
+9. Launch: Font Manager, TraceCut and Welcome Screen.
 
 Hover a button to see its name, its shortcut and what it does.
 
@@ -54,7 +54,12 @@ that kind of object. Each tool adds its own settings, explained on the page
 of the tool.
 
 In number fields you can type a sum such as `10+5`, or a value in another
-unit such as `1 in`, which is converted to the drawing units.
+unit such as `1 in`, which is converted to the drawing units. Units work
+inside a sum too: add `/ 2` after the value shown to halve it, or type
+`24 mm + 1 in` or `(16mm*2)+4in+2pt`; a number without a unit is in the
+field's unit. Drag left or
+right on a field's arrows, or on its label, to slide the value down or up
+(<kbd>Shift</kbd> for bigger steps, <kbd>Ctrl</kbd> for finer ones).
 
 ## The toolbox and flyouts {#toolbox}
 
@@ -98,8 +103,8 @@ objects. Below the drawing are:
   and the scroll bar to share the space between them.
 
 The **Navigator** button in the corner between the scroll bars shows a
-thumbnail of the page while you hold it; move the pointer over the thumbnail
-to move the view. Double-clicking the page border with the [[tool.pick]]
+thumbnail of the page while you hold it (or the <kbd>N</kbd> key); move the
+pointer over the thumbnail to move the view. Double-clicking the page border with the [[tool.pick]]
 tool opens the page size options.
 
 ## The color palette {#color-palette}
@@ -123,6 +128,18 @@ edge of the window, or away from the edges to make it float. Right-click a
 grip to lock the bars or reset their positions. To show or hide a bar, use
 [[menu.window > menu.window.toolbars]]. You can also save the whole
 arrangement as a workspace; see [Workspaces](../customize/workspaces.md).
+
+A floating toolbox can be resized by the edges and corners of its window,
+and its buttons follow: a tall narrow window holds them two to a row, a
+wider one more to a row in fewer rows, a wide short one in a row or two,
+with the lines between the tool groups kept. The size is remembered. When a
+floating bar's name does not fit its title, the name is shortened with an
+ellipsis; hover the title to read it whole.
+
+Hold <kbd>Ctrl</kbd> and turn the mouse wheel over a toolbar or the toolbox
+to make its buttons larger (wheel up) or smaller (wheel down); the same
+over the color palette makes its swatches larger or smaller. The sizes are
+remembered. The plain wheel still scrolls a bar that does not fit.
 
 The standard toolbar, the property bar, the Text, Zoom and Transform toolbars
 and the time tracker can share a row when docked at the top or the bottom:

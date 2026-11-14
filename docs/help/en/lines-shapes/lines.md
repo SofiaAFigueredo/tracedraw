@@ -25,6 +25,10 @@ To draw a straight line with this tool, click where the line starts and
 click again where it ends. Hold <kbd>Ctrl</kbd> to keep the line to steps of
 15 degrees. <kbd>Esc</kbd> drops the first click.
 
+To draw a line of several straight segments, click where it starts, then
+double-click at each corner, and click once where it ends. <kbd>Space</kbd>,
+<kbd>Enter</kbd> or <kbd>Esc</kbd> ends it at the last corner.
+
 With a graphics tablet, the pen's pressure sets the width of the line along
 it; see [Drawing with a graphics tablet](pen-pressure.md).
 
@@ -61,6 +65,11 @@ steps: undoing goes back to drawing it, with the tool chosen again and a line
 going on from the last node left, so you can undo node by node and draw on at
 once.
 
+<kbd>Backspace</kbd> or <kbd>Delete</kbd> while you draw with the Bezier, Pen,
+B-spline or Polyline tool removes the last node you placed, with its handles,
+one node a press. They never delete the selected objects while a curve is being
+drawn.
+
 What you are drawing shows over any color: the segments placed so far lie on
 a white line, and the handles are dashed in blue and white.
 
@@ -95,7 +104,9 @@ handles.
 
 1. Click to place each control point. The curve follows the points, starting
    at the first and ending at the last, and always stays inside them. While
-   you draw, the control points show as a dashed line.
+   you draw, the control points show as a dashed line. Hold <kbd>C</kbd> or
+   <kbd>V</kbd> while you click to place a fixed point: the curve passes
+   through it, with a corner there.
 2. Double-click or press <kbd>Enter</kbd> to finish. Click the first point
    (once there are three) to close the curve into a smooth loop.
 

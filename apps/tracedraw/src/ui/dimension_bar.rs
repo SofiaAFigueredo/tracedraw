@@ -6,7 +6,7 @@
 //! apply to the selected dimensions and to the ones made next.
 
 use crate::app::App;
-use crate::dimensions::{units_choices, ArrowStyle, DimensionStyle, TextPosition};
+use crate::dimensions::{units_choices, ArrowStyle, DimensionStyle, LabelAlong, TextPosition};
 use crate::i18n::tr;
 use crate::theme::Tokens;
 use crate::tools::Tool;
@@ -24,7 +24,7 @@ fn dim(ui: &mut Ui, text: String) {
 }
 
 /// What a precision looks like: 1.23 with that many decimals.
-fn precision_sample(p: u8) -> String {
+pub(crate) fn precision_sample(p: u8) -> String {
     let p = p.min(6) as usize;
     format!("{:.p$}", 1.234_567)
 }
@@ -102,7 +102,7 @@ fn style_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
         app.set_dimension_style(|s| s.line_width = width_mm);
     }
     let mut arrows = style.arrows;
-    egui::ComboBox::from_id_salt("dimension_arrows")
+    crate::ui::keynav::ComboBox::from_id_salt("dimension_arrows")
         .selected_text(tr(arrows.key()))
         .width(90.0)
         .show_ui(ui, |ui| {
@@ -160,7 +160,7 @@ fn length_field(
 /// lines joined in rounded corners (#641).
 fn options_part(app: &mut App, ui: &mut Ui, style: &DimensionStyle) {
     let button = ui
-        .button(format!("{} \u{25BE}", tr("dimension.options")))
+        .button(format!("{} \u{23F7}", tr("dimension.options")))
         .rich_tip(tr("dimension.options"));
     // The menu stays open while its fields are typed in and stepped; a
     // click outside closes it.
@@ -221,7 +221,7 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
         .unwrap_or_else(|| app.dimension_style.clone());
     dim(ui, tr("dimension.precision"));
     let mut precision = style.precision.min(6);
-    egui::ComboBox::from_id_salt("dimension_precision")
+    crate::ui::keynav::ComboBox::from_id_salt("dimension_precision")
         .selected_text(precision_sample(precision))
         .width(80.0)
         .show_ui(ui, |ui| {
@@ -242,7 +242,7 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
         .find(|(id, _)| *id == units)
         .map(|(_, l)| l.clone())
         .unwrap_or_default();
-    egui::ComboBox::from_id_salt("dimension_units")
+    crate::ui::keynav::ComboBox::from_id_salt("dimension_units")
         .selected_text(shown_units)
         .width(120.0)
         .show_ui(ui, |ui| {
@@ -275,7 +275,7 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
     crate::ui::propbar::sep(ui);
     dim(ui, tr("dimension.text_position"));
     let mut pos = style.text_position;
-    egui::ComboBox::from_id_salt("dimension_text_position")
+    crate::ui::keynav::ComboBox::from_id_salt("dimension_text_position")
         .selected_text(tr(pos.key()))
         .width(90.0)
         .show_ui(ui, |ui| {
@@ -287,6 +287,21 @@ pub fn dimension_bar(app: &mut App, ui: &mut Ui) {
         .rich_tip(crate::ui::tips::keyed("dimension.text_position"));
     if pos != style.text_position {
         app.set_dimension_style(|s| s.text_position = pos);
+    }
+    // Along the line: the middle, toward either end or outside (#1500).
+    let mut along = style.label_along;
+    crate::ui::keynav::ComboBox::from_id_salt("dimension_text_along")
+        .selected_text(tr(along.key()))
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            for a in LabelAlong::ALL {
+                ui.selectable_value(&mut along, a, tr(a.key()));
+            }
+        })
+        .response
+        .rich_tip(crate::ui::tips::keyed("dimension.text_along"));
+    if along != style.label_along {
+        app.set_dimension_style(|s| s.label_along = along);
     }
     let mut size = style.text_size;
     let r = ui

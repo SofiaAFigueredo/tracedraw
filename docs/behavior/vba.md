@@ -30,7 +30,7 @@ Rules that hold everywhere:
 - **Out parameters.** Methods that hand values back through ByRef
   arguments return them as an array in parameter order: `GetPosition`
   gives `[x, y]`, `GetSize` `[w, h]`, `GetBoundingBox` `[x, y, w, h]`.
-- **Named arguments.** Methods are declared with their reference
+- **Named arguments.** Methods are declared with their published
   parameter names (`Left`, `Top`, `Right`, `Bottom`, `CornerUL`...), so
   named arguments match by name.
 - **Collections** are 1-based, take an index or a name in `Item`, have
@@ -47,7 +47,10 @@ selection as one object, type `cdrSelectionShape`, with `Shapes`),
 `EventsEnabled`, `Refresh`, `CreateColor(ColorString)` ("#RRGGBB",
 "RGB255,USER,r,g,b", "CMYK100,USER,c,m,y,k", "GRAY255,USER,v"),
 `CreateRGBColor`, `CreateCMYKColor`, `CreateGrayColor`,
-`CreateHSBColor`, `CreateShapeRange`, `CreateCurve`. `CreateDocument`
+`CreateHSBColor`, `CreateShapeRange`, `CreateCurve`, `OutlineStyles`
+(`OutlineStyles(0)` the solid line, 1 to 3 the dashes the Outline Pen
+dialog offers, `Count`, `Item`), `ArrowHeads` (`ArrowHeads(0)`, no
+arrowhead; other numbers give none either). `CreateDocument`
 and `OpenDocument` raise an error: a macro works on the active drawing.
 `Status` (`BeginProgress`, `Progress`, `EndProgress`, `SetMainText`:
 the text and percentage go to the status line), `ColorManager`
@@ -78,7 +81,9 @@ file's extension; bitmaps at the resolution given, or scaled to
 master layers), `ActiveLayer`, `SelectableShapes` (on visible, unlocked
 layers), `Name` (read and write), `Index`, `SizeWidth`, `SizeHeight`,
 `SetSize`, `GetSize`, `Orientation` (`cdrPortrait`, `cdrLandscape`;
-setting it swaps the sides), `LeftX`, `RightX`, `TopY`, `BottomY`,
+setting it swaps the sides), `Paper` (the paper size by name, such as
+"A4", the user's saved sizes first, "" for a size of its own; set to a
+name, the page takes that size in its orientation), `LeftX`, `RightX`, `TopY`, `BottomY`,
 `CenterX`, `CenterY`, `Activate`, `Delete`, `CreateLayer`, `FindShapes`,
 `FindShape`.
 
@@ -175,7 +180,7 @@ Shared with ranges and the selection:
   new curve).
 - **Groups and frames:** `Ungroup`, `UngroupEx`, `UngroupAll`,
   `UngroupAllEx`, `Shapes` (a group's), `Layer`, `Page`, `ParentGroup`,
-  `PowerClip` (`Shapes` inside a clip frame), `PowerClipParent`.
+  `ClipFrame` (`Shapes` inside a clip frame), `ClipFrameParent`.
 - **Views of the object:**
   - `Curve`: `Nodes`, `SubPaths`, `Segments`, `Closed`, `Length`.
     Nodes have `PositionX`, `PositionY`, `SetPosition`, `Move`, `Type`
@@ -206,7 +211,11 @@ Shared with ranges and the selection:
 - **`Outline`:** `Type` (`cdrNoOutline`, `cdrOutline`), `Width`, `Color`
   (tied to the object like the fill's), `Style` (`DashCount`,
   `SetDashes`), `LineCaps`, `LineJoin`, `SetNoOutline`,
-  `SetProperties(Width, Style, Color)`, and `CopyAssign`.
+  `SetProperties(Width, Style, Color, StartArrow, EndArrow, BehindFill,
+  ScaleWithShape, LineCaps, LineJoin, NibAngle, NibStretch, ...)` (the
+  style from `OutlineStyles`; arrowheads, `DashDotLength`, `PenWidth`,
+  `MiterLimit` and `Justification` are taken and left as they are), and
+  `CopyAssign`.
 - **`Transparency`:** `Uniform`, `ApplyUniformTransparency(Value)` (0 to
   100), `ApplyNoTransparency`.
 
@@ -224,7 +233,51 @@ Creatable with `New`.
   `cdrColorRegistration`), `RGBRed`, `RGBGreen`, `RGBBlue`, `RGBValue`,
   `CMYKCyan`, `CMYKMagenta`, `CMYKYellow`, `CMYKBlack` (all read and
   write), `Gray`, `HSBHue`, `HSBSaturation`, `HSBBrightness`,
-  `HexValue`, `Name`, `IsSpot`, `IsCMYK`, `IsSame`.
+  `HexValue`, `Name` (a spot colour's ink name; a palette colour's
+  name), `IsSpot`, `IsCMYK`, `IsSame`.
+
+### Palettes
+
+- **`Application.Palettes`** (also a global): the palettes of the
+  Palette Manager (built in and the user's), 1-based, by index or name,
+  `Count`, `For Each`.
+- **`Document.Palette`**: the drawing's own palette.
+- **`Palette`:** `Name`, `ColorCount`, `Color(Index)` (1-based, the
+  colour with its name), `Colors`, `FindColor(Name)`.
+- A spot colour a macro applies (`ApplyUniformFill`) whose ink the
+  drawing does not have yet joins the drawing's ink list under its
+  palette name, so exports print it on a plate of its own.
+
+### Contours, outlines as objects, copies on a layer
+
+- **`Shape.CreateContour(Direction, Offset, Steps, ..., FillColor)`:**
+  a contour effect (`cdrContourToCenter` 0, `cdrContourInside` 1,
+  `cdrContourOutside` 2; `Offset` in the document unit, mitred corners),
+  stepping from the object's fill to `FillColor`. It gives back the
+  effect, whose `Separate` turns it into plain objects; the object keeps
+  its `StaticID`, so a macro tells it from the rings.
+- **`Outline.ConvertToObject`:** a filled curve of the outline's shape
+  and colour right above the object, which loses its outline (the same
+  geometry as Object > Convert Outline to Object).
+- **`CopyToLayer(Layer)`** on a shape, range or selection: copies on that
+  layer, in the same place on the page.
+
+### View, PDF settings, files
+
+- **`ActiveWindow.ActiveView.Type`:** `cdrEnhancedViewWithOverprints` (5)
+  turns View > Simulate Overprints on, another view type off.
+- **`Document.PDFSettings`:** `PublishRange` (`pdfWholeDocument` 0,
+  `pdfCurrentPage` 1) chooses what `PublishToPDF` writes; `Load`, `Save`
+  and `ShowDialog` of a named style succeed without changing anything, as
+  the PDF always keeps spot inks and overprint.
+- **`Dir(PathName)`:** a file's name when it exists, else ""; a `*` or `?`
+  in the name gives the first match in its folder. `Dir` with no path is
+  not available.
+- **Queries** (`FindShapes(Query:=...)`): `@name`, `@type` and
+  `@fill.type` compared with `=`, `<>`, or tested with
+  `.StartsWith('...')`, `.EndsWith('...')`, `.Contains('...')`.
+- Methods of the object model take **named arguments**
+  (`CreateArtisticText(..., Font:="Arial", Size:=10)`).
 
 ### Constants
 
@@ -234,14 +287,14 @@ Checked member by member against the published developer reference
 (enumeration pages listing each member's value):
 `cdrUnit` (including `cdrUnitQ` and `cdrUnitH`, both 0.25 mm),
 `cdrReferencePoint`, `cdrShapeType`, `cdrFillType`, `cdrFilter` (every
-member, `cdrWEBP` from a later version of the reference), `cdrImageType`,
+member, `cdrWEBP`, added in a later version of the object model), `cdrImageType`,
 `cdrEffectType`, `cdrAlignment`, `cdrFontLine`, `cdrFontCase`,
 `cdrSegmentType`, `cdrOutlineType`, `cdrOutlineLineCaps`, `cdrMergeMode`,
 `cdrTransparencyAppliedTo`, `cdrDistributeArea`, `cdrAlignDistributeH`,
 `cdrAlignShapesTo`, and the members TraceDraw defines of
 `cdrTextLanguage` and `cdrCursorShape`.
 
-Checked against published type definitions rather than the reference:
+Checked against published type definitions, not the enumeration pages:
 `cdrColorType`, `cdrTextType` and `cdrTriState`.
 
 Not yet checked, with the values macros commonly assume:
@@ -255,7 +308,7 @@ bottom, 3 centre, 4 to 6 spread those lines, 7 equal gaps),
 `cdrAntiAliasingType`, `cdrImportMode`, `cdrFileVersion`,
 `cdrCompressionType` and `cdrShapeLinkType`.
 
-Method parameters carry the reference names, so named arguments match;
+Method parameters carry the published names, so named arguments match;
 checked for `CreateRectangle`, `CreateRectangle2`, `CreateEllipse2`,
 `SetPosition`, `SetSize`, `SetSizeEx`, `Move`, `Rotate`, `Duplicate`,
 `ApplyUniformFill`, `ApplyFountainFill`, `RGBAssign`, `CMYKAssign`,
@@ -283,7 +336,7 @@ other libraries):
 | Text, Story, Words, Range, Size, Bold, Italic, Font, LineSpacing, Overflow, IsArtisticText | 100, 12, 3, 5, 9, 9, 9, 3, 8, 4, 3 | W (`LanguageID`: E) |
 | Bitmap, ResolutionX, ResolutionY, Mode, ConvertTo, Resample, ExternallyLinked, Resolution | 51, 12, 12, 7, 14, 5, 3, 4 | W |
 | ConvertToBitmapEx, ConvertToCurves | 6, 4 | W |
-| PowerClip, PowerClipParent | 44, 8 | W |
+| ClipFrame, ClipFrameParent | 44, 8 | W |
 | EnterEditMode, LeaveEditMode | 3, 3 | N |
 | Effects, DropShadow, Separate, Clear | 14, 6, 7, 14 | W (a separated shadow loses its blur) |
 | MergeMode | 6 | W for normal; others E |
@@ -315,7 +368,7 @@ declare variables (`cdrShapeType`, `cdrColorType`, `cdrImageType`,
 
 The remaining rarer members follow the same rules:
 
-- Works: `MoveToLayer`, `OrderIsInFrontOf`, `AddToPowerClip`,
+- Works: `MoveToLayer`, `OrderIsInFrontOf`, `AddToClipFrame`,
   `FindAnyOfType`, `SelectShapesAtPoint`, `ImportEx`, `DrawingOriginX`
   and `DrawingOriginY` (0: the origin is the page corner).
 - Raise a named error: `GetUserClick`, `GetUserArea`, `DesktopLayer`,

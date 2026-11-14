@@ -1,8 +1,7 @@
 # Aligning and distributing objects
 
 Aligning lines objects up by their edges or centers; distributing spaces them
-evenly. Use the [[docker.align_distribute]] panel
-(<kbd>Ctrl+Shift+A</kbd>), the commands of
+evenly. Use the [[docker.align_distribute]] panel, the commands of
 [[menu.object > menu.object.align_distribute]], or the keys below.
 
 ![The Align and Distribute panel](../../img/objects-align-distribute.png)
@@ -42,17 +41,26 @@ The keys always align to the object selected last:
    - [[docker.distribute_selection]] (at first): the first and last objects
      stay where they are, and the others move between them;
    - [[docker.distribute_page]]: the objects spread across the whole page,
-     the first touching one side and the last the other.
+     the first touching one side and the last the other;
+   - [[docker.distribute_spacing]]: the first object stays and the others
+     follow it at the distance in [[docker.distribute_gap]] (between the
+     objects for the gaps, else between their edges or centers).
 3. Click one of the eight buttons: left edges, centers, gaps or right edges
    across the page, or top edges, centers, gaps or bottom edges down it.
    Spreading the gaps gives equal space between the objects whatever their
    sizes.
 
+With [[docker.distribute_spacing]], once a button has spread the
+selection you can change the spacing and watch the objects follow: turn
+the mouse wheel over the box, or drag the slider under it. Let go of the
+slider, or move the pointer away from the box, to keep the result as one
+undo step; press <kbd>Esc</kbd> to put the spacing and the objects back.
+
 With too few objects the buttons are pale and the panel says how many are
 needed. Each align or distribute is one undo step.
 
 To place copies at even distances in one step, see
-[Step and repeat](step-and-repeat.md).
+[Repeat copies](step-and-repeat.md).
 
 ## Fit objects to a path {#fit-to-path}
 

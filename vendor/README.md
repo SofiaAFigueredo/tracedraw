@@ -55,6 +55,80 @@ change marked `TraceDraw:` in a comment.
   screen (#787). TraceDraw's tests include and run it
   (`splash::eframe_window_start::tests`). Check whether egui 0.37 still
   needs it before dropping the copy.
+- Change: in the browser, `dragover` and `drop` (`web/events.rs`,
+  `install_drag_and_drop`) push a pointer move at the event's place
+  before the hovered or dropped files (#1142): the browser sends no mouse
+  moves while files are dragged over the page, so TraceDraw could not
+  tell a drop on the drawing (import) from one on the menus or tabs
+  (open in a tab of its own), and the hint always said "Drop to open".
+- Change: in the browser, a pen's pointer events send its pressure
+  (#1410). The published web layer reads a force from touch events only
+  and drops the `pressure` of pointer events, so a graphics tablet's pen
+  drew Freehand and Brush Strokes at an even width. `web/events.rs`
+  now listens for `pointermove` and `pointercancel` on the document and
+  reads the pen's pressure at `pointerdown` and `pointerup`
+  (`push_pen_pressure`), and sends it as the patched winit copy does on
+  X11 and macOS: an `egui::Event::Touch` of phase `Move` only, of a
+  device of its own (`PEN_DEVICE`), with the reading as `force`, which
+  TraceDraw's raw input hook reads and takes out (`pen.rs`,
+  `docs/behavior/pen-pressure.md`). The pen's position comes from its
+  own `pointerdown` and `pointermove` too (`pen_moved`, #1655): Safari
+  on iPad sends an Apple Pencil no mouse events at all, so the Pencil
+  did nothing; its press and release come from `pointerdown` and
+  `pointerup` as for every pointer, a pen's `pointerdown` on the canvas
+  is not left to the browser (`preventDefault`: no text selection or
+  handwriting), a `pointercancel` lets the tip go (`pen_cancelled`), and
+  the touches Safari also sends for the Pencil (`touchType` `stylus`)
+  are left out of the touch events (`input::is_stylus`), or the press
+  would come twice and egui would take the Pencil for a finger; a move
+  of the Pencil's touches alone only keeps the page from scrolling.
+  Only `pointerType` `pen`
+  gives pressure: the mouse (whose 0.5 while pressed means no pressure)
+  and touches (whose force still comes from the touch events) send
+  nothing; a hovering or lifted pen, or a reading of 0, sends no force;
+  0.5 counts as no pressure until a pen has given another reading
+  (`WebInput::pen`), since a pen that cannot measure pressure reports
+  0.5 while pressed. The arithmetic is in `web/pen_pressure.rs`, which
+  uses nothing of the crate but egui; TraceDraw's tests include and run
+  it (`eframe_web_pen_pressure::tests`).
+- Change: the application can keep a paste shortcut from egui-winit's
+  clipboard text read (#1488). egui-winit reads the clipboard as text on
+  every Ctrl+V, before the application sees the key. On X11, an owner
+  that holds a picture alone (`xclip -selection clipboard -t image/png`
+  with a picture of about 1 MB) answers that text request with its
+  picture in parts (INCR); the clipboard library stops after the first
+  part, and the owner then waits for the rest of that transfer forever
+  and answers no other request, so TraceDraw's own picture read timed
+  out, the picture never pasted and the window froze for about 24 s.
+  `native/paste_gate.rs` holds `set_paste_text_gate` (exported from the
+  crate root) and `blocks`, which `EpiIntegration::on_window_event`
+  calls before handing an event to egui-winit: a real paste key press
+  (`is_paste_key`, egui-winit's `is_paste_command` with its logical or
+  physical key) is not handed over when the gate answers `false`, so
+  egui-winit neither reads the clipboard nor sends a paste event, as when
+  the clipboard holds no text; the application sees the key's release
+  and pastes by itself. `blocks` also follows the modifier keys from
+  `ModifiersChanged`. With no gate set, nothing changes. TraceDraw's
+  gate (`clipboard::paste_may_read_text`) reads the X11 clipboard's
+  types and lets the text be read only when a text type is offered.
+  TraceDraw's tests include and run the key test
+  (`clipboard::eframe_paste_gate::tests`). When moving to a newer egui,
+  check whether egui-winit still reads the text this way.
+- Change: a window started `centered` is centred where the primary
+  monitor lies on the desktop, and the primary monitor's rectangle is
+  kept for the application (#1800). `epi_integration::viewport_builder`
+  centred the window by the monitor's size from the desktop's top-left
+  corner, and egui's `ViewportInfo` gives the application a monitor's
+  size but not its position, so on a desktop whose primary monitor does
+  not hold that corner (X11, the primary at (1544, 2160) below two
+  others) the splash screen and the main window opened on the top-left
+  monitor. `native/monitor_place.rs` holds `centred_on` (the
+  arithmetic), `remember_primary` and `primary_monitor` (exported from
+  the crate root: `[x, y, width, height]` in system points); the
+  application centres its main window with them
+  (`splash::open_main_window`). TraceDraw's tests include and run it
+  (`splash::eframe_monitor_place::tests`). When moving to a newer
+  eframe, check whether it centres with the monitor's position.
 - Drop the copy and the `[patch.crates-io]` entry when the workspace moves
   to egui/eframe 0.37 or later: what holds that back is the egui 0.37
   API migration across the app. The fixed-function painter has no
@@ -98,11 +172,204 @@ change marked `TraceDraw:` in a comment.
     input hook reads the force and then takes out every `Moved` touch
     whose id never had a `Started` one (`pen::filter_raw_input`); a real
     touch screen's touches start, move and end, and pass as they came.
-    Wayland is unchanged: winit does not bind the tablet protocol
-    (`zwp_tablet_v2`), so a pen reaches the window there only through
-    XWayland (`tracedraw --x11`, which picks winit's X11 backend).
+    Wayland: see the next change.
+- Change: a graphics tablet's pen on a native Wayland window (#1841).
+  winit 0.30 binds no tablet protocol, and a Wayland compositor sends a
+  pen's input over nothing else (GNOME's sends a window that does not
+  bind it nothing), so the pen did not move the pointer or draw; only
+  XWayland (`tracedraw --x11`) took it. The copy binds the public
+  tablet-v2 protocol (`zwp_tablet_manager_v2`, version 1, from
+  `wayland-protocols`, already a dependency) and makes a tablet seat for
+  each seat (`platform_impl/linux/wayland/state.rs`, `seat/mod.rs`);
+  `platform_impl/linux/wayland/tablet.rs` takes the tablet seat's
+  tablets, tools and pads, and hands each tool's events to
+  `src/tablet_tool.rs`, which decides what the window is told: proximity
+  in and out as `CursorEntered` and `CursorLeft`, motion as
+  `CursorMoved`, the tip's down and up as presses and releases of the
+  left button, the barrel buttons (`BTN_STYLUS`, `BTN_STYLUS2`,
+  `BTN_STYLUS3`) as the middle, right and back buttons, and the
+  pressure (0 to 65535) as the same moving `Touch` with a
+  `Force::Normalized` that the X11 and macOS changes send, no force once
+  the tip lifts; a frame's events go out when the frame ends, and
+  leaving proximity releases whatever is still held. A tool that comes
+  into proximity of a window shows the window's own cursor, as its
+  pointers do, and follows it when it changes (`WindowState::
+  tablet_tool_entered`, `apply_on_tablets`, called from `set_cursor`,
+  `set_custom_cursor` and `set_cursor_visible`): a named cursor through
+  `wp_cursor_shape_manager_v1` (`tablet_tool::cursor_shape_value`), a
+  custom image on a surface of the tool's own (`zwp_tablet_tool_v2.
+  set_cursor`), none while the window hides its cursor (TraceDraw draws
+  its tool cursors itself, so the pen showed the compositor's arrow on
+  top of them before); over the window's frame the default arrow. The
+  tilt is read and goes out with the pressure as the pen's altitude in
+  `Force::Calibrated { force, max_possible_force: 1, altitude_angle }`,
+  whose share egui-winit reads unchanged (`force / max_possible_force`).
+  Distance, rotation, slider and wheel, and the pad's buttons, rings and
+  strips, are not read; over the window's frame the pen drives the
+  frame (next change).
+  `src/tablet_tool.rs` depends on nothing in the crate, and TraceDraw's
+  tests include and run it (`winit_tablet_tool::tests`).
+- Change: a finger and a graphics tablet's pen drive the window's frame
+  on Wayland (#2070). A compositor without the `xdg-decoration`
+  protocol (GNOME's) leaves the title bar to the program, and the copy
+  draws its plain frame on surfaces of their own beside the window's;
+  winit 0.30 drove that frame from the mouse alone: a touch on it found
+  no window and was dropped (`seat/touch/mod.rs`), and the pen was told
+  to do nothing there, so on a tablet without a mouse the window could
+  not be moved, resized, minimized, maximized or closed. A touch whose
+  surface has a parent (`frame_parent`) now goes to the frame
+  (`WinitState::frame_touch`): its press points there and presses the
+  frame's normal button with the touch's serial, its motion points
+  again (which starts the move or the resize the press asked for, as a
+  mouse motion does), its release releases the button (the title bar's
+  buttons act on it) and leaves the frame, a cancel leaves it. The
+  pen's motion, its tip (the normal button, with the serial of its last
+  `down`, kept in `TabletToolData::down_serial`), its `BTN_STYLUS2`
+  button (the alternate one: the window menu, on its press) and its
+  leaving do the same (`WinitState::pen_on_frame` in `tablet.rs`); the
+  tablet protocol does not name a tool's seat, so the move is asked for
+  on the first seat. `WindowState::frame_input` (`window/state.rs`)
+  hands the steps to the frame, and a leave drops a move asked for and
+  not started. What each input tells the frame is in `src/frame_input.rs`,
+  which depends on nothing in the crate; TraceDraw's tests include and
+  run it (`winit_frame_input::tests`).
+- Change: macOS hands the files opened from Finder (double click, Open
+  With, a file dropped on the Dock icon) to the program (#646). macOS sends
+  them as an "open documents" event, never on the command line, and winit
+  0.30 has no event for it. The application delegate
+  (`platform_impl/macos/app_state.rs`) answers `application:openURLs:`
+  and passes the paths of the file URLs to `src/opened_files.rs`, which
+  calls the handler the program set with
+  `platform::macos::set_open_files_handler`, or keeps them until one is
+  set (at launch they come before the window exists). The manifest asks
+  `objc2-foundation` for `NSURL` as well. `src/opened_files.rs` depends on
+  nothing in the crate, and TraceDraw's tests include and run it
+  (`winit_opened_files::tests`).
+- Change: the pointer's place while files are dragged over the window
+  (#1142). winit 0.30's file drag events (`HoveredFile`, `DroppedFile`)
+  carry no position, and the system drag sends the window no mouse
+  moves, so TraceDraw could not tell a drop on the drawing (import) from
+  one on the menus or tabs (open in a tab of its own). The copy sends a
+  `WindowEvent::CursorMoved` with the place, which egui-winit hands on as
+  a pointer move:
+  - X11 (`platform_impl/linux/x11/event_processor.rs`): each
+    `XdndPosition` message, its root window coordinates translated to
+    the window's (`TranslateCoordinates`), before the drop data is asked
+    for.
+  - macOS (`platform_impl/macos/window_delegate.rs`): `draggingEntered:`
+    and `performDragOperation:` first, and a new `draggingUpdated:`
+    (answering a copy, as `draggingEntered:` does), the dragging info's
+    `draggingLocation` converted to the flipped view's points
+    (`queue_drag_position`).
+  - Windows keeps reading the cursor itself (`drop_files::drop_pointer`).
+- Change: files dropped on a native Wayland window (#1142). winit 0.30
+  binds no `wl_data_device`, so a Wayland window received no
+  `HoveredFile` or `DroppedFile` at all and the compositor showed the drag
+  as refused; only XWayland (`tracedraw --x11`) took drops. The copy binds
+  the data device manager and makes a data device for each seat
+  (`platform_impl/linux/wayland/state.rs`, `seat/mod.rs`), and
+  `platform_impl/linux/wayland/data_device.rs` handles the drag with the
+  toolkit's data device: an offer of `text/uri-list` over a window is
+  accepted as a copy and read at once through the event loop (never a
+  blocking read), so `HoveredFile` comes while the files hover; enter
+  and motion send a `CursorMoved` at the place, as the X11 and macOS
+  changes above do (over the window's frame, a surface of its own, a
+  place outside the window, so the drop counts as one on the frame);
+  the drop sends `DroppedFile` for each file once the list is read and
+  then finishes and destroys the offer; a drag that leaves without a
+  drop sends `HoveredFileCancelled`. What to send is decided by
+  `src/file_drop.rs` (the list's parsing, RFC 2483, and the drag's
+  states), which depends on nothing in the crate; TraceDraw's tests
+  include and run it (`winit_file_drop::tests`).
+- Change: macOS asks the program before the application quits (#1669).
+  The default application menu's Quit item (Command+Q), the Dock icon's
+  Quit and a log-out or shut-down send `terminate:`; winit 0.30's
+  application delegate has no `applicationShouldTerminate:`, so AppKit
+  terminated at once, `applicationWillTerminate:` ended the event loop
+  and no window had a `CloseRequested`: TraceDraw could not ask about
+  unsaved drawings. The delegate (`platform_impl/macos/app_state.rs`)
+  now answers `applicationShouldTerminate:` by asking `src/quit_request.rs`,
+  which calls the handler the program set with
+  `platform::macos::set_quit_handler`: `true` cancels the terminate
+  (`NSTerminateCancel`, the program then closes its window itself),
+  `false` or no handler lets it go ahead (`NSTerminateNow`, as before).
+  `src/quit_request.rs` depends on nothing in the crate, and TraceDraw's
+  tests include and run it (`winit_quit_request::tests`).
+- Change: Android reports each pointer with its tool to the program,
+  for palm rejection (#1832). winit 0.30 turns every pointer of a
+  `MotionEvent` into a `Touch` with no word of its tool (finger, stylus,
+  eraser, mouse, palm) and drops the hover events of a pen near the
+  screen, so a hand resting on a tablet drew like a finger. The Android
+  backend (`platform_impl/android/mod.rs`) now asks
+  `src/pointer_filter.rs` about each pointer of a motion event, with its
+  device, id, tool (`pointer_tool`) and action, and about each pointer of
+  a hover event; the filter the program set with
+  `platform::android::set_pointer_filter` answers whether to deliver the
+  touch and which touches of the event to end first with `Cancelled`.
+  With no filter set every touch is delivered, as before. The file
+  depends on nothing in the crate, and TraceDraw's tests include and run
+  it (`palm::winit_pointer_filter::tests`); TraceDraw's filter is
+  `apps/tracedraw/src/palm.rs`.
+- Change: on Windows a window's theme set by the program reaches its
+  title bar (#1920). `Window::set_theme` called only the undocumented
+  composition attribute (`WCA_USEDARKMODECOLORS`) and `SetWindowTheme`,
+  which left the caption light on Windows 11 and later Windows 10, and
+  it neither kept the theme asked for nor redrew the frame.
+  `platform_impl/windows/dark_mode.rs` (`try_theme`) now also sets the
+  documented `DWMWA_USE_IMMERSIVE_DARK_MODE` (20, or 19 before Windows 10
+  build 18985) with `DwmSetWindowAttribute` and, for a window on show,
+  redraws the frame (`SetWindowPos` with `SWP_FRAMECHANGED`) so the title
+  bar changes at once; `platform_impl/windows/window.rs` (`set_theme`)
+  keeps the theme asked for as the preferred one, so a change of the
+  system's theme (`WM_SETTINGCHANGE`) no longer puts the system's back,
+  and records the theme the window now has.
+- Change: on Windows a shortcut with Alt keeps the pointer up to date
+  over a still mouse (#1922). For a moment the system showed its arrow,
+  then the window got a `WM_MOUSELEAVE` with the pointer still over it:
+  winit sent `CursorLeft`, and egui-winit applies no pointer until the
+  next `CursorMoved`, so the pointer stayed the arrow, or the blank image
+  of a drawn pointer (invisible), until the mouse moved. Both are the
+  marks of the keyboard menu mode, which takes the mouse while it runs.
+  `platform_impl/windows/event_loop.rs` now (1) answers a
+  `WM_SYSCOMMAND` with `SC_KEYMENU` and a character other than Space
+  itself in a window without a native menu bar, so no menu mode starts
+  (Alt+Space, the window menu, and every other command still reach
+  `DefWindowProcW`), and (2) on `WM_MOUSELEAVE` reads where the pointer
+  is (`GetCursorPos`, `WindowFromPoint`): still in the client area with
+  this window under it, no `CursorLeft` is sent; the inside flag is
+  cleared all the same, so the next move enters again and asks for the
+  leave tracking anew. Both decisions are in `src/alt_shortcuts.rs`,
+  which depends on nothing in the crate; TraceDraw's tests include and
+  run it (`winit_alt_shortcuts::tests`).
+- Change: Android reports a mouse as a mouse (#2152, #2161). winit's
+  Android backend turned every pointer of a `MotionEvent` into a `Touch`
+  and dropped hover, scroll and button actions ("TODO mouse events"), so a
+  Bluetooth or USB mouse clicked like a finger with any button, its wheel
+  did nothing and nothing was hovered. In `platform_impl/android/mod.rs`
+  a motion event whose source is a mouse or whose first pointer's tool is
+  one is no longer made into touches: `src/android_mouse.rs` says what the
+  window is told (`CursorEntered`, `CursorMoved`, `MouseInput` for the
+  buttons that changed in the event's button state, `MouseWheel` in lines
+  from `AXIS_VSCROLL` and `AXIS_HSCROLL`, `CursorLeft` once a hover ended
+  and no press followed in the same batch of events). The file depends on
+  nothing in the crate, and TraceDraw's tests include and run it
+  (`winit_android_mouse::tests`).
+- Change: Android passes on the modifier keys of a hardware keyboard
+  (#2052). winit's Android backend sent no `ModifiersChanged`, so with a
+  Bluetooth or USB keyboard Shift, Ctrl and Alt never reached the app
+  (shortcuts and Shift or Ctrl drags did nothing). In
+  `platform_impl/android/mod.rs` each key event's meta state
+  (`android_activity::input::MetaState`) gives the held modifiers
+  (`modifiers_of`); when they differ from the last ones told, a
+  `ModifiersChanged` is sent before the key's `KeyboardInput`.
 - The published crate's `examples/` and `tests/` stay as downloaded (the
   manifest lists them); they build in no gate.
 - Drop the copy and the `[patch.crates-io]` entry when a winit release
-  carries pen pressure on X11 and macOS (rust-windowing/winit#99), and
+  carries pen pressure on X11 and macOS (rust-windowing/winit#99) and
+  pen input on Wayland, and
+  passes on the files macOS asks to open, and
   check that egui-winit still maps `Touch` forces the same way.
+  drag positions (winit 0.31's `DragEntered`/`DragMoved`/`DragDropped`
+  carry them: move `drop_files` onto those) and file drops on Wayland,
+  and check that egui-winit
+  still maps `Touch` forces the same way.

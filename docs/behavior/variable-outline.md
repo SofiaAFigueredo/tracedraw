@@ -1,7 +1,7 @@
 # Variable Outline tool
 
-The Variable Outline tool (its own button at the bottom of the toolbox,
-after the Fill flyout) makes an outline thicker or thinner along its
+The Variable Outline tool (its own button in the toolbox, right under
+the brush tools' flyout) makes an outline thicker or thinner along its
 length with width nodes.
 
 ## Using it
@@ -21,6 +21,11 @@ length with width nodes.
   node's reach handles (the dots at its ends) changes its reach. One undo
   step per drag (#479,
   `width_nodes_slide_along_the_path_and_their_handles_change_the_reach`).
+  On a closed path (one closed subpath: an ellipse, a rectangle, a closed
+  curve) a node slides on past the path's start and comes round, kept
+  between the nodes either side of it round the loop; the nodes keep
+  their path order and the picked ones stay picked (#1322,
+  `a_node_slides_round_a_closed_path_past_its_start`).
 - Picking several nodes: Shift+click picks the nodes from the picked one
   to the one clicked; Ctrl+click adds a node or takes it out; a plain
   click picks one alone. A drag that starts on a picked node changes
@@ -45,6 +50,19 @@ length with width nodes.
 - The ends of the path keep half the outline width on each side unless
   a node sits on them. Between neighbouring nodes `a` and `b` the reach
   eases with `s = u^2 (3 - 2u)`, `u = (t - t_a) / (t_b - t_a)`.
+  A closed path (one closed subpath) has no ends: the last node and the
+  first are neighbours across the path's start, and the reach eases
+  between them the same way (the last node a turn back before the first,
+  the first a turn on after the last) (#1322,
+  `style::tests::width_around_a_loop_eases_across_its_seam`,
+  `shaping::tests::a_closed_loops_variable_band_runs_on_across_its_seam`).
+  A single node on a loop tapers as on an open path: its reach eases to
+  half the outline width at the point half way round the loop
+  (`style::loop_anchor`) and back. When the tool adds a second node to
+  such a loop it also sets a node at that point, with that reach, so the
+  far side keeps its taper (a live test of 0.41: a single node gave the
+  whole loop its reach, so a closed object did not taper,
+  `shaping::tests::a_closed_loops_variable_band_is_a_tapering_ring`).
 - The band is built from the path flattened to 0.05 mm and cut into
   pieces no longer than 1/256 of its length (at least 0.05 mm), with
   `n = sqrt(6 dw / (8 * 0.005))` pieces (48 to 512) between
@@ -60,10 +78,29 @@ length with width nodes.
   wide as the reach at the corner, stood out where the reach falls away
   after the corner and left a notch where it met the band (#776,
   `shaping::tests::a_wide_corner_node_leaves_no_notch_inside_and_a_smooth_arc_outside`,
-  `a_reach_wider_than_the_curve_fills_its_inside`). The pieces of one
-  segment share its direction and every piece has its ends on the path
-  as corners, so the pieces and joins meet without cracks
-  (#627, `shaping::tests::a_variable_band_along_a_curve_has_no_cracks`).
+  `a_reach_wider_than_the_curve_fills_its_inside`). A bend of the
+  flattened path under 0.5 radians is part of a curve, not a corner: the
+  segments either side take the halfway normal at it and the normal
+  turns smoothly along each segment (its pieces cut finer where it turns,
+  so their far edge stays within 0.005 mm of the arc), with no join. On
+  each side a point reaches no further than where its normal meets the
+  normal of the point next to it (the curve's centre there), and a piece
+  whose own normals meet within the reach of both its ends runs out to
+  that point: a reach on the inside of a curve wider than its radius
+  fills the curve up to its centre. A reach past the centre zigzagged
+  into a staircase edge with loose slivers and stood out past the far
+  side of a loop (a live test of 0.41,
+  `shaping::tests::a_closed_loops_variable_band_is_a_tapering_ring`).
+  Across the point where a closed path closes the band runs on as
+  anywhere else: nodes either side of it, or on it, give the same reach
+  just before and just after it, with no step and no open end there
+  (`shaping::tests::a_variable_band_tapers_across_the_closing_point`,
+  `render::tests::a_variable_outline_on_an_ellipse_tapers_across_its_closing_point`).
+  Holes in the band smaller than `(0.05 r)^2` for the widest reach `r`
+  are filled. Each point of the band is worked out once and shared by
+  the pieces either side, and every piece has its ends on the path as
+  corners, so the pieces and joins meet without cracks (#627,
+  `shaping::tests::a_variable_band_along_a_curve_has_no_cracks`).
 - With "Scale with object", the reach scales with the object like the
   width.
 - On screen the page is drawn in strips on several threads, each

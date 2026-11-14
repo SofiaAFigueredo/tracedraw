@@ -15,7 +15,10 @@ sans-serif font found. Change the defaults by formatting with nothing selected.
 To make an existing object a text frame, right-click it and choose to create
 an empty text frame; see [Empty frames](../objects/clip-frames.md#empty-frames).
 [[menu.text > menu.text.insert_placeholder_text]] fills the selected frames
-with sample text, as much as fits.
+with sample text, as much as fits. It works on an empty frame you have just
+drawn too, and you can keep typing after the sample text. Right-click a
+paragraph frame, or right-click while you type in one, to find the same
+command.
 
 ## Editing text {#edit}
 
@@ -28,6 +31,7 @@ not change keep their formatting.
 | Keys | What they do |
 |---|---|
 | Typing, <kbd>Ctrl+V</kbd> | insert at the caret, replacing the selection |
+| <kbd>Ctrl+C</kbd>, <kbd>Ctrl+X</kbd>, <kbd>Ctrl+V</kbd> | copy, cut and paste the selected characters; the [[menu.edit]] menu, the toolbar and the right-click menu do the same while you edit. Pasted here, they keep their font, size and colors; other programs get their plain text |
 | <kbd>Backspace</kbd>, <kbd>Delete</kbd> | delete the selection, else the character before or after |
 | <kbd>Enter</kbd>, <kbd>Shift+Enter</kbd> | new paragraph, new line |
 | Arrow keys, with <kbd>Ctrl</kbd> | move by a character or a word; <kbd>Shift</kbd> selects |
@@ -36,7 +40,7 @@ not change keep their formatting.
 | <kbd>Ctrl+B</kbd>, <kbd>Ctrl+I</kbd>, <kbd>Ctrl+U</kbd> | bold, italic, underline |
 | <kbd>Ctrl+L</kbd>, <kbd>Ctrl+E</kbd>, <kbd>Ctrl+R</kbd> | align left, center, right |
 | <kbd>Ctrl+J</kbd>, <kbd>Ctrl+H</kbd>, <kbd>Ctrl+N</kbd> | full justify, force justify, no alignment |
-| <kbd>Shift+F3</kbd> | change case (see [Writing tools](writing-tools.md#change-case)) |
+| <kbd>Shift+F3</kbd> | change case (see [Proofing](writing-tools.md#change-case)) |
 | Double-click | select a word |
 
 A new alignment keeps artistic text in place at the reference point of the X
@@ -49,6 +53,12 @@ selected letter. Keyboards and input methods that send characters (such as
 those for Tamil and other Indian scripts on Windows) type into text and
 fields, and <kbd>Alt</kbd> codes typed on the keypad give their character
 once.
+Letters typed with <kbd>AltGr</kbd> (Polish ą ę ł, German @ € { }) type into
+text and fields, also on Windows.
+On Android the on-screen keyboard types every script its input methods
+compose (Chinese, Japanese, Korean, Tamil). Older fonts that set the letters
+of a script at the places of Latin ones (some Tamil fonts) type as their
+keyboards expect: Autocorrect does not change the letters typed in them.
 
 All your typing in one editing session is one undo step.
 
@@ -60,8 +70,9 @@ the alignment (left, center, right, full justify), bullets and drop cap for
 paragraph text, [[menu.text.text_docker]] (<kbd>Ctrl+T</kbd>) and
 [[menu.text.edit_text]]. The button beside the font size opens the sliders of
 a variable font's axes (see [Variable fonts](fonts.md#variable-fonts)). While editing, they act on the selected characters;
-otherwise on the whole selected texts. Your choice also becomes the default
-for the next text.
+otherwise on the whole selected texts, and only the setting you change: a new
+font for several texts keeps each one's size, bold and italic. Your choice
+also becomes the default for the next text.
 
 The font list shows each family in its own font, with the ones you used last
 at the top. Type to narrow the list. A family with several styles has an arrow
@@ -112,9 +123,18 @@ drawn, printed or exported. To make it fit:
   to resize the text to fill the frame;
 - link the frame to another one, so the text flows on:
   [[menu.text.frame_link]]. [[menu.text.frame_unlink]] breaks the link.
+  With two frames picked, the first flows into the second; an empty frame
+  always takes the text that does not fit in the other one, whichever you
+  picked first.
   Or click the small tab under the frame's bottom edge, then click another
   frame (on this page or another one) or click or drag on an empty spot
-  for a new frame: the text flows on into it.
+  for a new frame: the text flows on into it. You can also drag from the
+  tab and let go over another frame or an empty spot.
+- a picked frame also has a small tab over its top edge: click it, then
+  click the frame whose text should flow into this one, or click an empty
+  spot for a new frame that the text starts in. The top tab shows two
+  links when text flows in, and the bottom tab when the text flows on;
+  while you choose, a dashed line runs from the tab to the pointer.
 
 [[menu.text > menu.text.show_text_frames]] shows or hides the frames.
 

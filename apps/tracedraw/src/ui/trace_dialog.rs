@@ -1,4 +1,4 @@
-//! Bitmaps > Trace Bitmap: a window the user sizes, with the picture and
+//! Image > Trace Bitmap: a window the user sizes, with the picture and
 //! its trace large at the left (the shared Before and After preview of
 //! `before_after.rs`, with the wireframe over the picture as a view of
 //! its own; zoom and pan), the counts of the trace under them, and the
@@ -11,7 +11,7 @@ use crate::i18n::{tr, trf};
 use crate::theme::Tokens;
 use crate::trace::{ColorMode, Preset, Remove, Settings};
 use crate::trace_preview::Request;
-use crate::ui::before_after::{self, icon_button, mark, Pictures, View, ViewState};
+use crate::ui::before_after::{self, mark, Pictures, View, ViewState};
 use crate::ui::bitmap_preview::{copy_of, selected_bitmap, settings_key, Source};
 use crate::ui::tips::RichTip;
 use egui::{Context, Pos2, Rect, Sense, Stroke, Ui, Vec2};
@@ -121,13 +121,15 @@ impl TraceState {
     }
 }
 
-/// The views the Trace dialog offers: the shared ones and the wireframe
-/// over the picture.
+/// The views the Trace dialog offers: Before and After (stacked, and side
+/// by side), Before, Large Preview (the trace alone, taking the whole
+/// preview) and Wireframe Overlay (the curves over the picture, which
+/// shows through at the Overlay slider's strength).
 pub const VIEWS: [View; 5] = [
     View::Stacked,
     View::SideBySide,
     View::Before,
-    View::After,
+    View::Large,
     View::Overlay,
 ];
 
@@ -141,13 +143,16 @@ fn slider(ui: &mut Ui, name: &'static str, key: &str, v: &mut f64) {
     crate::ui::tips::tip_over(ui, crate::ui::tips::keyed(key), |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(100.0);
-            let resp = ui.add(crate::ui::Rail(
+            let mut resp = ui.add(crate::ui::Rail(
                 egui::Slider::new(v, 0.0..=100.0)
                     .show_value(true)
                     .step_by(1.0)
                     .max_decimals(0)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.4 }),
             ));
+            // The wheel on hover steps it by one, as the other sliders
+            // (#1335).
+            crate::ui::slider::wheel_on_hover(ui, &mut resp, v, 0.0..=100.0, 1.0);
             let rail = Rect::from_min_size(
                 resp.rect.left_top(),
                 Vec2::new(ui.spacing().slider_width, resp.rect.height()),
@@ -178,7 +183,7 @@ fn combo<T: PartialEq + Copy>(
     name: impl Fn(T) -> String,
 ) -> bool {
     let mut changed = false;
-    let resp = egui::ComboBox::from_id_salt(id)
+    let resp = crate::ui::keynav::ComboBox::from_id_salt(id)
         .selected_text(name(*value))
         .width(width)
         .show_ui(ui, |ui| {
@@ -202,7 +207,23 @@ pub fn trace_dialog(app: &mut App, ctx: &Context, st: &mut TraceState, close: &m
     let mut ok = false;
     let mut help = false;
     let mut options = false;
+    let mut best = false;
     let dragging = ctx.input(|i| i.pointer.any_down());
+    // Best optimization's settings, once found: the detail it chose, as
+    // a step of its own the arrows undo. Only while the picture and the
+    // settings are still the ones it searched for: a detail found for
+    // other settings (another image type, a detail set by hand, Reset or
+    // a step undone meanwhile) would undo what the user did since.
+    if let Some(found) = app.trace_live.optimized() {
+        let same = selected_bitmap(app).is_some_and(|(shape, _, _)| shape == found.shape)
+            && found.from == st.settings;
+        if same {
+            st.settings.detail = found.best.detail;
+            st.settings.optimize = false;
+        }
+    }
+    let optimizing = app.trace_live.optimizing();
+    let can_optimize = !st.settings.centerline && selected_bitmap(app).is_some();
     super::dialogs::window(ctx, tr("dialog.trace"))
         .resizable(DEFAULT_SIZE, MIN_SIZE)
         .show(ctx, |ui| {
@@ -220,7 +241,23 @@ pub fn trace_dialog(app: &mut App, ctx: &Context, st: &mut TraceState, close: &m
                     .rich_tip(crate::ui::tips::keyed("dialog.trace_options"));
                 mark(ui, "options", r.rect);
                 options = r.clicked();
-                ok = super::dialogs::ok_cancel(ui, close);
+                let label = if optimizing {
+                    tr("dialog.trace_optimizing")
+                } else {
+                    tr("dialog.trace_optimize")
+                };
+                let r = ui
+                    .add_enabled(
+                        can_optimize && !optimizing,
+                        egui::Button::new(label).min_size(Vec2::new(140.0, 27.0)),
+                    )
+                    .rich_tip(crate::ui::tips::keyed("dialog.trace_optimize"));
+                mark(ui, "optimize", r.rect);
+                best = r.clicked();
+                if optimizing {
+                    ui.spinner();
+                }
+                ok = super::dialogs::ok_cancel_at_right(ui, close);
             });
         });
     // Settings the user changes (not a slider mid-drag) are steps the
@@ -234,6 +271,7 @@ pub fn trace_dialog(app: &mut App, ctx: &Context, st: &mut TraceState, close: &m
             a.colors,
             a.mode,
             a.centerline,
+            a.optimize,
         ) != (
             b.detail,
             b.smoothing,
@@ -241,6 +279,7 @@ pub fn trace_dialog(app: &mut App, ctx: &Context, st: &mut TraceState, close: &m
             b.colors,
             b.mode,
             b.centerline,
+            b.optimize,
         )
     };
     let arrowed = st.cursor != cursor;
@@ -253,6 +292,20 @@ pub fn trace_dialog(app: &mut App, ctx: &Context, st: &mut TraceState, close: &m
     // keeps the steps to redo.
     if !dragging && !arrowed {
         st.commit();
+    }
+    // Enter on the focused Best optimization button presses it, not OK
+    // too: the dialog stays open for the search.
+    if best && ok {
+        ok = false;
+        *close = false;
+    }
+    if best && can_optimize {
+        if let Some((shape, _, png)) = selected_bitmap(app) {
+            if let Some(image) = app.trace_live.image(shape, &png) {
+                app.trace_live
+                    .optimize(ctx, shape, image, st.settings.clone());
+            }
+        }
     }
     if help {
         app.open_dialog_help();
@@ -365,6 +418,14 @@ fn preview_column(app: &mut App, ui: &mut Ui, st: &mut TraceState, dragging: boo
                 format!("{text} \u{2026}")
             };
             ui.label(text);
+            // Where the quick look is all the preview shows (the browser,
+            // a large picture), say so: the trace placed on OK is the
+            // whole picture's, finer than the preview.
+            if s.done && s.stage == crate::trace_preview::Stage::Quick {
+                let red = ui.visuals().error_fg_color;
+                ui.label(egui::RichText::new(tr("dialog.trace_reduced_preview")).color(red))
+                    .rich_tip(crate::ui::tips::keyed("dialog.trace_reduced_preview"));
+            }
         }
         None => {
             ui.label(tr("dialog.trace_tracing"));
@@ -396,60 +457,30 @@ fn settings_column(app: &mut App, ui: &mut Ui, st: &mut TraceState) {
             Vec2::new(80.0, 26.0),
         ),
     );
-    let body_h = (ui.available_height() - 40.0).max(100.0);
-    egui::Frame::new()
-        .fill(Tokens::field())
-        .stroke(Stroke::new(1.0, Tokens::border()))
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(RIGHT_W - 22.0, body_h));
-            ui.set_max_height(body_h);
-            egui::ScrollArea::vertical()
-                .id_salt("trace_settings_scroll")
-                .max_height(body_h - 20.0)
-                .show(ui, |ui| {
-                    ui.set_width(RIGHT_W - 42.0);
-                    if st.tab == 0 {
-                        settings_tab(app, ui, st);
-                    } else {
-                        colors_tab(app, ui, st);
-                    }
-                });
-        });
-    ui.horizontal(|ui| {
-        let r = ui
-            .add_sized([80.0, 26.0], egui::Button::new(tr("dialog.reset")))
-            .rich_tip(crate::ui::tips::pair(
-                "dialog.reset",
-                "dialog.trace_reset_desc",
-            ));
-        mark(ui, "reset", r.rect);
-        if r.clicked() {
-            st.reset(&app.settings.tracing);
-        }
-        let undo = icon_button(
-            ui,
-            &crate::ui::tips::pair("menu.edit.undo", "dialog.trace_undo_desc"),
-            false,
-            st.can_undo(),
-            |p, r, c| crate::ui::icons::draw_action(p, r, crate::ui::icons::Action::Undo, c),
-        );
-        mark(ui, "undo", undo.rect);
-        if undo.clicked() {
-            st.undo();
-        }
-        let redo = icon_button(
-            ui,
-            &crate::ui::tips::pair("menu.edit.redo", "dialog.trace_redo_desc"),
-            false,
-            st.can_redo(),
-            |p, r, c| crate::ui::icons::draw_action(p, r, crate::ui::icons::Action::Redo, c),
-        );
-        mark(ui, "redo", redo.rect);
-        if redo.clicked() {
-            st.redo();
+    before_after::panel(ui, "trace_settings_scroll", before_after::STEPS_H, |ui| {
+        if st.tab == 0 {
+            settings_tab(app, ui, st);
+        } else {
+            colors_tab(app, ui, st);
         }
     });
+    // The history is the dialog's own (a step keeps the Colors tab's
+    // merges and edits, see `trace_dialog`): the shared row only draws.
+    let steps = before_after::steps_row(
+        ui,
+        st.can_undo(),
+        st.can_redo(),
+        &crate::ui::tips::pair("dialog.reset", "dialog.trace_reset_desc"),
+    );
+    if steps.reset {
+        st.reset(&app.settings.tracing);
+    }
+    if steps.undo {
+        st.undo();
+    }
+    if steps.redo {
+        st.redo();
+    }
 }
 
 fn preset_name(p: Preset) -> String {
@@ -505,22 +536,38 @@ fn settings_tab(app: &mut App, ui: &mut Ui, st: &mut TraceState) {
             );
             ui.end_row();
         });
-    ui.add_space(6.0);
-    slider(ui, "detail", "dialog.detail", &mut st.settings.detail);
+    before_after::rule(ui);
+    // The Optimized image type chooses the detail for each picture: the
+    // slider is greyed (Best optimization puts the detail it finds in).
+    ui.add_enabled_ui(!st.settings.optimize, |ui| {
+        slider(ui, "detail", "dialog.detail", &mut st.settings.detail);
+    });
+    if st.settings.optimize && !st.settings.centerline {
+        ui.label(
+            egui::RichText::new(tr("dialog.trace_detail_chosen"))
+                .color(Tokens::text_dim())
+                .size(11.0),
+        );
+    }
     slider(
         ui,
         "smoothing",
         "dialog.smoothing",
         &mut st.settings.smoothing,
     );
-    slider(
-        ui,
-        "corner",
-        "dialog.corner_smoothness",
-        &mut st.settings.corner_smoothness,
-    );
-    if !st.settings.centerline {
-        ui.separator();
+    // A centreline trace reads the detail and the smoothing only: the
+    // other controls are shown greyed, as they do not apply.
+    let outline = !st.settings.centerline;
+    ui.add_enabled_ui(outline, |ui| {
+        slider(
+            ui,
+            "corner",
+            "dialog.corner_smoothness",
+            &mut st.settings.corner_smoothness,
+        );
+    });
+    before_after::rule(ui);
+    ui.add_enabled_ui(outline, |ui| {
         ui.horizontal(|ui| {
             ui.label(tr("dialog.trace_remove"));
             crate::ui::tips::tip_over(ui, crate::ui::tips::keyed("dialog.trace_remove"), |ui| {
@@ -587,8 +634,10 @@ fn settings_tab(app: &mut App, ui: &mut Ui, st: &mut TraceState) {
                 });
             }
         }
-        ui.separator();
-        ui.label(tr("dialog.trace_objects"));
+    });
+    before_after::rule(ui);
+    ui.label(tr("dialog.trace_objects"));
+    ui.add_enabled_ui(outline, |ui| {
         let r = ui
             .checkbox(
                 &mut st.settings.merge_adjacent,
@@ -603,6 +652,10 @@ fn settings_tab(app: &mut App, ui: &mut Ui, st: &mut TraceState) {
             )
             .rich_tip(crate::ui::tips::keyed("dialog.trace_remove_overlap"));
         mark(ui, "remove_overlap", r.rect);
+    });
+    // With every region of a colour one curve, a group per colour would
+    // hold one curve: the box is greyed and the grouping left out.
+    ui.add_enabled_ui(outline && !st.settings.merge_adjacent, |ui| {
         let r = ui
             .checkbox(
                 &mut st.settings.group_by_color,
@@ -610,8 +663,8 @@ fn settings_tab(app: &mut App, ui: &mut Ui, st: &mut TraceState) {
             )
             .rich_tip(crate::ui::tips::keyed("dialog.trace_group_by_color"));
         mark(ui, "group_by_color", r.rect);
-    }
-    ui.separator();
+    });
+    before_after::rule(ui);
     ui.label(tr("dialog.trace_image"));
     let r = ui
         .checkbox(

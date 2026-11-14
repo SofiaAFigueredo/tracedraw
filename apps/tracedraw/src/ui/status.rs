@@ -48,9 +48,20 @@ impl StatusInfo {
     }
 }
 
-/// The active tool's hint; the Pick tool's depends on the selection.
+/// The active tool's hint; the Pick tool's depends on the selection. The
+/// shaping brushes add how their nib is sized, with the wheel's key of
+/// the wheel setting (see `brushes::wheel_resizes`).
 pub fn tool_hint(app: &App) -> String {
-    tool_hint_for(app.tool, app.selection.is_empty())
+    let hint = tool_hint_for(app.tool, app.selection.is_empty());
+    if !app.tool.is_shaping_brush() {
+        return hint;
+    }
+    let size = tr(if app.settings.wheel_zooms {
+        "status_hint.brush_size"
+    } else {
+        "status_hint.brush_size_alt"
+    });
+    format!("{hint} · {size}")
 }
 
 /// A tool's hint, with or without a selection.
@@ -64,7 +75,19 @@ pub fn tool_hint_for(tool: Tool, nothing_selected: bool) -> String {
 /// "Rectangle on Layer 1", "3 Objects Selected on Layer 1", and with the
 /// Shape tool "Curve: 17 Nodes". Empty with nothing selected.
 pub fn object_info(app: &App) -> String {
-    if app.text_edit.is_some() {
+    if let Some(te) = &app.text_edit {
+        // Typing in a linked text changes the texts linked with it (#1568).
+        let doc = app.doc();
+        if doc
+            .find_shape(te.shape)
+            .and_then(tracedraw_core::linked_text::link_of)
+            .is_some()
+        {
+            let n = doc.content_linked_with(te.shape).len();
+            if n > 0 {
+                return trf("status.editing_linked_text", &[("n", &n.to_string())]);
+            }
+        }
         return tr("status.editing_text");
     }
     let shapes = app.selected_rc();
@@ -95,13 +118,14 @@ pub fn object_info(app: &App) -> String {
                     _ => None,
                 };
                 if let Some(key) = hint {
-                    return tr(key);
+                    return crate::shortcuts::shown_in(tr(key));
                 }
             }
             let mut kind = match &s.kind {
                 ShapeKind::Path { .. } => tr("kind.curve"),
-                // A bitmap with its colour mode (#1254).
-                k @ ShapeKind::Bitmap { .. } => trf(
+                // A bitmap with its colour mode (#1254); a grayscale PNG
+                // is a grayscale picture (#1777).
+                k @ ShapeKind::Bitmap { png, .. } => trf(
                     "status.bitmap_mode",
                     &[
                         ("k", &kind_name(k)),
@@ -109,6 +133,8 @@ pub fn object_info(app: &App) -> String {
                             "mode",
                             &tr(if s.cmyk_bitmap {
                                 "convert_colors.cmyk"
+                            } else if crate::bitmap_fx::png_is_gray(png) {
+                                "convert_colors.gray"
                             } else {
                                 "convert_colors.rgb"
                             }),
@@ -119,6 +145,15 @@ pub fn object_info(app: &App) -> String {
             };
             if app.is_effect_clone(s.id) {
                 kind = format!("{kind} ({})", tr("status.effect_clone"));
+            }
+            if tracedraw_core::linked_text::link_of(s).is_some() {
+                let n = app.doc().content_linked_with(s.id).len();
+                if n > 0 {
+                    kind = trf(
+                        "status.content_linked_kind",
+                        &[("k", &kind), ("n", &n.to_string())],
+                    );
+                }
             }
             if app.doc().is_nested(s.id) {
                 kind = trf("status.in_group", &[("k", &kind)]);
@@ -292,7 +327,11 @@ fn outline_text(app: &App, stroke: &Option<tracedraw_core::Stroke>) -> String {
                 let decimals = if u == crate::app::Units::Pixels { 2 } else { 3 };
                 format!("{:.*} {}", decimals, u.from_mm(s.width), u.short())
             };
-            format!("{}  {}", crate::app::color_description(s.color), width)
+            format!(
+                "{}  {}",
+                crate::app::color_description_in(app.doc(), s.color),
+                width
+            )
         }
     }
 }
@@ -385,7 +424,7 @@ pub fn status_bar(app: &mut App, ui: &mut Ui) {
             if fill_mixed {
                 tr("docker.mixed")
             } else {
-                crate::app::fill_description(&fill)
+                crate::app::fill_description_in(app.doc(), &fill)
             },
             if fill_mixed {
                 None
@@ -866,6 +905,27 @@ mod tests {
         }
     }
 
+    /// The hints share one style: parts joined by " · ", no "Dbl-click"
+    /// abbreviation, no semicolons, no trailing full stop.
+    #[test]
+    fn hints_share_one_style() {
+        crate::i18n::set_language("en");
+        let mut keys: Vec<String> = Tool::ALL
+            .iter()
+            .map(|t| format!("status_hint.{}", t.id()))
+            .collect();
+        keys.push("status_hint.pick_selected".into());
+        for key in keys {
+            let hint = tr(&key);
+            assert!(!hint.contains(';'), "{key}: {hint}");
+            assert!(!hint.to_lowercase().contains("dbl"), "{key}: {hint}");
+            assert!(!hint.ends_with('.'), "{key}: {hint}");
+            assert!(hint.chars().next().is_some_and(char::is_uppercase), "{key}");
+        }
+        assert!(tool_hint_for(Tool::Pick, true).contains(" · "));
+        assert!(tool_hint_for(Tool::Pick, false).contains("again"));
+    }
+
     #[test]
     fn object_information_names_the_object_and_its_layer() {
         crate::i18n::set_language("en");
@@ -921,7 +981,7 @@ mod tests {
         });
         assert_eq!(object_info(&app), "Bitmap 1 x 1 px (CMYK) on Layer 1");
         app.select(vec![a, b]);
-        assert!(tool_hint(&app).contains("twice"));
+        assert!(tool_hint(&app).contains("again"));
     }
 
     #[test]

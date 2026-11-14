@@ -6,9 +6,12 @@ use std::time::Instant;
 use objc2::rc::Retained;
 use objc2::{declare_class, msg_send_id, mutability, ClassType, DeclaredClass};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSRunningApplication,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
+    NSApplicationTerminateReply, NSRunningApplication,
 };
-use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol};
+use objc2_foundation::{
+    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSURL,
+};
 
 use super::event_handler::EventHandler;
 use super::event_loop::{notify_windows_of_exit, stop_app_immediately, ActiveEventLoop, PanicInfo};
@@ -66,9 +69,38 @@ declare_class!(
             self.did_finish_launching(notification)
         }
 
+        // TraceDraw: the Quit item of the application menu (Command+Q),
+        // the Dock icon's Quit, a log-out or shut-down all send
+        // `terminate:`, which asks here first. Without this method AppKit
+        // terminates at once and no window hears of it; the program's
+        // handler may take the quit over and ask about unsaved work
+        // (vendor/README.md).
+        #[method(applicationShouldTerminate:)]
+        fn app_should_terminate(&self, _sender: &NSApplication) -> NSApplicationTerminateReply {
+            if crate::quit_request::program_takes_it() {
+                NSApplicationTerminateReply::NSTerminateCancel
+            } else {
+                NSApplicationTerminateReply::NSTerminateNow
+            }
+        }
+
         #[method(applicationWillTerminate:)]
         fn app_will_terminate(&self, notification: &NSNotification) {
             self.will_terminate(notification)
+        }
+
+        // TraceDraw: files opened from Finder (double click, Open With,
+        // dropped on the Dock icon) arrive here, at launch and while the
+        // program runs, never on the command line (vendor/README.md).
+        #[method(application:openURLs:)]
+        fn app_open_urls(&self, _application: &NSApplication, urls: &NSArray<NSURL>) {
+            let files = urls
+                .iter()
+                .filter(|url| unsafe { url.isFileURL() })
+                .filter_map(|url| unsafe { url.path() })
+                .map(|path| std::path::PathBuf::from(path.to_string()))
+                .collect();
+            crate::opened_files::deliver(files);
         }
     }
 );

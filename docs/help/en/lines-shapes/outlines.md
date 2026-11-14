@@ -55,6 +55,8 @@ section of the [[docker.properties]] panel.
 
 To turn an outline into an object you can fill, choose
 [[menu.object > menu.object.convert_outline_to_object]] (<kbd>Ctrl+Shift+Q</kbd>).
+Curves stay curves: the new object has about as many nodes as the path the
+outline was drawn along, and round ends and corners become arcs.
 The settings of new objects are explained in
 [Object styles and defaults](../templates-styles/object-styles.md#document-defaults).
 
@@ -66,8 +68,9 @@ The [[tool.outline_color]] tool (<kbd>Shift+F12</kbd>) opens the
 
 ## Variable Outline {#variable-outline}
 
-The [[tool.variable_outline]] tool, in the Shape flyout, makes an outline
-thicker or thinner along its length with width nodes.
+The [[tool.variable_outline]] tool, whose button sits under the brush
+tools in the toolbox, makes an outline thicker or thinner along its length
+with width nodes.
 
 1. Select an object with an outline, such as a curve, a rectangle or an
    ellipse. An object with no outline gets a thin one.

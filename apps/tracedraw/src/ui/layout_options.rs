@@ -1,5 +1,5 @@
 //! Rulers, grids and guidelines: the Rulers, Grid and Guidelines pages of
-//! Document Options and the Guidelines docker. Every document change goes
+//! Document Setup and the Guidelines docker. Every document change goes
 //! through a command (SetMetadata for the settings, the guideline commands
 //! for guidelines).
 
@@ -90,7 +90,7 @@ impl GuideForm {
     }
 }
 
-/// The presets of Document Options > Guidelines > Presets.
+/// The presets of Document Setup > Guidelines > Presets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NamedPreset {
     OneInchMargins,
@@ -328,7 +328,7 @@ fn unit_field(
 
 fn units_combo(ui: &mut Ui, id: &str, units: &mut Units) -> bool {
     let mut changed = false;
-    egui::ComboBox::from_id_salt(id)
+    crate::ui::keynav::ComboBox::from_id_salt(id)
         .selected_text(units.label())
         .width(160.0)
         .show_ui(ui, |ui| {
@@ -358,7 +358,7 @@ fn section(ui: &mut Ui, key: &str) {
     ui.separator();
 }
 
-/// Document Options > Rulers.
+/// Document Setup > Rulers.
 pub fn rulers_page(app: &mut App, ui: &mut Ui) {
     let mut meta = app.doc().metadata.clone();
     let units = app.units;
@@ -489,7 +489,7 @@ pub fn rulers_page(app: &mut App, ui: &mut Ui) {
     set_metadata(app, meta);
 }
 
-/// Document Options > Rulers > Drawing scale: the typical scales, then the
+/// Document Setup > Rulers > Drawing scale: the typical scales, then the
 /// page distance and the world distance it stands for, each with its unit.
 /// The world unit becomes the ruler unit.
 fn drawing_scale_fields(app: &mut App, ui: &mut Ui, meta: &mut Metadata) {
@@ -507,7 +507,7 @@ fn drawing_scale_fields(app: &mut App, ui: &mut Ui, meta: &mut Metadata) {
                 .map(|p| p.label.to_string())
                 .unwrap_or_else(|| tr("options.scale_custom"));
             let mut pick = None;
-            egui::ComboBox::from_id_salt("typical_scales")
+            crate::ui::keynav::ComboBox::from_id_salt("typical_scales")
                 .selected_text(shown)
                 .width(160.0)
                 .height(320.0)
@@ -609,7 +609,7 @@ fn drawing_scale_fields(app: &mut App, ui: &mut Ui, meta: &mut Metadata) {
     }
 }
 
-/// Document Options > Grid.
+/// Document Setup > Grid.
 pub fn grid_page(app: &mut App, ui: &mut Ui) {
     let mut meta = app.doc().metadata.clone();
     let units = app.units;
@@ -671,7 +671,7 @@ pub fn grid_page(app: &mut App, ui: &mut Ui) {
                 let spacing = crate::i18n::trf("options.grid_spacing_of", &[("u", &units.label())]);
                 let frequency =
                     crate::i18n::trf("options.grid_frequency_of", &[("u", &units.label())]);
-                egui::ComboBox::from_id_salt(salt)
+                crate::ui::keynav::ComboBox::from_id_salt(salt)
                     .selected_text(if app.grid_frequency {
                         frequency.clone()
                     } else {
@@ -814,7 +814,7 @@ pub fn grid_page(app: &mut App, ui: &mut Ui) {
     set_metadata(app, meta);
 }
 
-/// Document Options > Guidelines: visibility, snapping, default colours,
+/// Document Setup > Guidelines: visibility, snapping, default colours,
 /// presets, and every guideline of the page.
 pub fn guidelines_page(app: &mut App, ui: &mut Ui) {
     let mut meta = app.doc().metadata.clone();
@@ -1154,7 +1154,7 @@ pub fn guidelines_docker(app: &mut App, ui: &mut Ui) {
     let mut moved = false;
     ui.horizontal(|ui| {
         ui.label(tr("guides.type"));
-        egui::ComboBox::from_id_salt("guide_type")
+        crate::ui::keynav::ComboBox::from_id_salt("guide_type")
             .selected_text(tr(form.kind.key()))
             .width(140.0)
             .show_ui(ui, |ui| {
@@ -1330,13 +1330,7 @@ pub fn guidelines_docker(app: &mut App, ui: &mut Ui) {
             );
             if let Some(c) = picked {
                 if any {
-                    let mut gs = guides.clone();
-                    for i in &app.selected_guides {
-                        if let Some(g) = gs.get_mut(*i) {
-                            g.color = Some(c);
-                        }
-                    }
-                    app.set_guides(gs, "Guideline Color");
+                    app.edit_selected_guides("Guideline Color", |g| g.color = Some(c));
                 } else {
                     let mut meta = app.doc().metadata.clone();
                     meta.guides.color = c;
@@ -1347,19 +1341,13 @@ pub fn guidelines_docker(app: &mut App, ui: &mut Ui) {
             row_label(ui, "guides.style");
             let style = first.map(|g| g.style).unwrap_or_default();
             ui.add_enabled_ui(any, |ui| {
-                egui::ComboBox::from_id_salt("guide_style")
+                crate::ui::keynav::ComboBox::from_id_salt("guide_style")
                     .selected_text(tr(style_key(style)))
                     .width(120.0)
                     .show_ui(ui, |ui| {
                         for s in GuideStyle::ALL {
                             if ui.selectable_label(s == style, tr(style_key(s))).clicked() {
-                                let mut gs = guides.clone();
-                                for i in &app.selected_guides {
-                                    if let Some(g) = gs.get_mut(*i) {
-                                        g.style = s;
-                                    }
-                                }
-                                app.set_guides(gs, "Guideline Style");
+                                app.edit_selected_guides("Guideline Style", |g| g.style = s);
                             }
                         }
                     })

@@ -17,6 +17,9 @@ The [[docker.fonts]] panel lists the font families.
   drawing is marked [[docker.embedded]].
 - Click a family to give it to the selected text, or to make it the font of
   new text.
+- Bold, italic and alignment given to a selected text change that text
+  only. To make them the default of new text, set them with nothing
+  selected.
 
 ## Font lists and the filter {#font-list}
 
@@ -48,7 +51,9 @@ The font lists of the property bar, the [[docker.text]] panel, the
     swashes, alternates and stylistic sets, each on its own.
   - **Embedding rights**: installable, editable, preview and print,
     restricted, bitmap only.
-  - **Folders**: the folders the installed fonts are in.
+  - **Folders**: the folders the fonts are in, as the Font Manager lists
+    them: each folder you added to the libraries and the system's font
+    folders, not their subfolders.
 
   Within a section a family needs one of the ticked choices (every ticked
   one for the OpenType features), and it needs what every section asks. The
@@ -118,6 +123,10 @@ Hover a character to see its name and code. A small arrow under a character
 means the font has alternates for it (such as swashes or small capitals);
 click it to see them. The glyphs you used last are at the top of the panel.
 
+Under the grid, drag the slider to make the characters larger or smaller,
+and click [[menu.edit.copy]] to put the character you clicked last on the
+clipboard, to paste it in another program.
+
 Type in the search field above the grid to find characters: type the
 characters themselves (such as `é`), or a Unicode code point such as `U+20AC`,
 `0x20ac` or `20AC`. The line above the grid shows the code point, the character
@@ -148,7 +157,9 @@ To use the Font Manager:
   levels down). Its fonts can be used in drawings at once and at every start
   while the folder is in the libraries, without installing them one by one;
   removing the folder takes them out again (fonts installed on their own
-  stay). **Add font** installs one file at once.
+  stay). In the browser and on Android, where no folder can be read, it
+  lets you choose several font files at once instead. **Add font** installs
+  one file at once.
 - **Install** makes the picked fonts available in TraceDraw, now and at every
   start. **Uninstall** removes them; the system's own fonts are protected.
 - **Add to collection** and **Remove from collection** organize fonts; drag

@@ -9,7 +9,7 @@ da versão para computador, com os mesmos menus, ferramentas e arquivos.
 
 ## Instalar a versão para navegador como app {#install}
 
-A [versão para navegador](https://igtoth.github.io/tracedraw/) pode ser
+A [versão para navegador](https://tracedraw.github.io/tracedraw/) pode ser
 instalada pelo navegador. Ela então abre em tela cheia com o ícone do
 TraceDraw, sem a barra de endereço e as guias do navegador, em qualquer
 orientação, e evita o entalhe ou os cantos arredondados da tela.
@@ -18,7 +18,9 @@ orientação, e evita o entalhe ou os cantos arredondados da tela.
   o menu do navegador e **Instalar app** ou **Adicionar à tela inicial**. O
   Chrome também pode oferecer isso numa barra abaixo da barra de endereço.
 - **iPad** (Safari): abra a página, toque em **Compartilhar** e depois em
-  **Adicionar à Tela de Início**.
+  **Adicionar à Tela de Início**. No iPad e no iPhone, como num tablet Android, as caixas
+  Abrir e Importar mostram todos os arquivos, porque o sistema deixaria os
+  arquivos `.cdr` cinza; escolha um desenho que o TraceDraw abre.
 - **Computador** (Chrome, Edge): clique no ícone de instalar na ponta direita
   da barra de endereço, ou escolha **Instalar TraceDraw** no menu do
   navegador.
@@ -72,3 +74,12 @@ mover. No espaço de trabalho [[menu.window.workspace_touch]], dois dedos
 movem a vista e a pinça aproxima. Para a pressão da caneta em sistemas de
 computador, veja
 [Desenhar com uma mesa digitalizadora](../lines-shapes/pen-pressure.md).
+Toque o desenho com dois dedos juntos para desfazer, com três para refazer;
+uma pinça ou um arrasto da vista, que se movem, não fazem nenhum dos dois.
+
+Shift, Ctrl, Alt e Delete flutuam sobre o canto inferior esquerdo do desenho:
+um toque em Shift, Ctrl ou Alt mantém essa tecla pressionada até você tocar
+nela de novo (ela aparece pressionada enquanto isso), assim um toque
+acrescenta à seleção com Shift, e Delete exclui o que está selecionado.
+[[options.touch_keys]] na página Exibição das opções mostra ou esconde as
+teclas.

@@ -36,13 +36,17 @@ pub struct ColorDockerState {
     pub hue: f32,
     /// The palette the palette view shows (index into `App::palettes`).
     pub palette: usize,
-    /// The selection the new color was last taken from.
-    synced: Option<Vec<ShapeId>>,
+    /// The selection the new color was last taken from, with the fill it
+    /// had then (a fill changed, as by Convert Colors, is taken again).
+    synced: Option<(Vec<ShapeId>, Option<Color>)>,
     /// Spot colours: the tint they are applied at (percent; the inks'
     /// Fill and Outline, a spot swatch of the palette view) and the name
     /// a new ink gets.
     pub tint: f32,
     pub new_ink: String,
+    /// The ink whose name is being typed over, and the name as typed
+    /// (#2187); it is given on Enter or when the field is left.
+    pub ink_rename: Option<(u32, String)>,
     /// Fill and outline locked together: Fill and Outline each give the
     /// selection the new colour as both, in one step.
     pub lock: bool,
@@ -57,6 +61,7 @@ impl Default for ColorDockerState {
             synced: None,
             tint: 100.0,
             new_ink: String::new(),
+            ink_rename: None,
             lock: false,
         }
     }
@@ -70,13 +75,28 @@ fn selected_fill(app: &App) -> Option<Color> {
     })
 }
 
-/// Take the new color from the selection when the selection changed.
+/// Take the new color from the selection when the selection changed, or
+/// when its fill went to another colour model (Tools > Convert Colors). A
+/// CMYK or RGB fill brings the sliders to its own model, so a fill
+/// converted to RGB shows RGB values, not the CMYK ones of the model the
+/// sliders were in (#1254). A fill changed within its model (a colour
+/// applied, an undo) leaves the new colour as it is.
 fn follow_selection(app: &mut App) {
-    if app.color_docker.synced.as_deref() == Some(app.selection.as_slice()) {
+    let fill = selected_fill(app);
+    let same = app.color_docker.synced.as_ref().is_some_and(|(sel, f)| {
+        sel.as_slice() == app.selection.as_slice()
+            && f.map(|c| c.model_name()) == fill.map(|c| c.model_name())
+    });
+    app.color_docker.synced = Some((app.selection.clone(), fill));
+    if same {
         return;
     }
-    app.color_docker.synced = Some(app.selection.clone());
-    if let Some(c) = selected_fill(app) {
+    if let Some(c) = fill {
+        if matches!(c, Color::Cmyk { .. } | Color::Rgb { .. }) {
+            if let Some(m) = MODELS.iter().position(|m| *m == c.model_name()) {
+                app.color_model = m;
+            }
+        }
         set_color(app, c);
     }
 }
@@ -519,7 +539,7 @@ fn slider(
         // The rail goes under the slider: its shape is set once the
         // slider says where it is.
         let rail = ui.painter().add(Shape::Noop);
-        let resp = ui
+        let mut resp = ui
             .scope(|ui| {
                 ui.spacing_mut().slider_width = width;
                 ui.spacing_mut().slider_rail_height = RAIL_HEIGHT;
@@ -530,8 +550,10 @@ fn slider(
                         .max_decimals(1),
                 )
             })
-            .inner
-            .rich_tip(crate::ui::tips::pair(name, "color.channel_desc"));
+            .inner;
+        // The wheel on hover steps it by one, as the other sliders (#1335).
+        crate::ui::slider::wheel_on_hover(ui, &mut resp, &mut x, range.clone(), 1.0);
+        let resp = resp.rich_tip(crate::ui::tips::pair(name, "color.channel_desc"));
         let colors = rail_colors(
             ui,
             resp.id,
@@ -871,7 +893,7 @@ fn top_row(app: &mut App, ui: &mut Ui) {
         let gear = 28.0;
         let model = MODELS.get(app.color_model).copied().unwrap_or("CMYK");
         let width = (ui.available_width() - gear - 10.0).clamp(80.0, 240.0);
-        egui::ComboBox::from_id_salt("col_model")
+        crate::ui::keynav::ComboBox::from_id_salt("col_model")
             .selected_text(model)
             .width(width)
             .show_ui(ui, |ui| {
@@ -979,11 +1001,25 @@ pub fn color(app: &mut App, ui: &mut Ui) {
 /// The text of the button that drops the other actions.
 pub(crate) const MORE_ACTIONS: &str = "...";
 
-/// A small frameless text button; `enabled` or pale.
+/// The strip's eyedropper button: the Color Eyedropper tool's own icon,
+/// as in the toolbox (it showed the outline pen's picture, #1485),
+/// pushed in while that tool is on.
+fn eyedropper_button(app: &App, ui: &mut Ui) -> Response {
+    crate::ui::propbar::tool_button(
+        ui,
+        crate::tools::Tool::ColorEyedropper,
+        &tr("docker.eyedropper"),
+        true,
+        app.tool == crate::tools::Tool::ColorEyedropper,
+    )
+}
+
+/// A small text button with a button's frame, so it reads as one and
+/// not as a label (#1485); `enabled` or pale.
 fn small_action(ui: &mut Ui, enabled: bool, text: &str) -> Response {
     ui.add_enabled(
         enabled,
-        egui::Button::new(egui::RichText::new(text).small()).frame(false),
+        egui::Button::new(egui::RichText::new(text).small()),
     )
 }
 
@@ -1023,15 +1059,7 @@ fn actions(app: &mut App, ui: &mut Ui, c: Color) {
                 ),
             )
         });
-        if crate::ui::propbar::pic_button(
-            ui,
-            crate::ui::propbar::Pic::Pen,
-            &tr("docker.eyedropper"),
-            true,
-            app.tool == crate::tools::Tool::ColorEyedropper,
-        )
-        .clicked()
-        {
+        if eyedropper_button(app, ui).clicked() {
             app.set_tool(crate::tools::Tool::ColorEyedropper);
         }
         ui.menu_button(MORE_ACTIONS, |ui| more_actions(app, ui, c, has))
@@ -1185,6 +1213,7 @@ fn spot_inks(app: &mut App, ui: &mut Ui, current: Color, with_tint: bool) {
     let tint = app.color_docker.tint.clamp(0.0, 100.0) / 100.0;
     let inks = app.doc().inks.clone();
     let mut remove = None;
+    let mut rename = None;
     for ink in &inks {
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
@@ -1197,7 +1226,23 @@ fn spot_inks(app: &mut App, ui: &mut Ui, current: Color, with_tint: bool) {
                 Stroke::new(0.5, Tokens::icon()),
                 egui::StrokeKind::Inside,
             );
-            ui.label(&ink.name);
+            // The name, typed over in place and given on Enter or when
+            // the field is left (#2187).
+            let mut name = match &app.color_docker.ink_rename {
+                Some((id, typed)) if *id == ink.id => typed.clone(),
+                _ => ink.name.clone(),
+            };
+            let field = ui
+                .add(egui::TextEdit::singleline(&mut name).desired_width(110.0))
+                .rich_tip(tr("docker.ink_name"));
+            if field.changed() {
+                app.color_docker.ink_rename = Some((ink.id, name));
+            }
+            if field.lost_focus() {
+                if let Some((id, typed)) = app.color_docker.ink_rename.take() {
+                    rename = Some((id, typed));
+                }
+            }
             if ui
                 .add_enabled(has, egui::Button::new(tr("docker.fill")).small())
                 .rich_tip(crate::ui::tips::pair("docker.fill", "docker.ink_fill_desc"))
@@ -1251,10 +1296,46 @@ fn spot_inks(app: &mut App, ui: &mut Ui, current: Color, with_tint: bool) {
             app.color_docker.new_ink.clear();
         }
     });
+    if let Some((id, name)) = rename {
+        rename_ink(app, id, &name);
+    }
     if let Some(id) = remove {
-        let inks: Vec<_> = inks.into_iter().filter(|i| i.id != id).collect();
+        let inks: Vec<_> = app
+            .doc()
+            .inks
+            .iter()
+            .filter(|i| i.id != id)
+            .cloned()
+            .collect();
         app.run(Command::SetInks { inks });
     }
+}
+
+/// Give spot ink `id` the name `name` (#2187), as one undo step.
+/// Objects and swatches refer to an ink by its number, so all of them
+/// take the new name, as does the separation it prints on. Nothing
+/// changes for an empty name, one another ink of the drawing has, or
+/// the name it has already. Says whether it was renamed.
+pub fn rename_ink(app: &mut App, id: u32, name: &str) -> bool {
+    let name = name.trim();
+    let inks = &app.doc().inks;
+    let taken = inks.iter().any(|i| i.id != id && i.name == name);
+    let same = inks.iter().any(|i| i.id == id && i.name == name);
+    if name.is_empty() || taken || same || app.doc().ink(id).is_none() {
+        return false;
+    }
+    let inks = inks
+        .iter()
+        .map(|i| {
+            let mut i = i.clone();
+            if i.id == id {
+                i.name = name.to_string();
+            }
+            i
+        })
+        .collect();
+    app.run(Command::SetInks { inks });
+    true
 }
 
 /// Add a spot ink named `name` standing for `c` in process inks.
@@ -1298,7 +1379,7 @@ fn palette_view(app: &mut App, ui: &mut Ui) -> Option<Color> {
         return None;
     }
     let mut chosen = app.color_docker.palette.min(app.palettes.len() - 1);
-    egui::ComboBox::from_id_salt("col_palette")
+    crate::ui::keynav::ComboBox::from_id_salt("col_palette")
         .selected_text(tr(app.palettes[chosen].name_key()))
         .width(ui.available_width().min(240.0))
         .show_ui(ui, |ui| {
@@ -1343,12 +1424,19 @@ fn tint_row(app: &mut App, ui: &mut Ui) {
         ui.spacing_mut().slider_width = (ui.available_width() - 70.0).clamp(60.0, 140.0);
         // A rail in the slider colour: a plain slider's groove has the
         // white of fields and vanished on the panel (#949).
-        ui.add(crate::ui::Rail(
+        let mut resp = ui.add(crate::ui::Rail(
             egui::Slider::new(&mut app.color_docker.tint, 0.0..=100.0)
                 .suffix(" %")
                 .max_decimals(0),
-        ))
-        .rich_tip(crate::ui::tips::pair("docker.tint", "docker.tint_desc"));
+        ));
+        crate::ui::slider::wheel_on_hover(
+            ui,
+            &mut resp,
+            &mut app.color_docker.tint,
+            0.0..=100.0,
+            1.0,
+        );
+        resp.rich_tip(crate::ui::tips::pair("docker.tint", "docker.tint_desc"));
     });
 }
 
@@ -1356,6 +1444,71 @@ fn tint_row(app: &mut App, ui: &mut Ui) {
 pub(crate) mod tests {
     use super::*;
     use tracedraw_core::ShapeKind;
+
+    /// The wheel over a colour slider or the tint slider steps it by one
+    /// on hover, as over the other sliders, with no click first (#1335).
+    #[test]
+    fn the_wheel_over_a_colour_slider_steps_it() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        let mut c = Color::Rgb {
+            r: 100.0 / 255.0,
+            g: 0.5,
+            b: 0.5,
+        };
+        let run = |ctx: &egui::Context, app: &mut App, c: &mut Color, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 400.0))),
+                events,
+                ..Default::default()
+            };
+            let mut rows = Vec::new();
+            let mut out = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    let top = ui.cursor().top();
+                    sliders(ui, c);
+                    let mid = ui.cursor().top();
+                    tint_row(app, ui);
+                    rows.push((ui.min_rect().left(), top, mid, ui.cursor().top()));
+                });
+            });
+            out.textures_delta.clear();
+            rows
+        };
+        let notch = |up: bool| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: Vec2::new(0.0, if up { 1.0 } else { -1.0 }),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        };
+        run(&ctx, &mut app, &mut c, Vec::new());
+        // Where the colour sliders start, end and the tint row ends.
+        let (left, top, mid, bottom) = run(&ctx, &mut app, &mut c, Vec::new())[0];
+        // The red slider: the first row, on its groove.
+        let red = Pos2::new(left + 60.0, top + 9.0);
+        run(&ctx, &mut app, &mut c, vec![egui::Event::PointerMoved(red)]);
+        run(&ctx, &mut app, &mut c, vec![notch(true)]);
+        let Color::Rgb { r, .. } = c else {
+            panic!("still RGB")
+        };
+        assert!(
+            (r * 255.0 - 101.0).abs() < 1e-3,
+            "a notch up: {}",
+            r * 255.0
+        );
+        assert!(crate::ui::field::wheel_taken(&ctx), "the panel stays");
+        // The tint slider: the last row.
+        app.color_docker.tint = 50.0;
+        let tint = Pos2::new(left + 80.0, (mid + bottom) / 2.0);
+        run(
+            &ctx,
+            &mut app,
+            &mut c,
+            vec![egui::Event::PointerMoved(tint)],
+        );
+        run(&ctx, &mut app, &mut c, vec![notch(false)]);
+        assert_eq!(app.color_docker.tint, 49.0, "a notch down");
+    }
 
     /// The other places that drew the same remove cross as a spot ink.
     const CROSS_SOURCES: [(&str, &str); 11] = [
@@ -1532,6 +1685,59 @@ pub(crate) mod tests {
         );
     }
 
+    /// #2187: a spot ink of the drawing is renamed in place, as one undo
+    /// step; its swatch and its PDF separation take the new name. An
+    /// empty name or one another ink has changes nothing.
+    #[test]
+    fn a_spot_ink_is_renamed() {
+        let mut app = App::headless();
+        let id = app
+            .new_shape(ShapeKind::Rect {
+                rect: tracedraw_core::Rect::new(0.0, 0.0, 10.0, 10.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("shape");
+        let spot = add_ink(
+            &mut app,
+            "Spot 1".into(),
+            Color::cmyk_pct(0.0, 100.0, 0.0, 0.0),
+        );
+        let other = add_ink(
+            &mut app,
+            "Gold".into(),
+            Color::cmyk_pct(0.0, 20.0, 80.0, 10.0),
+        );
+        app.select(vec![id]);
+        let c = app.doc().ink(spot).expect("ink").color(1.0);
+        app.apply_outline_color(Some(c));
+        let before = app.engine.history_labels().0.len();
+        assert!(rename_ink(&mut app, spot, "  CutContour "));
+        assert_eq!(app.engine.history_labels().0.len(), before + 1);
+        assert_eq!(
+            app.doc().ink(spot).map(|i| i.name.as_str()),
+            Some("CutContour")
+        );
+        assert_eq!(app.doc().ink(other).map(|i| i.name.as_str()), Some("Gold"));
+        assert_eq!(crate::ui::palette::name_of(&app, c), "CutContour");
+        let pdf = tracedraw_io::pdf::document_to_pdf(app.doc());
+        assert!(String::from_utf8_lossy(&pdf).contains("/Separation /CutContour"));
+        // Refused: empty, taken, unchanged, no such ink.
+        assert!(!rename_ink(&mut app, spot, " "));
+        assert!(!rename_ink(&mut app, spot, "Gold"));
+        assert!(!rename_ink(&mut app, spot, "CutContour"));
+        assert!(!rename_ink(&mut app, 9999, "Other"));
+        assert_eq!(app.engine.history_labels().0.len(), before + 1);
+        app.undo();
+        assert_eq!(app.doc().ink(spot).map(|i| i.name.as_str()), Some("Spot 1"));
+        // The docker draws the names as fields.
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            spot_inks(&mut app, ui, Color::BLACK, true)
+        });
+        out.textures_delta.clear();
+    }
+
     #[test]
     fn spot_inks_are_added_applied_and_removed() {
         let mut app = App::headless();
@@ -1567,6 +1773,87 @@ pub(crate) mod tests {
         assert!(app.doc().inks.is_empty());
     }
 
+    /// The shapes a frame of `ctx` paints when `add` runs in an area at
+    /// a fixed place: the second frame, as an area's first frame only
+    /// sizes it and paints placeholders.
+    fn painted(ctx: &egui::Context, add: impl Fn(&mut Ui)) -> Vec<egui::epaint::Shape> {
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 300.0),
+            )),
+            ..Default::default()
+        };
+        // No fading in: the shapes come out at their full colour.
+        ctx.all_styles_mut(|s| s.animation_time = 0.0);
+        let run = || {
+            ctx.run_ui(input(), |root| {
+                egui::Area::new(egui::Id::new("probe"))
+                    .fixed_pos(egui::pos2(20.0, 20.0))
+                    .fade_in(false)
+                    .show(root.ctx(), |ui| add(ui));
+            })
+        };
+        let mut first = run();
+        first.textures_delta.clear();
+        let mut out = run();
+        // The font texture's update is not applied anywhere here, and a
+        // widget's placeholder shape says nothing about its look.
+        out.textures_delta.clear();
+        out.shapes
+            .into_iter()
+            .map(|c| c.shape)
+            .filter(|s| !matches!(s, egui::epaint::Shape::Noop))
+            .collect()
+    }
+
+    /// #1485: the eyedropper button paints the Color Eyedropper tool's
+    /// own icon (the toolbox's), not the outline pen's picture it showed,
+    /// and Fill and Outline are framed buttons, not bare words.
+    #[test]
+    fn the_eyedropper_button_shows_its_tool_and_fill_and_outline_are_buttons() {
+        use crate::theme::Tokens;
+        use crate::tools::Tool;
+        let ctx = crate::theme::ui_context();
+        let app = App::headless();
+        let button = painted(&ctx, |ui| {
+            eyedropper_button(&app, ui);
+        });
+        let icon = painted(&ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(
+                egui::Vec2::splat(Tokens::prop_button()),
+                egui::Sense::hover(),
+            );
+            crate::ui::icons::draw(
+                ui.painter(),
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(Tokens::prop_icon())),
+                Tool::ColorEyedropper,
+                crate::ui::icons::tool_color(Tool::ColorEyedropper, Tokens::icon()),
+            );
+        });
+        assert!(!icon.is_empty());
+        assert_eq!(button, icon, "the tool's icon, nothing else");
+        let pen = painted(&ctx, |ui| {
+            crate::ui::propbar::pic_button(ui, crate::ui::propbar::Pic::Pen, "tip", true, false);
+        });
+        assert_ne!(button, pen);
+        // Fill and Outline: a frame behind the word.
+        for word in ["Fill", "Outline"] {
+            let shapes = painted(&ctx, |ui| {
+                small_action(ui, true, word);
+            });
+            assert!(
+                shapes
+                    .iter()
+                    .any(|s| matches!(s, egui::epaint::Shape::Rect(_))),
+                "{word}: {shapes:?}"
+            );
+            assert!(shapes
+                .iter()
+                .any(|s| matches!(s, egui::epaint::Shape::Text(_))));
+        }
+    }
+
     #[test]
     fn the_new_color_follows_the_selection() {
         let mut app = App::headless();
@@ -1594,6 +1881,47 @@ pub(crate) mod tests {
         app.mixer_color = Color::rgb8(0, 0, 255);
         follow_selection(&mut app);
         assert_eq!(app.mixer_color.to_hex(), "#0000ff");
+    }
+
+    /// A fill converted to another model under the same selection
+    /// (Convert Colors to RGB) is taken again, and the sliders go to its
+    /// model (#1254); a fill changed within its model is not.
+    #[test]
+    fn the_new_color_follows_a_converted_fill_into_its_model() {
+        let mut app = App::headless();
+        let id = app
+            .new_shape(ShapeKind::Rect {
+                rect: tracedraw_core::Rect::new(0.0, 0.0, 10.0, 10.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("shape");
+        app.run(Command::SetFill {
+            shapes: vec![id],
+            fill: Fill::Solid(Color::cmyk_pct(0.0, 100.0, 100.0, 0.0)),
+        });
+        app.select(vec![id]);
+        follow_selection(&mut app);
+        assert_eq!(MODELS[app.color_model], "CMYK");
+        assert_eq!(app.mixer_color.model_name(), "CMYK");
+        assert!(
+            app.convert_colors(&crate::ui::convert_colors::ConvertColorsState {
+                to: tracedraw_core::color_convert::ColorTarget::Rgb,
+                whole: false,
+                spots: false,
+            })
+        );
+        follow_selection(&mut app);
+        assert_eq!(MODELS[app.color_model], "RGB");
+        assert_eq!(app.mixer_color.model_name(), "RGB");
+        // Another RGB colour given to it: the new colour stays.
+        let mixed = app.mixer_color;
+        app.run(Command::SetFill {
+            shapes: vec![id],
+            fill: Fill::Solid(Color::rgb8(0, 0, 255)),
+        });
+        follow_selection(&mut app);
+        assert_eq!(app.mixer_color, mixed);
     }
 
     #[test]

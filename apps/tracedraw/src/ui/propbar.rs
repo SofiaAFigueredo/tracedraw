@@ -18,8 +18,8 @@ use tracedraw_core::{
 /// Two fields stacked: 19 px each, sharing their middle border.
 pub const BAR_H: f32 = 37.0;
 const ROW: f32 = 19.0;
-/// Icon buttons are 28 px square with an 18 px icon.
-/// A property bar button's side: 28 px at the medium button size.
+/// A property bar button's side: 28 px at the medium button size, with
+/// a [`Tokens::prop_icon`] icon.
 fn btn() -> f32 {
     crate::theme::Tokens::prop_button()
 }
@@ -61,6 +61,9 @@ pub enum Pic {
     CornerRound,
     CornerScallop,
     CornerChamfer,
+    /// Clear the rounding of a curve's corners: a sharp corner and a
+    /// small cross.
+    CornerClear,
     /// Relative corner scaling: a small corner, a larger one, an arrow.
     CornerScaling,
     ToFront,
@@ -533,6 +536,14 @@ pub fn draw_pic(painter: &Painter, r: Rect, pic: Pic, color: Color32) {
                 pts.push(q(r, 8.0 + 6.0 * t.cos(), 8.0 - 6.0 * t.sin()));
             }
             painter.add(epaint::PathShape::line(pts, s));
+        }
+        Pic::CornerClear => {
+            painter.add(epaint::PathShape::line(
+                vec![q(r, 2.0, 15.0), q(r, 2.0, 2.0), q(r, 15.0, 2.0)],
+                s,
+            ));
+            line((8.0, 8.0), (14.0, 14.0), s);
+            line((14.0, 8.0), (8.0, 14.0), s);
         }
         Pic::CornerScallop => {
             line((2.0, 15.0), (2.0, 8.0), s);
@@ -1221,25 +1232,7 @@ fn draw_arrange_pic(painter: &Painter, r: Rect, pic: Pic, color: Color32) {
 }
 
 pub(crate) fn frame(ui: &Ui, rect: Rect, hovered: bool, pressed: bool) {
-    if pressed {
-        ui.painter()
-            .rect_filled(rect, 0.0, crate::theme::Tokens::field());
-        ui.painter().rect_stroke(
-            rect.shrink(0.5),
-            0.0,
-            Stroke::new(1.0, Tokens::control_border()),
-            egui::StrokeKind::Middle,
-        );
-    } else if hovered {
-        ui.painter()
-            .rect_filled(rect, 0.0, crate::theme::Tokens::hovered_row());
-        ui.painter().rect_stroke(
-            rect.shrink(0.5),
-            0.0,
-            Stroke::new(1.0, crate::theme::Tokens::selected_row()),
-            egui::StrokeKind::Middle,
-        );
-    }
+    crate::theme::paint_icon_button(ui.painter(), rect, hovered, pressed);
 }
 
 /// An icon button of the bar; `pressed` draws it pushed in.
@@ -1255,13 +1248,54 @@ pub fn pic_button(ui: &mut Ui, pic: Pic, tip: &str, enabled: bool, pressed: bool
     frame(ui, rect, enabled && resp.hovered(), pressed);
     draw_pic(
         ui.painter(),
-        Rect::from_center_size(rect.center(), Vec2::splat(18.0)),
+        Rect::from_center_size(rect.center(), Vec2::splat(Tokens::prop_icon())),
         pic,
+        icon_color(enabled),
+    );
+    resp.rich_tip(tip)
+}
+
+/// The colour of a bar icon: the theme's icon colour, or its colour for
+/// commands that cannot run now. That was the panels' line colour, which
+/// on the Dark theme is darker than the bar, so the Shape tool's node
+/// buttons, greyed with no node chosen, could hardly be seen (#2065).
+pub fn icon_color(enabled: bool) -> egui::Color32 {
+    if enabled {
+        Tokens::icon()
+    } else {
+        Tokens::icon_off()
+    }
+}
+
+/// An icon button of the bar showing a tool's own icon (the toolbox's),
+/// for a button that picks that tool; `pressed` draws it pushed in
+/// (#1485).
+pub fn tool_button(
+    ui: &mut Ui,
+    tool: crate::tools::Tool,
+    tip: &str,
+    enabled: bool,
+    pressed: bool,
+) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::splat(btn()),
         if enabled {
-            Tokens::icon()
+            Sense::click()
         } else {
-            Tokens::border()
+            Sense::hover()
         },
+    );
+    frame(ui, rect, enabled && resp.hovered(), pressed);
+    let color = if enabled {
+        crate::ui::icons::tool_color(tool, Tokens::icon())
+    } else {
+        icon_color(false)
+    };
+    crate::ui::icons::draw(
+        ui.painter(),
+        Rect::from_center_size(rect.center(), Vec2::splat(Tokens::prop_icon())),
+        tool,
+        color,
     );
     resp.rich_tip(tip)
 }
@@ -1369,7 +1403,13 @@ fn distance_in(
 
 /// [`distance`] for a value the selected objects do not share: the field
 /// is empty, a typed value goes to all of them.
-fn distance_mixed(ui: &mut Ui, app: &App, mm: f64, width: f32, mixed: bool) -> Option<f64> {
+pub(crate) fn distance_mixed(
+    ui: &mut Ui,
+    app: &App,
+    mm: f64,
+    width: f32,
+    mixed: bool,
+) -> Option<f64> {
     distance_in_mixed(ui, app, mm, width, Some(1.0), app.units.world_mm(), mixed)
 }
 
@@ -1395,8 +1435,7 @@ fn distance_in_mixed(
     let r = ui.add_sized(
         [width, ROW],
         crate::ui::field::NumField::new(&mut v)
-            .fixed_decimals(d.min(3))
-            .max_decimals(d)
+            .length_decimals(d)
             .suffix(format!(" {}", u.short()))
             .unit_mm(u.mm())
             .step(step.unwrap_or(1.0))
@@ -1521,7 +1560,7 @@ pub fn guide_bar(app: &mut App, ui: &mut Ui) {
 /// The page bar's list of sizes: the presets by group, then Custom
 /// (#650), which is the one ticked when the page matches no preset and
 /// opens the Page Size dialog with the page's width and height to type
-/// any size, and Edit This List, which opens Document Options > Page Size
+/// any size, and Edit This List, which opens Document Setup > Page Size
 /// to save or delete sizes.
 fn page_size_list(app: &mut App, ui: &mut Ui, current: &str, size: Size) {
     let saved = app.settings.page_sizes.clone();
@@ -1567,7 +1606,7 @@ pub fn page_bar(app: &mut App, ui: &mut Ui) {
         Vec2::new(200.0, BAR_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            egui::ComboBox::from_id_salt("page_size_bar")
+            crate::ui::keynav::ComboBox::from_id_salt("page_size_bar")
                 .selected_text(current.clone())
                 .width(192.0)
                 .height(400.0)
@@ -1595,12 +1634,13 @@ pub fn page_bar(app: &mut App, ui: &mut Ui) {
         }
     }
     // Fit page to drawing, as Layout has it (#236); pale on an empty
-    // page.
-    let has_objects = app
-        .doc()
-        .page(app.page)
-        .ok()
-        .is_some_and(|p| p.layers.iter().any(|l| !l.shapes.is_empty()));
+    // page, or with All Pages on when no page has anything on it.
+    let has_objects = |p: &tracedraw_core::Page| p.layers.iter().any(|l| !l.shapes.is_empty());
+    let has_objects = if app.page_size_all {
+        app.doc().pages.iter().any(has_objects)
+    } else {
+        app.doc().page(app.page).ok().is_some_and(has_objects)
+    };
     // Autofit Page: a popup with the margin to leave around the drawing
     // (kept in the preferences) and the button that fits the page.
     let fit = pic_button(
@@ -1659,7 +1699,7 @@ pub fn page_bar(app: &mut App, ui: &mut Ui) {
         )
     });
     if fitted {
-        app.fit_page_to_drawing_with_margin(app.settings.fit_page_margin);
+        app.autofit_pages(app.settings.fit_page_margin, app.page_size_all);
         app.fit_pending = true;
         egui::Popup::close_id(&ctx, popup_id);
     }
@@ -1702,7 +1742,7 @@ pub fn page_bar(app: &mut App, ui: &mut Ui) {
     sep(ui);
     ui.label(tr("toolbar.units_label"));
     let mut u = app.units;
-    egui::ComboBox::from_id_salt("units_bar")
+    crate::ui::keynav::ComboBox::from_id_salt("units_bar")
         .selected_text(u.label())
         .width(120.0)
         .height(400.0)
@@ -2048,7 +2088,7 @@ pub fn outline_text(app: &App, width: Option<f64>) -> String {
 /// The outline unit picker (points, millimetres, ...), next to a width.
 pub(crate) fn outline_unit_combo(ui: &mut Ui, salt: &str, current: Units) -> Option<Units> {
     let mut picked = None;
-    egui::ComboBox::from_id_salt(salt)
+    crate::ui::keynav::ComboBox::from_id_salt(salt)
         .selected_text(current.short())
         .width(44.0)
         .show_ui(ui, |ui| {
@@ -2190,6 +2230,7 @@ fn outline_width_box(
         if arrow.clicked() {
             egui::Popup::toggle_id(&ctx, popup_id);
         }
+        crate::ui::keynav::list_button_keys(&ctx, &arrow, popup_id);
         resp.rect.union(arrow_rect)
     });
     let anchor = inner.inner;
@@ -2245,6 +2286,7 @@ fn outline_width_box(
                             picked = Some(Some(w));
                         }
                     }
+                    crate::ui::keynav::scroll_into_view(ui);
                 });
         });
     if picked.is_some() {
@@ -2284,7 +2326,7 @@ pub fn outline_part(app: &mut App, ui: &mut Ui) {
     // Line style: solid or one of the dash presets.
     let dash = stroke.as_ref().map(|s| s.dash.clone()).unwrap_or_default();
     let dash_shown = !mix.has(StrokeField::Dash);
-    egui::ComboBox::from_id_salt("line_style_bar")
+    crate::ui::keynav::ComboBox::from_id_salt("line_style_bar")
         .selected_text(if dash_shown {
             dash_label(&dash)
         } else {
@@ -2346,7 +2388,7 @@ pub fn outline_part(app: &mut App, ui: &mut Ui) {
         } else {
             StrokeField::EndArrow
         });
-        egui::ComboBox::from_id_salt(if start {
+        crate::ui::keynav::ComboBox::from_id_salt(if start {
             "arrow_start_bar"
         } else {
             "arrow_end_bar"
@@ -2408,13 +2450,13 @@ pub(crate) const DASHES: &[&[f64]] = &[
 
 pub(crate) fn dash_label(d: &[f64]) -> String {
     if d.is_empty() {
-        return "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}".into();
+        return "\u{2015}\u{2015}\u{2015}\u{2015}\u{2015}".into();
     }
     // A few characters drawing the pattern.
     let mut s = String::new();
     for (i, v) in d.iter().cycle().take(d.len() * 3).enumerate() {
         let n = (*v / 2.0).round().clamp(1.0, 4.0) as usize;
-        let c = if i % 2 == 0 { '\u{2500}' } else { ' ' };
+        let c = if i % 2 == 0 { '\u{2015}' } else { ' ' };
         for _ in 0..n {
             s.push(c);
         }
@@ -2428,13 +2470,13 @@ pub(crate) fn dash_label(d: &[f64]) -> String {
 fn arrow_label(a: &tracedraw_core::Arrowhead) -> String {
     use tracedraw_core::Arrowhead as A;
     match a {
-        A::None => "\u{2500}".into(),
-        A::Arrow => "\u{2500}\u{25B6}".into(),
-        A::OpenArrow => "\u{2500}>".into(),
-        A::Circle => "\u{2500}\u{25CF}".into(),
-        A::Square => "\u{2500}\u{25A0}".into(),
-        A::Bar => "\u{2500}|".into(),
-        A::Diamond => "\u{2500}\u{25C6}".into(),
+        A::None => "\u{2015}".into(),
+        A::Arrow => "\u{2015}\u{25B6}".into(),
+        A::OpenArrow => "\u{2015}>".into(),
+        A::Circle => "\u{2015}\u{23FA}".into(),
+        A::Square => "\u{2015}\u{25A0}".into(),
+        A::Bar => "\u{2015}|".into(),
+        A::Diamond => "\u{2015}\u{2666}".into(),
         A::Custom { name, .. } => name.clone(),
     }
 }
@@ -2549,7 +2591,27 @@ pub fn ellipse_part(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// Points and sharpness of polygons and stars (sharpness 1 to 99);
+/// A star's sharpness from the percent typed in a sharpness field: 1 to
+/// 99, or -1 to -99 for an inverted star whose inner points lie past the
+/// centre (#1331). 0 would be no star: it keeps the side of `was`, at 1.
+pub fn sharpness_from_pct(pct: f64, was: f64) -> f64 {
+    if !pct.is_finite() {
+        return was;
+    }
+    let pct = pct.round().clamp(-99.0, 99.0);
+    if pct == 0.0 {
+        if was < 0.0 {
+            -0.01
+        } else {
+            0.01
+        }
+    } else {
+        pct / 100.0
+    }
+}
+
+/// Points and sharpness of polygons and stars (sharpness 1 to 99, or
+/// -1 to -99 inverted);
 /// complex stars count their sharpness in
 /// steps (1 up to what their points allow). With the Star tool, the Star
 /// and Complex Star buttons pick what it draws.
@@ -2647,7 +2709,10 @@ pub fn polygon_part(app: &mut App, ui: &mut Ui, star: bool) {
         .first()
         .map(|s| (s.2, s.3))
         .unwrap_or((app.polygon_points, app.star_sharpness));
-    let star = star || selected.first().is_some_and(|s| s.3 > 0.0);
+    let star = star
+        || selected
+            .first()
+            .is_some_and(|s| tracedraw_core::geometry::is_star_sharpness(s.3));
     let (n0, s0) = (n, sharp);
     crate::ui::tips::tip_over(ui, crate::ui::tips::keyed("toolbar.points_tip"), |ui| {
         ui.label(tr("toolbar.points_sides"));
@@ -2663,11 +2728,11 @@ pub fn polygon_part(app: &mut App, ui: &mut Ui, star: bool) {
             if ui
                 .add_sized(
                     [56.0, ROW + 4.0],
-                    crate::ui::field::NumField::new(&mut pct).range(1.0..=99.0),
+                    crate::ui::field::NumField::new(&mut pct).range(-99.0..=99.0),
                 )
                 .changed()
             {
-                sharp = (pct / 100.0).clamp(0.01, 0.99);
+                sharp = sharpness_from_pct(pct, sharp);
             }
         });
     }
@@ -2682,7 +2747,11 @@ pub fn polygon_part(app: &mut App, ui: &mut Ui, star: bool) {
                 kind: ShapeKind::Polygon {
                     rect: *rect,
                     points: n,
-                    sharpness: if *old > 0.0 || star { sharp } else { 0.0 },
+                    sharpness: if tracedraw_core::geometry::is_star_sharpness(*old) || star {
+                        sharp
+                    } else {
+                        0.0
+                    },
                     complex: None,
                     // A twisted star keeps its turn.
                     twist: *twist,
@@ -2742,7 +2811,7 @@ pub fn char_offset_part(app: &mut App, ui: &mut Ui) {
     field(
         ui,
         "toolbar.char_angle",
-        "\u{2220}",
+        "\u{00B0}",
         &mut a,
         -360.0..=360.0,
         " \u{b0}",
@@ -2790,14 +2859,19 @@ impl CornerEdit {
 }
 
 /// Apply a corner edit to the selected rectangles, or to the defaults for
-/// new ones when none is selected.
+/// new ones when none is selected. A size is for the corner seen at that
+/// position on the page: on a rectangle turned by 180 degrees, flipped
+/// or stretched across its own side, the top left field edits the corner
+/// that lies at the top left (#1670).
 pub fn edit_corners(app: &mut App, edit: CornerEdit) {
     let together = app.corners_together;
     let cmds: Vec<Command> = app
         .selected_rc()
         .iter()
         .filter_map(|s| {
-            let kind = s.with_page_corners(edit.apply(s.page_corners()?, together))?;
+            let t = app.seen_transform(s);
+            let seen = edit.apply(s.page_corners()?.as_seen(t), together);
+            let kind = s.with_page_corners(Corners::from_seen(seen, t))?;
             (kind != s.kind).then_some(Command::SetShapeKind { shape: s.id, kind })
         })
         .collect();
@@ -2823,13 +2897,14 @@ pub fn edit_corners(app: &mut App, edit: CornerEdit) {
 }
 
 /// Rectangle corners: the corner style, the four sizes (top left over
-/// bottom left, then top right over bottom right) with the lock that edits
-/// them together, and relative corner scaling.
+/// bottom left, then top right over bottom right, each the corner seen at
+/// that position on the page) with the lock that edits them together, and
+/// relative corner scaling.
 pub fn rectangle_part(app: &mut App, ui: &mut Ui) {
     let current = app
         .selected_rc()
         .iter()
-        .find_map(|s| s.page_corners())
+        .find_map(|s| app.corners_as_seen(s))
         .unwrap_or(app.rect_corners);
     // Values that differ across the selected rectangles show as mixed.
     let mix = app.selection_corner_mix().map_or([false; 6], |(_, m)| m);
@@ -2998,17 +3073,13 @@ pub fn zoom_bar(app: &mut App, ui: &mut Ui) {
 /// parts (break apart); `None` when nothing applies.
 pub fn arrange_offers(shapes: &[tracedraw_core::Shape]) -> Option<(bool, bool, bool)> {
     let many = shapes.len() >= 2;
+    // A clip frame whose frame is a group ungroups, one whose frame is a
+    // curve of several parts breaks apart (#1605, #1607).
     let groups = shapes
         .iter()
-        .any(|s| matches!(s.kind, ShapeKind::Group { .. }));
+        .any(|s| matches!(s.kind, ShapeKind::Group { .. }) || s.is_clip_frame_of_group());
     let parts = shapes.iter().any(|s| match &s.kind {
-        ShapeKind::Path { path, .. } => {
-            path.elements()
-                .iter()
-                .filter(|e| matches!(e, tracedraw_core::geometry::PathEl::MoveTo(_)))
-                .count()
-                > 1
-        }
+        ShapeKind::Path { .. } | ShapeKind::ClipFrame { .. } => s.breaks_into_parts(),
         _ => false,
     });
     (many || groups || parts).then_some((many, groups, parts))
@@ -3150,7 +3221,7 @@ pub fn arrange_part(app: &mut App, ui: &mut Ui) -> bool {
     if pic_button(
         ui,
         Pic::AlignDistribute,
-        &tip("menu.object.align_distribute_docker", "Ctrl+Shift+A"),
+        &tip("menu.object.align_distribute_docker", ""),
         true,
         false,
     )
@@ -3188,12 +3259,13 @@ fn wrap_style_list(app: &mut App, ui: &mut Ui) {
     let button = ui
         .add_enabled(
             !app.selection.is_empty(),
-            egui::Button::new("\u{25BE}").small(),
+            egui::Button::new("\u{23F7}").small(),
         )
         .rich_tip(tr("context.wrap_style"));
     if button.clicked() {
         egui::Popup::toggle_id(&ctx, popup_id);
     }
+    crate::ui::keynav::list_button_keys(&ctx, &button, popup_id);
     egui::Popup::new(popup_id, ctx.clone(), button.rect, ui.layer_id())
         .open_memory(None)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -3276,10 +3348,10 @@ pub fn order_part(app: &mut App, ui: &mut Ui) {
     }
     wrap_style_list(app, ui);
     if pic_button(ui, Pic::ToFront, &tr("toolbar.to_front"), true, false).clicked() {
-        app.order(0);
+        app.order_page(true);
     }
     if pic_button(ui, Pic::ToBack, &tr("toolbar.to_back"), true, false).clicked() {
-        app.order(3);
+        app.order_page(false);
     }
     let curves_ok = app.can_convert_to_curves();
     if pic_button(
@@ -3299,6 +3371,157 @@ pub fn order_part(app: &mut App, ui: &mut Ui) {
 mod tests {
     use super::*;
     use tracedraw_core::geometry::Rect as R;
+
+    /// A bar button that cannot run now is drawn greyed but plain to see
+    /// in every theme: on the Dark theme the Shape tool's node buttons,
+    /// with no node chosen, were drawn in the panels' line colour, darker
+    /// than the bar (#2065).
+    #[test]
+    fn greyed_bar_icons_stand_out_from_the_bar_in_every_theme() {
+        fn luminance(c: egui::Color32) -> f32 {
+            let f = |v: u8| {
+                let v = v as f32 / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * f(c.r()) + 0.7152 * f(c.g()) + 0.0722 * f(c.b())
+        }
+        fn contrast(a: egui::Color32, b: egui::Color32) -> f32 {
+            let (a, b) = (luminance(a), luminance(b));
+            (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        }
+        let ctx = crate::theme::ui_context();
+        for theme in crate::theme::Theme::ALL {
+            crate::theme::set_theme(theme);
+            let (off, on, bar) = (icon_color(false), icon_color(true), Tokens::panel());
+            assert_eq!(off, Tokens::icon_off(), "{theme:?}");
+            assert!(contrast(off, bar) >= 1.5, "{theme:?}: {off:?} on {bar:?}");
+            // Still apart from the buttons that can run.
+            assert_ne!(off, on, "{theme:?}");
+            // The button paints its picture in that colour.
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                pic_button(ui, Pic::BreakCurve, "Break", false, false);
+            });
+            out.textures_delta.clear();
+            fn collect(s: &epaint::Shape, out: &mut Vec<egui::Color32>) {
+                match s {
+                    epaint::Shape::Vec(v) => v.iter().for_each(|s| collect(s, out)),
+                    epaint::Shape::Path(p) => {
+                        out.push(p.fill);
+                        if let epaint::ColorMode::Solid(c) = p.stroke.color {
+                            out.push(c);
+                        }
+                    }
+                    epaint::Shape::LineSegment { stroke, .. } => out.push(stroke.color),
+                    epaint::Shape::Circle(c) => out.extend([c.fill, c.stroke.color]),
+                    epaint::Shape::Rect(r) => out.extend([r.fill, r.stroke.color]),
+                    _ => {}
+                }
+            }
+            let mut colours = Vec::new();
+            for c in &out.shapes {
+                collect(&c.shape, &mut colours);
+            }
+            assert!(colours.contains(&off), "{theme:?}: {colours:?}");
+            assert!(
+                !colours.contains(&Tokens::border()) || Tokens::border() == off,
+                "{theme:?}"
+            );
+        }
+        crate::theme::set_theme(crate::theme::Theme::Light);
+    }
+
+    /// The size and position fields show the decimals a value needs, at
+    /// least one and up to the drawing precision, with no trailing zeros:
+    /// 20.0 mm, 20.5 mm, 20.125 mm; a value typed with more decimals is
+    /// kept as typed (#1761).
+    #[test]
+    fn distance_fields_show_only_the_decimals_needed() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        app.units = Units::Millimeters;
+        app.settings.precision = 3;
+        let run = |app: &App, mm: f64, events: Vec<egui::Event>| {
+            let mut got = None;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ui| got = distance(ui, app, mm, 90.0, Some(1.0)),
+            );
+            out.textures_delta.clear();
+            let texts: Vec<(String, egui::Rect)> = out
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    epaint::Shape::Text(t) => Some((
+                        t.galley.text().to_string(),
+                        t.galley.rect.translate(t.pos.to_vec2()),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            (got, texts)
+        };
+        for (mm, shown) in [
+            (20.0, "20.0 mm"),
+            (20.5, "20.5 mm"),
+            (20.125, "20.125 mm"),
+            (0.0, "0.0 mm"),
+            (-0.0001, "0.0 mm"),
+            (-3.25, "-3.25 mm"),
+            (20.12345, "20.123 mm"),
+            (19.9999, "20.0 mm"),
+        ] {
+            let (_, texts) = run(&app, mm, Vec::new());
+            assert!(texts.iter().any(|(t, _)| t == shown), "{mm}: {texts:?}");
+        }
+        // More precision in Options shows more decimals, still trimmed.
+        app.settings.precision = 5;
+        let (_, texts) = run(&app, 20.12345, Vec::new());
+        assert!(texts.iter().any(|(t, _)| t == "20.12345 mm"), "{texts:?}");
+        let (_, texts) = run(&app, 20.5, Vec::new());
+        assert!(texts.iter().any(|(t, _)| t == "20.5 mm"), "{texts:?}");
+        // No decimals asked for: none shown.
+        app.settings.precision = 0;
+        let (_, texts) = run(&app, 20.0, Vec::new());
+        assert!(texts.iter().any(|(t, _)| t == "20 mm"), "{texts:?}");
+        // Typed with more decimals than shown: kept as typed.
+        app.settings.precision = 3;
+        let (_, texts) = run(&app, 20.0, Vec::new());
+        let at = texts
+            .iter()
+            .find(|(t, _)| t == "20.0 mm")
+            .map(|(_, r)| r.center())
+            .expect("the field");
+        run(&app, 20.0, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            run(
+                &app,
+                20.0,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        run(&app, 20.0, vec![egui::Event::Text("20.12345".into())]);
+        let key = |k: egui::Key| egui::Event::Key {
+            key: k,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (got, _) = run(&app, 20.0, vec![key(egui::Key::Enter)]);
+        assert_eq!(got, Some(20.12345));
+    }
 
     /// The rotation field's arrows turn the selection a degree at each
     /// click, also when the box was clicked into first (its value
@@ -3395,6 +3618,95 @@ mod tests {
         // One undo step a click.
         app.undo();
         assert!((selection_angle(&app) - 3.0).abs() < 1e-6);
+    }
+
+    /// #1331: the sharpness box takes a negative value, which inverts the
+    /// selected star, and shows it back as negative.
+    #[test]
+    fn the_sharpness_box_takes_a_negative_value() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        let id = app
+            .new_shape(ShapeKind::Polygon {
+                rect: R::new(10.0, 10.0, 50.0, 50.0),
+                points: 5,
+                sharpness: 0.5,
+                complex: None,
+                twist: 0.0,
+            })
+            .expect("star");
+        app.select(vec![id]);
+        let key = |key: egui::Key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let sharpness = |app: &App| match &app.engine.document().find_shape(id).expect("star").kind
+        {
+            ShapeKind::Polygon { sharpness, .. } => *sharpness,
+            k => panic!("{k:?}"),
+        };
+        let run = |app: &mut App, events: Vec<egui::Event>| -> String {
+            let mut shown = String::new();
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal(|ui| polygon_part(app, ui, false));
+                },
+            );
+            for shape in out.shapes.iter() {
+                if let egui::epaint::Shape::Text(t) = &shape.shape {
+                    shown.push_str(t.galley.text());
+                    shown.push('|');
+                }
+            }
+            out.textures_delta.clear();
+            shown
+        };
+        run(&mut app, Vec::new());
+        // Tab to the points box, Tab to the sharpness box, type, Enter.
+        run(&mut app, vec![key(egui::Key::Tab)]);
+        run(&mut app, vec![key(egui::Key::Tab)]);
+        run(&mut app, vec![egui::Event::Text("-40".into())]);
+        run(&mut app, vec![key(egui::Key::Enter)]);
+        run(&mut app, Vec::new());
+        assert!((sharpness(&app) + 0.4).abs() < 1e-9, "{}", sharpness(&app));
+        assert!((app.star_sharpness + 0.4).abs() < 1e-9);
+        // The box shows it back.
+        let shown = run(&mut app, Vec::new());
+        assert!(shown.contains("-40"), "{shown}");
+        // The outline is the inverted star: inner points past the centre.
+        let inner = match &app.engine.document().find_shape(id).expect("star").kind {
+            ShapeKind::Polygon { rect, .. } => {
+                let path = app
+                    .engine
+                    .document()
+                    .find_shape(id)
+                    .expect("star")
+                    .local_path();
+                let c = rect.center();
+                let second = path.elements()[1].end_point().expect("point");
+                (second - c).y
+            }
+            k => panic!("{k:?}"),
+        };
+        // The first inner point (right of the top vertex, above the
+        // centre on a plain star) lies below the centre.
+        assert!(inner < 0.0, "{inner}");
+        // 0 is no star: the box keeps the star's side.
+        assert_eq!(sharpness_from_pct(0.0, -0.4), -0.01);
+        assert_eq!(sharpness_from_pct(0.0, 0.4), 0.01);
+        assert_eq!(sharpness_from_pct(-150.0, 0.4), -0.99);
+        assert_eq!(sharpness_from_pct(f64::NAN, -0.4), -0.4);
     }
 
     #[test]
@@ -3919,6 +4231,119 @@ mod tests {
         app.undo();
         let s = app.selected_rc()[0].clone();
         assert!(!s.page_corners().unwrap().fixed);
+    }
+
+    /// A corner field takes more than half the shorter side when the
+    /// neighbouring corners leave room, and shows the size drawn when what
+    /// is typed is more than the rectangle holds (#1757).
+    #[test]
+    fn a_corner_field_takes_what_the_neighbours_leave() {
+        let mut app = App::headless();
+        app.corners_together = false;
+        let id = app
+            .new_shape(ShapeKind::rect_with_corners(
+                R::new(0.0, 0.0, 100.0, 80.0),
+                Corners::tool_default(),
+            ))
+            .expect("a rectangle");
+        app.select(vec![id]);
+        edit_corners(&mut app, CornerEdit::Size(Corners::TOP_LEFT, 10.0));
+        edit_corners(&mut app, CornerEdit::Size(Corners::TOP_RIGHT, 80.0));
+        let s = app.selected_rc()[0].clone();
+        assert_eq!(s.page_corners().unwrap().radii, [10.0, 80.0, 0.0, 0.0]);
+        assert_eq!(
+            app.corners_as_seen(&s).unwrap().radii,
+            [10.0, 80.0, 0.0, 0.0]
+        );
+        // A quarter circle of 80 about (20, 0), down the whole right side.
+        use tracedraw_core::geometry::Shape as _;
+        let path = s.page_path();
+        assert!(!path.contains(Point::new(95.0, 75.0)));
+        assert!(!path.contains(Point::new(99.5, 30.0)));
+        assert!(path.contains(Point::new(90.0, 30.0)));
+        assert!(path.contains(Point::new(99.5, 0.5)));
+        // 90 on the 80 mm right side: kept, and every corner is drawn and
+        // shown at 80 / 90 of its size.
+        edit_corners(&mut app, CornerEdit::Size(Corners::TOP_RIGHT, 90.0));
+        let s = app.selected_rc()[0].clone();
+        assert_eq!(s.page_corners().unwrap().radii, [10.0, 90.0, 0.0, 0.0]);
+        let seen = app.corners_as_seen(&s).unwrap().radii;
+        assert!((seen[0] - 80.0 / 9.0).abs() < 1e-9 && (seen[1] - 80.0).abs() < 1e-9);
+        // Back within the side, the other corner is as typed again.
+        edit_corners(&mut app, CornerEdit::Size(Corners::TOP_RIGHT, 70.0));
+        let s = app.selected_rc()[0].clone();
+        assert_eq!(
+            app.corners_as_seen(&s).unwrap().radii,
+            [10.0, 70.0, 0.0, 0.0]
+        );
+    }
+
+    /// The corner fields are the corners as they lie on the page: on a
+    /// rectangle turned by 180 degrees or flipped, the top left field
+    /// shows and edits the corner seen at the top left (#1670).
+    #[test]
+    fn corner_fields_edit_the_corner_seen_at_their_position() {
+        use std::f64::consts::PI;
+        use tracedraw_core::geometry::Shape as _;
+        let mut app = App::headless();
+        app.corners_together = false;
+        let id = app
+            .new_shape(ShapeKind::rect_with_corners(
+                R::new(0.0, 0.0, 40.0, 20.0),
+                Corners::tool_default(),
+            ))
+            .expect("a rectangle");
+        app.select(vec![id]);
+        // Turned by 180 degrees about the origin: the page top left (-40,
+        // 0) is the rectangle's own bottom right.
+        app.transform_selection(Affine::rotate(PI));
+        edit_corners(&mut app, CornerEdit::Size(Corners::TOP_LEFT, 5.0));
+        let s = app.selected_rc()[0].clone();
+        assert_eq!(s.page_corners().unwrap().radii, [0.0, 0.0, 0.0, 5.0]);
+        assert_eq!(app.corners_as_seen(&s).unwrap().radii, [5.0, 0.0, 0.0, 0.0]);
+        let (_, mix) = app.selection_corner_mix().unwrap();
+        assert_eq!(mix, [false; 6]);
+        let path = s.page_path();
+        let b = path.bounding_box();
+        assert!((b.x0 + 40.0).abs() < 1e-9 && b.y1.abs() < 1e-9, "{b:?}");
+        // The cut is at the top left of the page, the other corners whole.
+        assert!(!path.contains(Point::new(-39.5, -0.5)));
+        for p in [(-0.5, -0.5), (-39.5, -19.5), (-0.5, -19.5)] {
+            assert!(path.contains(Point::new(p.0, p.1)), "{p:?}");
+        }
+        // Flipped across as well: top left on the page is now the
+        // rectangle's own bottom left.
+        app.transform_selection(Affine::scale_non_uniform(-1.0, 1.0));
+        edit_corners(&mut app, CornerEdit::Size(Corners::TOP_LEFT, 3.0));
+        let s = app.selected_rc()[0].clone();
+        assert_eq!(s.page_corners().unwrap().radii, [0.0, 0.0, 3.0, 5.0]);
+        assert_eq!(app.corners_as_seen(&s).unwrap().radii, [3.0, 5.0, 0.0, 0.0]);
+        let path = s.page_path();
+        let b = path.bounding_box();
+        assert!(!path.contains(Point::new(b.x0 + 0.5, b.y1 - 0.5)));
+        assert!(!path.contains(Point::new(b.x1 - 0.5, b.y1 - 0.5)));
+        assert!(path.contains(Point::new(b.x0 + 0.5, b.y0 + 0.5)));
+        // Two rectangles whose top left corners, as seen, are the same
+        // size are not mixed, whatever their own order.
+        let other = app
+            .new_shape(ShapeKind::rect_with_corners(
+                R::new(50.0, 0.0, 90.0, 20.0),
+                Corners {
+                    radii: [3.0, 5.0, 0.0, 0.0],
+                    ..Corners::tool_default()
+                },
+            ))
+            .expect("a rectangle");
+        app.select(vec![id, other]);
+        let (shown, mix) = app.selection_corner_mix().unwrap();
+        assert_eq!(shown.radii, [3.0, 5.0, 0.0, 0.0]);
+        assert_eq!(mix, [false; 6]);
+        // The lock sets every corner, wherever it lies.
+        app.corners_together = true;
+        edit_corners(&mut app, CornerEdit::Size(Corners::BOTTOM_RIGHT, 2.0));
+        for s in app.selected_rc().iter() {
+            assert_eq!(s.page_corners().unwrap().radii, [2.0; 4]);
+        }
     }
 
     #[test]

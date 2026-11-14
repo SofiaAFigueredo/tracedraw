@@ -19,14 +19,33 @@ pub enum ColorTarget {
     /// The end handle of a drop shadow (Drop Shadow tool): its colour.
     Shadow(ShapeId),
     DocumentPalette,
+    /// The bar of the user's palette (by its index): it joins it.
+    Palette(usize),
     Nothing,
 }
 
 impl App {
+    /// The user's palette whose bar lies at `at` (screen), shown now and
+    /// taking colours.
+    pub fn palette_bar_at(&self, at: Pos2) -> Option<usize> {
+        self.palette_drop_rects
+            .iter()
+            .rev()
+            .find(|(_, r)| r.contains(at))
+            .map(|(i, _)| *i)
+            .filter(|i| {
+                self.palette_takes_colors(*i)
+                    && self.visible_palettes.iter().skip(1).any(|k| k == i)
+            })
+    }
+
     /// What a colour dropped at `at` (screen) would change.
     pub fn color_target(&self, at: Pos2) -> ColorTarget {
         if self.doc_palette_rect.is_some_and(|r| r.contains(at)) && self.has_document() {
             return ColorTarget::DocumentPalette;
+        }
+        if let Some(i) = self.palette_bar_at(at) {
+            return ColorTarget::Palette(i);
         }
         if !self.canvas_rect.contains(at) || !self.has_document() || self.show_welcome {
             return ColorTarget::Nothing;
@@ -44,7 +63,9 @@ impl App {
         let Some(shape) = self.doc().find_shape(id) else {
             return ColorTarget::Nothing;
         };
-        let tol = OUTLINE_PX / f64::from(self.view.zoom.max(1e-6));
+        // Anywhere on a thick outline as it shows, too (#1935).
+        let tol = OUTLINE_PX / f64::from(self.view.zoom.max(1e-6))
+            + crate::interaction::outline_reach(shape, shape.transform);
         if crate::canvas::distance_to_path(&shape.page_path(), p) <= tol {
             ColorTarget::Outline(id)
         } else {
@@ -61,6 +82,10 @@ impl App {
             }
         }
         match self.color_target(at) {
+            ColorTarget::Palette(i) => match color {
+                Some(c) => self.add_colors_to_palette(i, &[c]),
+                None => false,
+            },
             ColorTarget::DocumentPalette => match color {
                 Some(c) => {
                     self.add_to_document_palette(c);

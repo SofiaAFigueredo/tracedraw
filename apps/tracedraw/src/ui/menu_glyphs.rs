@@ -118,6 +118,7 @@ pub enum Glyph {
     // Tools
     ColorManagement,
     FontManager,
+    TraceCut,
     Ai,
     Clock,
     Script,
@@ -128,7 +129,6 @@ pub enum Glyph {
 
 const RED: Color32 = Color32::from_rgb(0xD0, 0x2B, 0x2B);
 const GREEN: Color32 = Color32::from_rgb(0x1E, 0x9E, 0x3C);
-const BLUE: Color32 = Color32::from_rgb(0x1F, 0x6F, 0xC5);
 const GOLD: Color32 = Color32::from_rgb(0xE8, 0xA3, 0x17);
 
 /// The picture of a menu row, by its key.
@@ -136,6 +136,7 @@ pub fn for_key(key: &str) -> Option<Glyph> {
     use Glyph::*;
     Some(match key {
         "menu.help.product_help" | "menu.help.help_topics" => Help,
+        "menu.help.search_commands" => Find,
         "menu.help.video_tutorials" => Video,
         "menu.help.quick_start_guide" => QuickStart,
         "menu.help.user_guide" => UserGuide,
@@ -208,8 +209,8 @@ pub fn for_key(key: &str) -> Option<Glyph> {
         "menu.object.objects" => ObjectsDocker,
         "menu.object.clip_frame_place_inside" | "menu.object.clip_frame" => ClipInside,
         "menu.object.clip_frame_extract" => ClipExtract,
-        "menu.object.clip_frame_edit" => ClipEdit,
-        "menu.object.clip_frame_finish" => ClipFinish,
+        "menu.object.clip_frame_edit" | "menu.object.symbol_edit" => ClipEdit,
+        "menu.object.clip_frame_finish" | "menu.object.symbol_finish" => ClipFinish,
         "menu.object.insert_barcode" | "menu.object.insert" => Barcode,
         "menu.object.insert_qr" => QrCode,
         "menu.object.symmetry_create" | "menu.object.symmetry_edit" | "menu.object.symmetry" => {
@@ -245,6 +246,7 @@ pub fn for_key(key: &str) -> Option<Glyph> {
         "menu.table.distribute_columns" => DistCols,
         "menu.tools.color_management" => ColorManagement,
         "menu.tools.font_manager" => FontManager,
+        "menu.tools.tracecut" => TraceCut,
         "menu.tools.ai_drawing" | "menu.object.ai_draw_words" => Ai,
         "menu.tools.ai_generate"
         | "menu.tools.options_ai"
@@ -334,8 +336,10 @@ pub fn draw(painter: &Painter, r: Rect, g: Glyph, color: Color32) {
         line((cx - h, cy - h), (cx + h, cy + h), st);
         line((cx - h, cy + h), (cx + h, cy - h), st);
     };
+    // The accent of the pages: the icons' blue (#1682).
+    let blue = accent(crate::ui::icons::accent());
     let plus = |cx: f32, cy: f32, h: f32| {
-        let st = Stroke::new(1.6 * k, accent(GREEN));
+        let st = Stroke::new(1.6 * k, blue);
         line((cx - h, cy), (cx + h, cy), st);
         line((cx, cy - h), (cx, cy + h), st);
     };
@@ -415,7 +419,7 @@ pub fn draw(painter: &Painter, r: Rect, g: Glyph, color: Color32) {
     let blk = |x0: f32, y0: f32, x1: f32, y1: f32, c: Color32| {
         fillr(x0, y0, x1, y1, c);
     };
-    let blue = accent(BLUE);
+
     let grid = |x0: f32, y0: f32, x1: f32, y1: f32, rows: usize, cols: usize| {
         rect(x0, y0, x1, y1, paper, s);
         for i in 1..rows {
@@ -669,12 +673,15 @@ pub fn draw(painter: &Painter, r: Rect, g: Glyph, color: Color32) {
             gear(11.5, 11.5, 4.0);
         }
         PageBackground => {
-            fillr(
+            // The page on a backdrop in the accent: a tinted square with
+            // the accent frame, the page over it.
+            rect(
                 1.5,
                 1.5,
                 14.5,
                 14.5,
-                accent(Color32::from_rgb(0x9C, 0xC8, 0xF0)),
+                accent(blue.gamma_multiply(0.22)),
+                Stroke::new(1.0 * k, blue),
             );
             page(4.0, 3.5, 12.0, 13.0);
         }
@@ -1057,6 +1064,24 @@ pub fn draw(painter: &Painter, r: Rect, g: Glyph, color: Color32) {
             text(6.0, 8.0, "A", 12.0, color);
             text(12.0, 10.0, "a", 9.0, blue);
         }
+        TraceCut => {
+            // A shape with its cut line dashed round it and the knife
+            // cutting along it: the cutting plotter tools.
+            let cut = Stroke::new(1.3 * k, blue);
+            let n = 16;
+            for i in (0..n).step_by(2) {
+                let a0 = i as f32 / n as f32 * std::f32::consts::TAU;
+                let a1 = (i + 1) as f32 / n as f32 * std::f32::consts::TAU;
+                line(
+                    (7.0 + 5.5 * a0.cos(), 9.0 + 5.5 * a0.sin()),
+                    (7.0 + 5.5 * a1.cos(), 9.0 + 5.5 * a1.sin()),
+                    cut,
+                );
+            }
+            // The knife: a handle and its blade, the tip on the cut line.
+            line((15.0, 1.0), (11.8, 4.2), bold);
+            closed(&[(11.8, 4.2), (9.9, 4.6), (11.0, 5.9)], color, Stroke::NONE);
+        }
         Ai => {
             closed(
                 &[
@@ -1104,5 +1129,26 @@ pub fn draw(painter: &Painter, r: Rect, g: Glyph, color: Color32) {
             fillr(3.5, 1.5, 9.5, 5.0, color);
             gear(12.0, 12.0, 3.6);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracecut_has_its_own_picture() {
+        assert_eq!(for_key("menu.tools.tracecut"), Some(Glyph::TraceCut));
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let r = Rect::from_min_size(Pos2::ZERO, Vec2::splat(16.0));
+            assert!(crate::ui::menus::draw_menu_picture(
+                ui.painter(),
+                r,
+                "menu.tools.tracecut",
+                Color32::GRAY
+            ));
+        });
+        out.textures_delta.clear();
     }
 }

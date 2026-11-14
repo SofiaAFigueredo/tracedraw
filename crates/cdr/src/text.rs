@@ -123,6 +123,51 @@ pub(crate) fn decode_charset(b: &[u8], charset: u8) -> String {
     }
 }
 
+/// The Unicode block of the letters a character set adds to the Latin
+/// ones, for the sets whose script is not written with Latin letters.
+fn charset_script(charset: u8) -> Option<std::ops::RangeInclusive<char>> {
+    Some(match charset {
+        161 => '\u{370}'..='\u{3ff}',
+        177 => '\u{590}'..='\u{5ff}',
+        178 => '\u{600}'..='\u{6ff}',
+        204 => '\u{400}'..='\u{4ff}',
+        222 => '\u{e00}'..='\u{e7f}',
+        _ => return None,
+    })
+}
+
+/// The text of a run in the code page of its character set, or in
+/// Windows-1252 when that reading shows the run is Latin text set in a
+/// font of another script (#2047: Spanish text in a font recorded with
+/// the Arabic set opened with an Arabic letter for each a, i, o and u
+/// acute, inside words of Latin letters). The run is Latin when more of
+/// its words mix Latin letters with the set's own than are written in
+/// the set's letters alone; a lone letter decides nothing.
+pub(crate) fn decode_run(b: &[u8], charset: u8) -> String {
+    let text = decode_charset(b, charset);
+    let Some(script) = charset_script(charset) else {
+        return text;
+    };
+    let latin = |c: char| c < '\u{250}' && c.is_alphabetic();
+    let (mut mixed, mut own) = (0usize, 0usize);
+    for word in text.split(|c: char| !(latin(c) || script.contains(&c))) {
+        let letters = word.chars().filter(|c| script.contains(c)).count();
+        if letters == 0 {
+            continue;
+        }
+        if word.chars().any(latin) {
+            mixed += 1;
+        } else if letters > 1 {
+            own += 1;
+        }
+    }
+    if mixed > own {
+        decode_charset(b, 0)
+    } else {
+        text
+    }
+}
+
 /// The character set is one whose text differs from Windows-1252.
 pub(crate) fn is_non_latin_charset(charset: u8) -> bool {
     charset == 2 || charset_encoding(charset).is_some()
@@ -218,11 +263,15 @@ pub(crate) struct RunStyle {
     pub char_spacing: Option<f64>,
     /// Paragraph indents in points: (left, first line, right).
     pub indent_pt: Option<(f64, f64, f64)>,
+    /// The paragraph's tab stops (the style table's tab entries before
+    /// version 16, the `tabs` member of a style string's paragraph from
+    /// 16), mm from the frame's left edge.
+    pub tabs: Option<Vec<tracedraw_core::TabStop>>,
     /// Version 16+ style strings: the space before and after a paragraph
     /// as factors of the character height (`beforeParaSpacing` 1.0 is no
     /// extra space, `afterParaSpacing` 0.0 none), and the unit they and
-    /// the line spacing are given in (`spacingMethod`; only 0, the
-    /// character height, is read).
+    /// the line spacing are given in (`spacingMethod`: 0 the character
+    /// height, 1 points, 2 the point size; read in `paragraph_spacing`).
     pub para_before: Option<f64>,
     pub para_after: Option<f64>,
     pub spacing_method: Option<u32>,
@@ -387,6 +436,7 @@ impl RunStyle {
             },
             char_spacing: self.char_spacing.or(base.char_spacing),
             indent_pt: self.indent_pt.or(base.indent_pt),
+            tabs: self.tabs.clone().or_else(|| base.tabs.clone()),
             para_before: self.para_before.or(base.para_before),
             para_after: self.para_after.or(base.para_after),
             spacing_method: self.spacing_method.or(base.spacing_method),
@@ -649,9 +699,12 @@ fn read_stlt_set11(
         };
         intervals.insert(id, (ch as i32 as f64 / 1_000_000.0, line));
     }
-    if skip_table(&mut r, 152).is_none() || skip_table(&mut r, 784).is_none() {
+    if skip_table(&mut r, 152).is_none() {
         return Vec::new();
     }
+    let Some(tab_entries) = read_tab_table(&mut r, v) else {
+        return Vec::new();
+    };
     // Bullets have a variable size.
     let Some(nb) = r.u32() else {
         return Vec::new();
@@ -785,11 +838,14 @@ fn read_stlt_set11(
         }
         if num > 2 {
             // tab, bullet, indent, hyphen and drop cap ids.
-            let (Some(_tab), Some(_bullet), Some(indent_ref), Some(_hyphen), Some(_drop)) =
+            let (Some(tab_ref), Some(_bullet), Some(indent_ref), Some(_hyphen), Some(_drop)) =
                 (r.u32(), r.u32(), r.u32(), r.u32(), r.u32())
             else {
                 break;
             };
+            if let Some(t) = tab_entries.get(&tab_ref) {
+                style.tabs = Some(t.clone());
+            }
             if let Some(ind) = indents.get(&indent_ref) {
                 if ind.0.is_finite() && ind.1.is_finite() && ind.2.is_finite() {
                     style.indent_pt = Some(*ind);
@@ -800,6 +856,113 @@ fn read_stlt_set11(
     }
     *exact = out.len() == num_records as usize && r.remaining() == 0;
     out
+}
+
+/// The most columns a text frame is read with (versions 7 to 15).
+const MAX_COLUMNS: u32 = 64;
+
+/// The size of a style table tab entry (versions 7 to 15).
+pub(crate) const TAB_ENTRY_SIZE: usize = 784;
+/// The stops a style table tab entry holds at most.
+pub(crate) const TAB_ENTRY_STOPS: usize = 64;
+
+/// A tab stop kind as files give it: 0 left, 1 right (the right stops of
+/// the first #1852 samples confirmed by the previews they carry), 2
+/// centre and 3 decimal (the #1852 combination files, versions 7 to 21:
+/// a frame each of left, centre and right stops, from top to bottom 0, 2
+/// and 1, and menus with decimal stops, 3). Codes no file has shown read
+/// as left.
+pub(crate) fn tab_kind_of(code: u32) -> tracedraw_core::TabKind {
+    match code {
+        1 => tracedraw_core::TabKind::Right,
+        2 => tracedraw_core::TabKind::Center,
+        3 => tracedraw_core::TabKind::Decimal,
+        _ => tracedraw_core::TabKind::Left,
+    }
+}
+
+/// The code a file holds for a tab stop kind ([`tab_kind_of`]).
+pub(crate) fn tab_code(kind: tracedraw_core::TabKind) -> u32 {
+    match kind {
+        tracedraw_core::TabKind::Left => 0,
+        tracedraw_core::TabKind::Right => 1,
+        tracedraw_core::TabKind::Center => 2,
+        tracedraw_core::TabKind::Decimal => 3,
+    }
+}
+
+/// The tab entries of a style table (versions 7 to 15; earlier ones are
+/// skipped by their size): each is 784 bytes, an id, 4 bytes, the number
+/// of stops (u16), the leader spacing (u16), the leader character (u32),
+/// then 64 slots of 12 bytes, of which the first `count` are stops: a
+/// word that is 0 in every sample, the kind ([`tab_kind_of`]) and the
+/// position (i32, coordinate units from the frame's left edge). Files
+/// of the #1852 samples, versions 7 to 15, all hold this layout; their
+/// root style lists the program's defaults (a left stop every 12.7 mm).
+fn read_tab_table(
+    r: &mut Reader,
+    v: u16,
+) -> Option<std::collections::HashMap<u32, Vec<tracedraw_core::TabStop>>> {
+    let n = r.u32()? as usize;
+    let n = n.min(r.remaining() / TAB_ENTRY_SIZE);
+    let mut out = std::collections::HashMap::with_capacity(n);
+    for _ in 0..n {
+        let rec = r.b.get(r.pos..r.pos.checked_add(TAB_ENTRY_SIZE)?)?;
+        r.skip(TAB_ENTRY_SIZE);
+        if v < 7 {
+            continue;
+        }
+        let word = |at: usize| -> Option<u32> {
+            rec.get(at..at + 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let Some(id) = word(0) else { continue };
+        let count = rec
+            .get(8..10)
+            .map_or(0, |b| u16::from_le_bytes([b[0], b[1]]) as usize)
+            .min(TAB_ENTRY_STOPS);
+        let mut stops = Vec::with_capacity(count);
+        for k in 0..count {
+            let at = 16 + k * 12;
+            let (Some(kind), Some(pos)) = (word(at + 4), word(at + 8)) else {
+                break;
+            };
+            let mm = pos as i32 as f64 * PT_PER_UNIT * 25.4 / 72.0;
+            if mm.is_finite() && (0.0..=10_000.0).contains(&mm) {
+                stops.push(tracedraw_core::TabStop::new(mm, tab_kind_of(kind)));
+            }
+        }
+        out.insert(id, stops);
+    }
+    Some(out)
+}
+
+/// The `tabs` member of a version 16+ style string's paragraph: stops
+/// separated by `|`, each three numbers: a word that is 0 in every
+/// sample, the kind ([`tab_kind_of`]) and the position in coordinate
+/// units ("0,1,1681755" is a right stop 168.18 mm from the frame's left
+/// edge). An empty string is no stops.
+pub(crate) fn parse_tabs_member(s: &str) -> Option<Vec<tracedraw_core::TabStop>> {
+    let mut out = Vec::new();
+    for stop in s.split('|').map(str::trim).filter(|t| !t.is_empty()) {
+        let nums: Vec<f64> = stop
+            .split(',')
+            .map(|n| n.trim().parse::<f64>())
+            .collect::<Result<_, _>>()
+            .ok()?;
+        let (Some(kind), Some(pos)) = (nums.get(1), nums.get(2)) else {
+            return None;
+        };
+        let mm = pos * PT_PER_UNIT * 25.4 / 72.0;
+        if !mm.is_finite() || !(0.0..=10_000.0).contains(&mm) || *kind < 0.0 {
+            return None;
+        }
+        out.push(tracedraw_core::TabStop::new(mm, tab_kind_of(*kind as u32)));
+        if out.len() >= TAB_ENTRY_STOPS * 4 {
+            break;
+        }
+    }
+    Some(out)
 }
 
 /// One styled run of text.
@@ -829,6 +992,20 @@ pub(crate) struct Txsm {
     /// How the first frame fitted to a path sits on it (version 16+).
     pub path_settings: Option<PathSettings>,
     pub paragraphs: Vec<TextParagraph>,
+    /// Version 16+ run records holding a style of their own while marked
+    /// as applying none of its members (see `read_txsm_16`).
+    pub inert_styles: usize,
+    /// The settings of the first paragraph frame (version 16+: the style
+    /// string of its frame record, holding its columns).
+    pub frame_style: Option<String>,
+    /// Version 16+: the record's layout version (1700, 1800 ...).
+    pub layout: Option<u16>,
+    /// Version 16+ paragraph text (the frame flag clear): each
+    /// paragraph's default style string as stored, for the checker.
+    pub frame_text_styles: Vec<String>,
+    /// Versions 7 to 15: the first frame's columns when it has several
+    /// (their number and the gutter after the first, in file units).
+    pub columns: Option<(u32, f64)>,
 }
 
 /// How a text fitted to a path sits on it: the 40 bytes after the
@@ -927,6 +1104,11 @@ fn early_paragraphs(chars: &[u8], size_pt: Option<f64>) -> Txsm {
         on_path: false,
         path_settings: None,
         paragraphs,
+        inert_styles: 0,
+        frame_style: None,
+        layout: None,
+        frame_text_styles: Vec::new(),
+        columns: None,
     }
 }
 
@@ -1018,6 +1200,9 @@ fn read_txsm_7_frames(
     if nf > MAX_FRAMES {
         return None;
     }
+    // The first frame's columns (count, gutter in file units) when it has
+    // several.
+    let mut out_columns: Option<(u32, f64)> = None;
     for _ in 0..nf {
         let _frame_id = r.u32()?;
         r.skip(48);
@@ -1039,18 +1224,43 @@ fn read_txsm_7_frames(
         }
         if !frame {
             // Version 8: 32 bytes (800) or 34 (the bidirectional 801),
-            // chosen by the caller.
-            r.skip(if v >= 15 {
-                40
-            } else if v >= 14 {
-                36
-            } else if v > 8 {
-                34
-            } else if v == 8 {
-                frame_v8
+            // chosen by the caller. The block holds the frame's column
+            // count (at byte 4, at byte 8 from version 15) and then a
+            // width and a gutter (two i32) for each column, so a frame of
+            // more than one column has 8 more bytes a column (#1852: the
+            // two-column frames of the combination files, versions 7 to
+            // 15).
+            let at = r.pos + if v >= 15 { 8 } else { 4 };
+            let word = |i: usize| {
+                d.get(i..i + 4)
+                    .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            };
+            let columns = word(at).map_or(1, |n| n as u32);
+            let extra = if (2..=MAX_COLUMNS).contains(&columns) {
+                // The first column's gutter: after the count, 2 bytes
+                // from version 8, and the column's width.
+                let gutter = word(at + 4 + if v >= 8 { 2 } else { 0 } + 4);
+                if out_columns.is_none() {
+                    out_columns = gutter.filter(|g| *g >= 0).map(|g| (columns, f64::from(g)));
+                }
+                (columns as usize - 1) * 8
             } else {
-                36
-            });
+                0
+            };
+            r.skip(
+                extra
+                    + if v >= 15 {
+                        40
+                    } else if v >= 14 {
+                        36
+                    } else if v > 8 {
+                        34
+                    } else if v == 8 {
+                        frame_v8
+                    } else {
+                        36
+                    },
+            );
         } else if v >= 15 {
             r.skip(4);
         }
@@ -1063,6 +1273,11 @@ fn read_txsm_7_frames(
         on_path: any_on_path,
         path_settings: None,
         paragraphs: Vec::new(),
+        inert_styles: 0,
+        frame_style: None,
+        layout: None,
+        frame_text_styles: Vec::new(),
+        columns: out_columns,
     };
     for _ in 0..np {
         let style_id = r.u32()?;
@@ -1368,6 +1583,25 @@ pub(crate) fn decode_style_bytes(b: &[u8], charset: u8) -> String {
     }
 }
 
+/// Whether a style string starts at `at`: its length, then (after any
+/// white space) the `{` that opens it, in UTF-16 before version 17.
+fn style_string_at(d: &[u8], at: usize, v: u16) -> bool {
+    let Some(len) = d
+        .get(at..at + 4)
+        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    else {
+        return false;
+    };
+    let unit = if v < 17 { 2 } else { 1 };
+    let Some(body) = len
+        .checked_mul(unit)
+        .and_then(|n| d.get(at + 4..at + 4 + n))
+    else {
+        return false;
+    };
+    body.iter().step_by(unit).find(|c| !c.is_ascii_whitespace()) == Some(&b'{')
+}
+
 fn read_txsm_16(d: &[u8], v: u16, charset: u8, warn: &mut dyn FnMut(String)) -> Option<Txsm> {
     let mut r = Reader::new(d, false);
     // Not zero: the frame layout of the records below (artistic text has
@@ -1382,6 +1616,7 @@ fn read_txsm_16(d: &[u8], v: u16, charset: u8, warn: &mut dyn FnMut(String)) -> 
     }
     let mut any_on_path = false;
     let mut path_settings = None;
+    let mut frame_style = None;
     for _ in 0..nf {
         let _frame_id = r.u32()?;
         r.skip(48);
@@ -1395,9 +1630,13 @@ fn read_txsm_16(d: &[u8], v: u16, charset: u8, warn: &mut dyn FnMut(String)) -> 
         }
         r.skip(8);
         if !frame {
+            // 0, the frame's height (negative), 0, its width, then its
+            // settings (files of versions 19, 22 and 27).
             r.skip(16);
-            let len = r.u32()? as usize;
-            r.skip(if v >= 17 { len } else { len.saturating_mul(2) });
+            let style = read_style_string(&mut r, d, v, charset)?;
+            if frame_style.is_none() {
+                frame_style = Some(style);
+            }
         }
     }
     let np = r.u32()? as usize;
@@ -1408,6 +1647,11 @@ fn read_txsm_16(d: &[u8], v: u16, charset: u8, warn: &mut dyn FnMut(String)) -> 
         on_path: any_on_path,
         path_settings,
         paragraphs: Vec::new(),
+        inert_styles: 0,
+        frame_style,
+        layout: Some(layout),
+        frame_text_styles: Vec::new(),
+        columns: None,
     };
     for _ in 0..np {
         let style_id = r.u32()?;
@@ -1416,12 +1660,21 @@ fn read_txsm_16(d: &[u8], v: u16, charset: u8, warn: &mut dyn FnMut(String)) -> 
         if flag == 1 {
             r.skip(64);
         }
+        // Paragraph text of a layout before 1700 may hold the paragraph's
+        // base style before its default (public notes), or only the
+        // default, as the 84 paragraph texts of layout 1500 in a version
+        // 21 file do (#1833: the record count follows it). A second string
+        // is taken only when one starts there.
         let mut base = RunStyle::default();
-        if layout < 1700 && !frame {
-            let s = read_style_string(&mut r, d, v, charset)?;
-            base = parse_style_string(&s);
+        let mut first = read_style_string(&mut r, d, v, charset)?;
+        if layout < 1700 && !frame && style_string_at(d, r.pos, v) {
+            base = parse_style_string(&first);
+            first = read_style_string(&mut r, d, v, charset)?;
         }
-        let default = parse_style_string(&read_style_string(&mut r, d, v, charset)?).over(&base);
+        if !frame {
+            out.frame_text_styles.push(first.clone());
+        }
+        let default = parse_style_string(&first).over(&base);
         let nr = r.u32()? as usize;
         if nr > MAX_RUNS || nr > r.remaining() / 6 {
             return finish(out, warn, "style record count");
@@ -1439,11 +1692,19 @@ fn read_txsm_16(d: &[u8], v: u16, charset: u8, warn: &mut dyn FnMut(String)) -> 
                 let len = r.u32()? as usize;
                 r.skip(len.saturating_mul(2));
             }
-            let style = if st2 != 0 || st3 & 0x04 != 0 {
-                parse_style_string(&read_style_string(&mut r, d, v, charset)?)
-            } else {
-                RunStyle::default()
-            };
+            // Every record ends with a style string, also one marked
+            // with neither members nor a locale (0, 0): the files of
+            // versions 16 to 27 that hold such records (the saves of
+            // #1139 and #1297 of a text the program that wrote them had
+            // made one record of) carry `{"character":{}}` there.
+            let text = read_style_string(&mut r, d, v, charset)?;
+            let style = parse_style_string(&text);
+            // A style marked with no member applying is ignored by the
+            // program that wrote the samples (TraceDraw wrote its runs so
+            // until 0.28, #1297); it is read all the same.
+            if st2 == 0 && style != RunStyle::default() {
+                out.inert_styles += 1;
+            }
             records.push(style);
         }
         let nc = r.u32()? as usize;
@@ -1895,6 +2156,17 @@ fn apply_paragraph_object(s: &mut RunStyle, items: &[(String, Json)]) {
         if matches!(v, Json::Obj(_) | Json::Arr(_)) {
             continue;
         }
+        if lk == "tabs" {
+            if let Json::Str(t) = v {
+                if let Some(tabs) = parse_tabs_member(t) {
+                    s.tabs = Some(tabs);
+                }
+            }
+            continue;
+        }
+        if lk.starts_with("tableader") {
+            continue;
+        }
         if lk == "beforeparaspacing" || lk == "afterparaspacing" {
             if let Some(n) = v.num() {
                 let f = n / 1_000_000.0;
@@ -1940,12 +2212,6 @@ fn apply_paragraph_object(s: &mut RunStyle, items: &[(String, Json)]) {
     }
 }
 
-/// The opacity an object's version 16+ style string gives it: its
-/// `transparency` section's `uniformTransparency` is the share of the
-/// object that lets the background through (0.3 draws it at 70 %: the
-/// colours of a version 19 file's preview match that). Without it, the
-/// mean of `startTransparency` and `endTransparency` (a graded
-/// transparency drawn uniform, assumed). `None` for an empty section.
 /// The mitre limit (degrees) in an object's version 16+ style string:
 /// `outline.miterLimit` (a file of version 27 holds "28.955024..." for an
 /// outline its program shows with a limit of 29 degrees, #384).
@@ -1970,6 +2236,35 @@ pub(crate) fn object_miter_limit(style: &str) -> Option<f64> {
         })
 }
 
+/// Whether an object's version 16+ style string fills it with the
+/// nonzero rule: `fill.winding` "1" (#1919: a version 27 file whose traced
+/// lettering is made of overlapping parts, drawn filled where they overlap
+/// in the program that wrote it and in the page preview it carries) or
+/// "0" (even-odd). `None` without it.
+pub(crate) fn object_fill_winding(style: &str) -> Option<bool> {
+    let t = style.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    let Json::Obj(items) = parse_json(t)? else {
+        return None;
+    };
+    let Json::Obj(fill) = &items.iter().find(|(k, _)| k == "fill")?.1 else {
+        return None;
+    };
+    let w = fill.iter().find(|(k, _)| k == "winding")?.1.num()?;
+    if w == 1.0 {
+        Some(true)
+    } else if w == 0.0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// The opacity an object's version 16+ style string gives it: its
+/// `transparency` section's `uniformTransparency` is the share of the
+/// object that lets the background through (0.3 draws it at 70 %: the
+/// colours of a version 19 file's preview match that). Without it, the
+/// mean of `startTransparency` and `endTransparency` (a graded
+/// transparency drawn uniform, assumed). `None` for an empty section.
 pub(crate) fn object_opacity(style: &str) -> Option<f64> {
     let t = style.trim_matches(|c: char| c == '\0' || c.is_whitespace());
     let Json::Obj(items) = parse_json(t)? else {
@@ -1989,6 +2284,27 @@ pub(crate) fn object_opacity(style: &str) -> Option<f64> {
         None => (get("startTransparency")? + get("endTransparency")?) / 2.0,
     };
     Some((1.0 - amount).clamp(0.0, 1.0))
+}
+
+/// Whether an object's version 16+ style string gives its `transparency`
+/// section a `fill` of `type` 1 (uniform, as in fill sections): a version
+/// 24 file keeps the amount of such a transparency in argument 8000, not in
+/// the style string (#1706).
+pub(crate) fn object_transparency_is_uniform_fill(style: &str) -> bool {
+    let t = style.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    let Some(Json::Obj(items)) = parse_json(t) else {
+        return false;
+    };
+    let Some((_, Json::Obj(tr))) = items.iter().find(|(k, _)| k == "transparency") else {
+        return false;
+    };
+    let Some((_, Json::Obj(fill))) = tr.iter().find(|(k, _)| k == "fill") else {
+        return false;
+    };
+    fill.iter()
+        .find(|(k, _)| k == "type")
+        .and_then(|(_, v)| v.num())
+        .is_some_and(|n| n == 1.0)
 }
 
 /// A graded transparency from an object's version 16+ style string: its
@@ -2067,6 +2383,35 @@ pub(crate) fn object_transparency_mask(style: &str) -> Option<(tracedraw_core::F
     crate::mirror_centred_stops(&mut fountain);
     let target = num(&tr, "appliesTo").unwrap_or(2.0).clamp(0.0, 2.0) as u8;
     Some((Fill::Fountain(fountain), target))
+}
+
+/// The columns of a paragraph frame from its version 16+ settings (the
+/// style string of its `txsm` frame record, or the object's): their
+/// number and the gap between the first two, in file units, when there
+/// are several. `columns` lists each column's width and the gap after it
+/// (`"197607,0"`: one column, in files of versions 19 to 27; several
+/// columns assumed listed alike, as TraceDraw writes them).
+pub(crate) fn frame_columns(style: &str) -> Option<(u32, f64)> {
+    let t = style.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    let Json::Obj(items) = parse_json(t)? else {
+        return None;
+    };
+    let Json::Obj(frame) = &items.iter().find(|(k, _)| k == "frame")?.1 else {
+        return None;
+    };
+    let Json::Str(cols) = &frame.iter().find(|(k, _)| k == "columns")?.1 else {
+        return None;
+    };
+    let v: Vec<f64> = cols
+        .split(',')
+        .map(|p| p.trim().parse::<f64>().ok())
+        .collect::<Option<Vec<f64>>>()?;
+    let n = v.len().div_ceil(2);
+    if !(2..=64).contains(&n) {
+        return None;
+    }
+    let gap = v.get(1).copied().filter(|g| g.is_finite() && *g >= 0.0)?;
+    Some((n as u32, gap))
 }
 
 /// The width of a paragraph frame from an object's version 16+ style
@@ -2267,6 +2612,98 @@ mod tests {
         assert!(read.contains("方正黑体_GBK"), "{read}");
     }
 
+    /// A style table tab entry (versions 7 to 15, #1852): id, 4 bytes,
+    /// the stop count, the leader spacing and character, then 64 slots of
+    /// (0, kind, position); built here from that layout, the values those
+    /// of the samples' right stop at 168.1755 mm and the default grid's
+    /// first left stop at 12.7 mm.
+    #[test]
+    fn style_table_tab_entries_give_kinds_and_positions() {
+        let entry = |id: u32, stops: &[(u32, i32)]| {
+            let mut b = Vec::new();
+            b.extend_from_slice(&id.to_le_bytes());
+            b.extend_from_slice(&0u32.to_le_bytes());
+            b.extend_from_slice(&(stops.len() as u16).to_le_bytes());
+            b.extend_from_slice(&1u16.to_le_bytes());
+            b.extend_from_slice(&u32::from(b'.').to_le_bytes());
+            for (kind, pos) in stops {
+                b.extend_from_slice(&0u32.to_le_bytes());
+                b.extend_from_slice(&kind.to_le_bytes());
+                b.extend_from_slice(&pos.to_le_bytes());
+            }
+            b.resize(TAB_ENTRY_SIZE, 0);
+            b
+        };
+        let mut d = 2u32.to_le_bytes().to_vec();
+        d.extend(entry(7, &[(0, 127_000), (0, 254_000)]));
+        d.extend(entry(9, &[(1, 1_681_755)]));
+        d.extend_from_slice(&[0xaa; 4]);
+        let mut r = Reader::new(&d, false);
+        let t = read_tab_table(&mut r, 12).expect("table");
+        assert_eq!(r.remaining(), 4, "the table ends after its entries");
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let grid = &t[&7];
+        assert_eq!(grid.len(), 2);
+        assert!(close(grid[0].pos, 12.7) && grid[0].kind == tracedraw_core::TabKind::Left);
+        assert!(close(grid[1].pos, 25.4));
+        let right = &t[&9];
+        assert!(close(right[0].pos, 168.1755), "{right:?}");
+        assert_eq!(right[0].kind, tracedraw_core::TabKind::Right);
+        // A count past the 64 slots reads the slots; a short table stops.
+        let mut d = 1u32.to_le_bytes().to_vec();
+        let mut e = entry(3, &[]);
+        e[8..10].copy_from_slice(&500u16.to_le_bytes());
+        d.extend(e);
+        let mut r = Reader::new(&d, false);
+        assert_eq!(read_tab_table(&mut r, 12).expect("table")[&3].len(), 64);
+        let mut r = Reader::new(&d[..100], false);
+        assert!(read_tab_table(&mut r, 12).expect("table").is_empty());
+    }
+
+    /// The `tabs` member of a version 16+ paragraph style string: stops
+    /// of (0, kind, position) separated by `|` (#1852).
+    #[test]
+    fn style_string_tabs_give_kinds_and_positions() {
+        let s = parse_style_string(
+            r#"{"paragraph":{"tabs":"0,1,1681755","tabLeaderSpacing":"1","tabLeaderChar":"2e000000"}}"#,
+        );
+        let t = s.tabs.expect("stops");
+        assert_eq!(t.len(), 1);
+        assert!((t[0].pos - 168.1755).abs() < 1e-9);
+        assert_eq!(t[0].kind, tracedraw_core::TabKind::Right);
+        let t = parse_tabs_member("0,0,127000|0,0,254000").expect("stops");
+        assert_eq!(t.len(), 2);
+        assert!((t[1].pos - 25.4).abs() < 1e-9);
+        assert_eq!(parse_tabs_member("").expect("none"), Vec::new());
+        assert!(parse_tabs_member("0,x,5").is_none());
+        assert!(parse_tabs_member("0,1").is_none());
+        // A code no file has shown reads as a left stop.
+        assert_eq!(tab_kind_of(7), tracedraw_core::TabKind::Left);
+        assert_eq!(tab_code(tracedraw_core::TabKind::Right), 1);
+        assert_eq!(tab_code(tracedraw_core::TabKind::Left), 0);
+    }
+
+    /// The four tab stop kinds of the #1852 combination files (versions 7
+    /// to 21, one frame each of left, centre and right stops and menus
+    /// with decimal stops): 0 left, 1 right, 2 centre, 3 decimal, read
+    /// and written alike.
+    #[test]
+    fn tab_kinds_centre_and_decimal_have_their_codes() {
+        use tracedraw_core::TabKind;
+        for (code, kind) in [
+            (0, TabKind::Left),
+            (1, TabKind::Right),
+            (2, TabKind::Center),
+            (3, TabKind::Decimal),
+        ] {
+            assert_eq!(tab_kind_of(code), kind);
+            assert_eq!(tab_code(kind), code);
+        }
+        let t = parse_tabs_member("0,2,799758|0,3,1788584").expect("stops");
+        assert_eq!(t[0].kind, TabKind::Center);
+        assert_eq!(t[1].kind, TabKind::Decimal);
+    }
+
     #[test]
     fn early_text_lines_end_at_cr_or_cr_lf() {
         let t = early_paragraphs(b"ab\r\ncd\ref", Some(10.0));
@@ -2327,6 +2764,46 @@ mod tests {
             decode_cp1252(&[0x41, 0x80, 0x93, 0xe9, 0x00, 0x42]),
             "A\u{20ac}\u{201c}é"
         );
+    }
+
+    #[test]
+    fn latin_runs_in_a_font_of_another_script_read_as_latin() {
+        // "Economia" with i acute, "manana" with n tilde, "mas" with a
+        // acute: Windows-1256 has an Arabic letter or mark at each.
+        let es = [b'E', b'c', b'o', b'n', b'o', b'm', 0xed, b'a'];
+        assert_eq!(decode_charset(&es, 178), "Econom\u{64a}a");
+        assert_eq!(decode_run(&es, 178), "Econom\u{ed}a");
+        assert_eq!(
+            decode_run(&[b'm', b'a', 0xf1, b'a', b'n', b'a'], 178),
+            "ma\u{f1}ana"
+        );
+        // The same in a font of the Cyrillic, Greek or Hebrew set.
+        assert_eq!(decode_run(&[b'c', b'a', b'f', 0xe9], 204), "caf\u{e9}");
+        assert_eq!(decode_run(&[b'm', 0xe1, b's'], 161), "m\u{e1}s");
+        assert_eq!(decode_run(&[b'm', 0xe1, b's'], 177), "m\u{e1}s");
+        // Text of the set's own script stays, with Latin words beside it
+        // and even one joined to a word.
+        let ar = [0xe3, 0xd1, 0xcd, 0xc8, 0xc7];
+        assert_eq!(decode_run(&ar, 178), "\u{645}\u{631}\u{62d}\u{628}\u{627}");
+        let mut both = ar.to_vec();
+        both.extend_from_slice(b" PDF ");
+        both.extend_from_slice(&ar);
+        both.extend_from_slice(b"PDF");
+        assert_eq!(decode_run(&both, 178), decode_charset(&both, 178));
+        assert_eq!(
+            decode_run(
+                &[0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2, b' ', b'c', b'a', b'f'],
+                204
+            ),
+            "\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} caf"
+        );
+        // Scripts written with Latin letters are read in their code page.
+        assert_eq!(
+            decode_run(&[0xa3, 0xf3, 0x64, 0x9f], 238),
+            decode_charset(&[0xa3, 0xf3, 0x64, 0x9f], 238)
+        );
+        // A lone letter decides nothing.
+        assert_eq!(decode_run(&[0xe1], 178), "\u{644}");
     }
 
     #[test]

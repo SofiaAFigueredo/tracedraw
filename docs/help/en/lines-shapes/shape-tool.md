@@ -28,7 +28,8 @@ over a control handle, a wave over a segment.
 - <kbd>Shift</kbd>+click selects every node from the last selected one to the
   one you click.
 - Drag a marquee around nodes. The property bar's selection mode chooses a
-  rectangular or a freehand marquee.
+  rectangular or a freehand marquee; <kbd>Alt</kbd>+drag always draws a
+  freehand one, and <kbd>Alt+Shift</kbd>+drag adds its nodes to those selected.
 - <kbd>Tab</kbd> and <kbd>Shift+Tab</kbd> select the next or previous node;
   <kbd>Home</kbd> and <kbd>End</kbd> the first or last.
 - <kbd>Ctrl+A</kbd>, the select all nodes button, or a double-click on the
@@ -55,9 +56,8 @@ over a control handle, a wave over a segment.
   adds a node in the middle of each segment that ends at them. Neighbouring
   nodes deleted together leave one curve fitted to the old outline, so the
   shape keeps its general form.
-- With nodes selected, <kbd>C</kbd> switches them between cusp and smooth,
-  <kbd>S</kbd> between smooth and symmetrical, and <kbd>Y</kbd> makes them
-  symmetrical.
+- With nodes selected, <kbd>C</kbd> makes them cusp, <kbd>S</kbd> smooth
+  and <kbd>Y</kbd> symmetrical.
 - With nodes selected, <kbd>Ctrl+C</kbd> copies the segments between them as
   new curves, <kbd>Ctrl+X</kbd> cuts them out, and <kbd>Ctrl+D</kbd>
   duplicates them.
@@ -82,6 +82,12 @@ are off at first, so they do not get in the way of editing nodes; turn on
   rounded corner keeps its ring: drag it again to change the radius, further
   in or back to a sharp corner. This also works on corners rounded in saved
   drawings and with the [[docker.corners]] panel.
+- With the rings on, the property bar shows the radius of the chosen
+  corners (click a ring to choose it), or of every corner when none is
+  chosen; type a radius to round them. The three buttons before it make
+  the value round the corners, scallop them (a notch curving inward) or
+  chamfer them (a straight cut), the value then being the distance along
+  each side.
 - On a stretched curve the corners come out round on the page, not oval.
   Rectangles round their corners by their own nodes, whatever this option
   says.
@@ -89,7 +95,9 @@ are off at first, so they do not get in the way of editing nodes; turn on
 ## The property bar {#property-bar}
 
 - **Selection mode**: rectangular or freehand marquee.
-- **Add node** and **Delete node**.
+- **Add node** and **Delete node**. Add node puts a node in the middle of
+  each segment ending at a selected node and keeps the nodes selected with
+  the new ones, so pressing it again doubles the nodes again.
 - **Join nodes** joins two end nodes into one; **Break curve** splits the
   curve at the selected node.
 - **Convert to line** and **Convert to curve** make the segment ending at
@@ -111,7 +119,9 @@ are off at first, so they do not get in the way of editing nodes; turn on
 - **Select all nodes**.
 - **Reduce nodes** removes nodes that are not needed, from the selected
   nodes or from the whole curve. Drag the **curve smoothness** slider to
-  remove more nodes gradually.
+  remove more nodes gradually, or type a value into it; it keeps its value
+  until you do something else, and works from the curve as it was when you
+  first moved it.
 
 ## Aligning nodes {#align-nodes}
 

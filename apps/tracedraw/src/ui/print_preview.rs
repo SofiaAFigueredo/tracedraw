@@ -21,6 +21,9 @@ pub struct PrintPreview {
     /// The inks shown while Print separations is on, one per plate of
     /// [`plates`] (all at first, #571).
     pub inks: Vec<bool>,
+    /// One ink ticked alone shows in the colour it prints, as several
+    /// do, instead of its plate in grey (#1652).
+    pub ink_in_color: bool,
     /// Zoom over the fitted size (1 = the sheet fits the window).
     pub zoom: f32,
     /// A drag on the sheet moves the page information, not the artwork.
@@ -44,6 +47,7 @@ impl PrintPreview {
             st,
             sheet: 0,
             inks: Vec::new(),
+            ink_in_color: false,
             zoom: 1.0,
             move_info: false,
             margin_drag: None,
@@ -56,11 +60,26 @@ impl PrintPreview {
     }
 }
 
+/// The bleed limit field's tip: its name, without the label's colon, and
+/// what it does.
+fn bleed_limit_tip() -> String {
+    format!(
+        "{}\n{}",
+        tr("print.bleed_limit").trim_end_matches([':', '\u{ff1a}', ' ', '\u{a0}']),
+        tr("print.bleed_limit_desc")
+    )
+}
+
 /// What the sheets depend on: every print setting but the preflight list.
 fn settings_key(st: &PrintState) -> String {
     let mut st = st.clone();
     st.preflight = None;
     st.copies = 1;
+    // Naming, deleting or choosing a layout preset changes no sheet.
+    st.layout_preset.clear();
+    st.layout_preset_typed = None;
+    st.layout_preset_delete = None;
+    st.layout_preset_request = None;
     format!("{st:?}")
 }
 
@@ -75,6 +94,40 @@ fn sheets<'a>(app: &App, pv: &'a mut PrintPreview) -> &'a Document {
     &pv.built
         .get_or_insert_with(|| (String::new(), Document::default()))
         .1
+}
+
+/// Whether the artwork of the pages on `sheet` (each page's clip frame
+/// on it, the part of its contents it shows) reaches into the edge `m`
+/// the printer cannot print on; marks outside the pages do not count
+/// (#1924).
+pub fn art_in_unprintable_edge(
+    sheet: &tracedraw_core::document::Page,
+    m: crate::printers::HardMargins,
+) -> bool {
+    use tracedraw_core::geometry::Rect;
+    let (w, h) = (sheet.size.width, sheet.size.height);
+    let printable = Rect::new(m.left, m.bottom, w - m.right, h - m.top);
+    let eps = 1e-6;
+    sheet.layers.iter().flat_map(|l| l.shapes.iter()).any(|s| {
+        let tracedraw_core::ShapeKind::ClipFrame { frame, contents } = &s.kind else {
+            return false;
+        };
+        let cell = s.transform.transform_rect_bbox(frame.bounds());
+        let Some(art) = contents
+            .iter()
+            .map(|c| s.transform.transform_rect_bbox(c.bounds()))
+            .reduce(|a, b| a.union(b))
+        else {
+            return false;
+        };
+        let shown = art.intersect(cell);
+        shown.width() > eps
+            && shown.height() > eps
+            && (shown.x0 < printable.x0 - eps
+                || shown.y0 < printable.y0 - eps
+                || shown.x1 > printable.x1 + eps
+                || shown.y1 > printable.y1 + eps)
+    })
 }
 
 /// The page shown: the sheet, or one plate of it.
@@ -94,12 +147,14 @@ pub fn shown_page(
 
 /// The page shown with the inks ticked: every ink, the sheet as it is; one
 /// ink, its plate in grey (black = full ink); some, the colours those
-/// inks print (#571).
+/// inks print (#571). With `one_in_color` one ink alone shows the colour
+/// it prints too, cyan ink in cyan (#1652).
 pub fn shown_page_inks(
     doc: &Document,
     sheet: usize,
     inks: &[bool],
     separations: bool,
+    one_in_color: bool,
 ) -> Option<tracedraw_core::document::Page> {
     let page = doc.pages.get(sheet)?;
     let all = plates(doc);
@@ -109,7 +164,7 @@ pub fn shown_page_inks(
     if !separations || on.len() == all.len() {
         return Some(page.clone());
     }
-    if let [one] = on.as_slice() {
+    if let ([one], false) = (on.as_slice(), one_in_color) {
         return shown_page(doc, sheet, one + 1, true);
     }
     let mut process = [false; 4];
@@ -121,7 +176,7 @@ pub fn shown_page_inks(
             _ => {}
         }
     }
-    Some(crate::export::inks_page(page, process, &spots))
+    Some(crate::export::inks_page(page, process, &spots, &doc.inks))
 }
 
 /// The names of the plates, translated for the process inks.
@@ -137,6 +192,65 @@ fn plate_names(doc: &Document) -> Vec<String> {
         });
     }
     names
+}
+
+/// The smallest and largest stretch of the page a Transform handle sets,
+/// as a factor.
+const STRETCH_MIN: f64 = 0.01;
+const STRETCH_MAX: f64 = 10.0;
+
+/// A Transform handle `(hx, hy)` (-1, 0 or 1 on each axis) dragged by
+/// `(dx, dy)` mm (x right, y up) with the page's cell `c` on the sheet:
+/// the side under the handle follows the pointer and the opposite side
+/// stays put, so the stretch grows by the move and the middle by half of
+/// it. A side handle stretches its axis alone; a corner handle keeps the
+/// page's proportions, both axes by the one factor of the axis the
+/// pointer moved most, so a drawing fitted by its corners is not
+/// distorted (#1543).
+pub fn drag_transform_handle(
+    st: &mut PrintState,
+    (hx, hy): (i8, i8),
+    c: tracedraw_core::geometry::Rect,
+    dx: f64,
+    dy: f64,
+) {
+    if !(dx.is_finite() && dy.is_finite()) || c.width() <= 1e-6 || c.height() <= 1e-6 {
+        return;
+    }
+    // The factor each axis asks for on its own.
+    let kx = (c.width() + f64::from(hx) * dx).max(1.0) / c.width();
+    let ky = (c.height() + f64::from(hy) * dy).max(1.0) / c.height();
+    let (kx, ky) = match (hx, hy) {
+        (0, _) => (1.0, ky),
+        (_, 0) => (kx, 1.0),
+        _ => {
+            // A corner: one factor for both, kept within the range on
+            // both axes so they stay in step.
+            let k = if (kx - 1.0).abs() >= (ky - 1.0).abs() {
+                kx
+            } else {
+                ky
+            };
+            let (sx, sy) = (st.art_stretch.0.max(1e-9), st.art_stretch.1.max(1e-9));
+            let low = (STRETCH_MIN / sx).max(STRETCH_MIN / sy);
+            let high = (STRETCH_MAX / sx).min(STRETCH_MAX / sy);
+            let k = if low <= high { k.clamp(low, high) } else { 1.0 };
+            (k, k)
+        }
+    };
+    if hx != 0 {
+        let before = st.art_stretch.0;
+        st.art_stretch.0 = (before * kx).clamp(STRETCH_MIN, STRETCH_MAX);
+        // The opposite side stays: the middle moves by half the growth.
+        let grown = c.width() * (st.art_stretch.0 / before.max(1e-9) - 1.0);
+        st.art_offset.0 += f64::from(hx) * grown / 2.0;
+    }
+    if hy != 0 {
+        let before = st.art_stretch.1;
+        st.art_stretch.1 = (before * ky).clamp(STRETCH_MIN, STRETCH_MAX);
+        let grown = c.height() * (st.art_stretch.1 / before.max(1e-9) - 1.0);
+        st.art_offset.1 += f64::from(hy) * grown / 2.0;
+    }
 }
 
 /// The id of the options panel at the left of Print Preview.
@@ -312,7 +426,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         });
                         ui.end_row();
                         ui.horizontal(|ui| {
-                            ui.checkbox(&mut st.fit_to_page, tr("dialog.fit_to_page"));
+                            if ui
+                                .checkbox(&mut st.fit_to_page, tr("dialog.fit_to_page"))
+                                .changed()
+                                && st.fit_to_page
+                            {
+                                // Ticked: a page dragged or stretched
+                                // off its place comes back onto the
+                                // sheet, fitted (#1577).
+                                st.art_offset = (0.0, 0.0);
+                                st.art_stretch = (1.0, 1.0);
+                            }
                             if !st.fit_to_page {
                                 ui.add(
                                     crate::ui::field::NumField::new(&mut st.scale)
@@ -336,11 +460,18 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 if st.separations {
                     // Each ink with a box under it, always in view: one
                     // alone shows its plate, several print together
-                    // (#571).
+                    // (#571). The boxes stand side by side and wrap at
+                    // the panel's edge (#1737).
                     ui.indent("print_preview_inks", |ui| {
-                        for (on, name) in pv.inks.iter_mut().zip(ink_names.iter().skip(1)) {
-                            ui.checkbox(on, name.clone());
-                        }
+                        ui.horizontal_wrapped(|ui| {
+                            for (on, name) in pv.inks.iter_mut().zip(ink_names.iter().skip(1)) {
+                                ui.checkbox(on, name.clone());
+                            }
+                        });
+                        // One ink alone: its plate in grey, as it
+                        // prints, or the colour the ink gives (#1652).
+                        ui.checkbox(&mut pv.ink_in_color, tr("print.ink_in_color"))
+                            .rich_tip(tr("print.ink_in_color_tip"));
                     });
                 }
                 let st = &mut pv.st;
@@ -348,7 +479,19 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     .num_columns(2)
                     .spacing([16.0, 4.0])
                     .show(ui, |ui| {
-                        ui.checkbox(&mut st.bleed, tr("dialog.print_bleed"));
+                        // The bleed limit beside its box, the value the
+                        // Print dialog's Bleed limit sets (#1653).
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut st.bleed, tr("dialog.print_bleed"));
+                            ui.add_enabled(
+                                st.bleed,
+                                crate::ui::field::NumField::new(&mut st.bleed_limit)
+                                    .range(0.0..=50.0)
+                                    .speed(0.5)
+                                    .suffix(" mm"),
+                            )
+                            .rich_tip(bleed_limit_tip());
+                        });
                         ui.checkbox(&mut st.crop_marks, tr("dialog.crop_marks"));
                         ui.end_row();
                         ui.checkbox(&mut st.registration_marks, tr("dialog.registration_marks"));
@@ -359,6 +502,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         ui.end_row();
                         ui.checkbox(&mut st.mirror, tr("dialog.mirror"));
                         ui.checkbox(&mut st.invert, tr("dialog.invert"));
+                        ui.end_row();
+                        // Grayscale output and the sheets' order (#1657,
+                        // #1394, #1571).
+                        ui.add_enabled(
+                            !st.separations,
+                            egui::Checkbox::new(&mut st.grayscale, tr("print.grayscale")),
+                        )
+                        .rich_tip(tr("print.grayscale_tip"))
+                        .rich_disabled_tip(tr("print.grayscale_tip"));
+                        ui.checkbox(&mut st.reverse_order, tr("print.reverse_order"))
+                            .rich_tip(tr("print.reverse_order_tip"));
                         ui.end_row();
                     });
                 if st.page_info {
@@ -464,11 +618,23 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             let separations = pv.st.separations;
             let sheet = pv.sheet;
             let inks = pv.inks.clone();
-            let Some(page) = shown_page_inks(sheets(app, &mut pv), sheet, &inks, separations)
+            let in_color = pv.ink_in_color;
+            let Some(page) =
+                shown_page_inks(sheets(app, &mut pv), sheet, &inks, separations, in_color)
             else {
                 return;
             };
-            let plate: String = inks.iter().map(|on| if *on { '1' } else { '0' }).collect();
+            let mut plate: String = inks.iter().map(|on| if *on { '1' } else { '0' }).collect();
+            if in_color {
+                plate.push('c');
+            }
+            // The edge the chosen printer cannot print on, as the system
+            // reports it (#1924); none for a file.
+            let hard = (pv.st.destination == 0)
+                .then(|| app.printer_margins.get(pv.st.printer.as_deref()))
+                .flatten()
+                .map(|m| m.for_sheet(page.size.width, page.size.height));
+            let cut = hard.is_some_and(|m| art_in_unprintable_edge(&page, m));
             let margin = 24.0;
             let fit = ((area.width() - 2.0 * margin) as f64 / page.size.width.max(1e-6))
                 .min((area.height() - 2.0 * margin) as f64 / page.size.height.max(1e-6))
@@ -599,22 +765,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         (None, None) => egui::CursorIcon::Move,
                     });
                 }
-                if let (true, Some((hx, hy)), Some(c)) = (resp.dragged(), pv.handle_drag, cell) {
-                    // A side follows the pointer, the opposite one stays:
-                    // the stretch grows by the move, the middle by half.
+                if let (true, Some(handle), Some(c)) = (resp.dragged(), pv.handle_drag, cell) {
                     let d = resp.drag_delta();
                     let (dx, dy) = (f64::from(d.x) / zoom, -f64::from(d.y) / zoom);
-                    let st = &mut pv.st;
-                    if hx != 0 && c.width() > 1e-6 {
-                        let w = (c.width() + f64::from(hx) * dx).max(1.0);
-                        st.art_stretch.0 = (st.art_stretch.0 * w / c.width()).clamp(0.01, 10.0);
-                        st.art_offset.0 += dx / 2.0;
-                    }
-                    if hy != 0 && c.height() > 1e-6 {
-                        let h = (c.height() + f64::from(hy) * dy).max(1.0);
-                        st.art_stretch.1 = (st.art_stretch.1 * h / c.height()).clamp(0.01, 10.0);
-                        st.art_offset.1 += dy / 2.0;
-                    }
+                    drag_transform_handle(&mut pv.st, handle, c, dx, dy);
                 } else if resp.dragged() {
                     let d = resp.drag_delta();
                     match pv.margin_drag {
@@ -709,6 +863,48 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         4.0,
                     ));
                 }
+                // The printer's unprintable edge shaded, and a warning
+                // when artwork reaches into it (#1924).
+                if let Some(m) = hard {
+                    let k = zoom as f32;
+                    let inner = egui::Rect::from_min_max(
+                        egui::pos2(
+                            sheet_rect.left() + m.left as f32 * k,
+                            sheet_rect.top() + m.top as f32 * k,
+                        ),
+                        egui::pos2(
+                            sheet_rect.right() - m.right as f32 * k,
+                            sheet_rect.bottom() - m.bottom as f32 * k,
+                        ),
+                    );
+                    let shade = egui::Color32::from_rgba_unmultiplied(110, 110, 110, 110);
+                    let s = sheet_rect;
+                    for band in [
+                        egui::Rect::from_min_max(s.min, egui::pos2(s.max.x, inner.min.y)),
+                        egui::Rect::from_min_max(egui::pos2(s.min.x, inner.max.y), s.max),
+                        egui::Rect::from_min_max(
+                            egui::pos2(s.min.x, inner.min.y),
+                            egui::pos2(inner.min.x, inner.max.y),
+                        ),
+                        egui::Rect::from_min_max(
+                            egui::pos2(inner.max.x, inner.min.y),
+                            egui::pos2(s.max.x, inner.max.y),
+                        ),
+                    ] {
+                        if band.width() > 0.0 && band.height() > 0.0 {
+                            p.rect_filled(band, 0.0, shade);
+                        }
+                    }
+                    if cut {
+                        p.text(
+                            egui::pos2(s.left(), s.top() - 4.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            tr("print.unprintable_warning"),
+                            egui::FontId::proportional(12.0),
+                            egui::Color32::from_rgb(255, 210, 120),
+                        );
+                    }
+                }
             });
             if let Some(d) = moved {
                 // Screen points over the sheet are `zoom` per millimetre;
@@ -752,6 +948,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         match crate::export::print(app, &pv.st) {
             Ok(msg) => app.status = msg,
             Err(e) => app.status = format!("{}: {e}", tr("dialog.print_failed")),
+        }
+        if pv.st.destination == 0 {
+            app.printer_last = pv.st.printer.clone();
         }
         if app.settings.printing.remember_last {
             app.settings.printing.remember(&pv.st);
@@ -807,6 +1006,63 @@ mod tests {
     use super::*;
     use tracedraw_core::{Color, Fill, Shape, ShapeKind};
 
+    /// #1924: the canvas's Printable Area and Print Preview use the
+    /// printer's hard margins as the system reports them, 5 mm only
+    /// until then or when it does not say; the preview warns when the
+    /// artwork reaches into the edge the printer cannot print.
+    #[test]
+    fn the_printable_area_is_the_printers_own() {
+        use crate::printers::HardMargins;
+        use tracedraw_core::geometry::Rect;
+        let mut app = App::headless();
+        let page = Rect::new(0.0, 0.0, 210.0, 297.0);
+        app.settings.printing.printer = Some("Office Laser".into());
+        let laser = HardMargins {
+            left: 4.0,
+            right: 6.0,
+            top: 3.0,
+            bottom: 12.0,
+        };
+        // Not read yet: the 5 mm guess.
+        app.printer_margins.set(Some("Office Laser"), None);
+        assert_eq!(
+            crate::canvas::printable_rect(&app, page),
+            Rect::new(5.0, 5.0, 205.0, 292.0)
+        );
+        app.printer_margins.set(Some("Office Laser"), Some(laser));
+        assert_eq!(app.printable_margins(210.0, 297.0), (laser, true));
+        assert_eq!(
+            crate::canvas::printable_rect(&app, page),
+            Rect::new(4.0, 12.0, 204.0, 294.0)
+        );
+        // A page on its side: the margins turned with it.
+        let side = Rect::new(0.0, 0.0, 297.0, 210.0);
+        assert_eq!(
+            crate::canvas::printable_rect(&app, side),
+            Rect::new(12.0, 6.0, 294.0, 206.0)
+        );
+
+        // Print Preview: a frame 2 mm inside the page reaches into the
+        // 4 mm left edge; one 15 mm inside does not.
+        let id = app
+            .new_shape(ShapeKind::Rect {
+                rect: Rect::new(2.0, 20.0, 100.0, 100.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        let st = PrintState::default();
+        let sheets = print_sheets(&app, &st);
+        let sheet = &sheets.pages[0];
+        assert!(art_in_unprintable_edge(sheet, laser));
+        app.run(tracedraw_core::Command::TransformShapes {
+            shapes: vec![id],
+            transform: tracedraw_core::geometry::Affine::translate((13.0, 0.0)),
+        });
+        let sheets = print_sheets(&app, &st);
+        assert!(!art_in_unprintable_edge(&sheets.pages[0], laser));
+    }
+
     #[test]
     fn plates_split_the_sheet_by_ink() {
         let mut doc = Document::new("t", tracedraw_core::geometry::Size::new(100.0, 100.0));
@@ -851,7 +1107,10 @@ mod tests {
         // Ticked inks (#571): one alone is its plate in grey; cyan and
         // yellow together keep only those channels; every ink, the sheet.
         let fill = |inks: &[bool]| {
-            shown_page_inks(&doc, 0, inks, true).expect("page").layers[0].shapes[0]
+            shown_page_inks(&doc, 0, inks, true, false)
+                .expect("page")
+                .layers[0]
+                .shapes[0]
                 .fill
                 .clone()
         };
@@ -883,6 +1142,150 @@ mod tests {
             }),
             "all at first"
         );
+    }
+
+    /// Four squares of pure cyan, magenta, yellow and black, each with a
+    /// black outline, as in the report (#1652). One ink ticked alone
+    /// shows its plate in grey: the cyan square black, which read as
+    /// black ink on the cyan plate. With "Show one ink in its color" the
+    /// one ink shows the colour it prints, as several inks do: the cyan
+    /// square cyan, the others and every outline paper white, and no
+    /// black anywhere unless Black is the ink ticked.
+    #[test]
+    fn one_ink_alone_shows_in_its_colour_when_asked() {
+        use tracedraw_core::{Color, Fill, Shape, ShapeKind};
+        let mut doc = Document::new("t", tracedraw_core::geometry::Size::new(100.0, 100.0));
+        let inks = [
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ];
+        for (i, (c, m, y, k)) in inks.into_iter().enumerate() {
+            let id = doc.ids_mut().shape();
+            let x = 10.0 + 20.0 * i as f64;
+            let mut s = Shape::new(
+                id,
+                ShapeKind::Rect {
+                    rect: tracedraw_core::geometry::Rect::new(x, 10.0, x + 15.0, 25.0),
+                    radius: 0.0,
+                    corners: None,
+                },
+            );
+            s.fill = Fill::Solid(Color::Cmyk { c, m, y, k });
+            s.stroke = Some(tracedraw_core::Stroke {
+                color: Color::Cmyk {
+                    c: 0.0,
+                    m: 0.0,
+                    y: 0.0,
+                    k: 1.0,
+                },
+                ..Default::default()
+            });
+            doc.pages[0].layers[0].shapes.push(s);
+        }
+        // What the squares and their outlines show as, in CMYK.
+        let cmyk = |c: &Color| match c.convert_to("CMYK") {
+            Color::Cmyk { c, m, y, k } => [c, m, y, k],
+            other => panic!("{other:?}"),
+        };
+        let shown = |only: usize, in_color: bool| {
+            let mut ticked = [false; 4];
+            ticked[only] = true;
+            let p = shown_page_inks(&doc, 0, &ticked, true, in_color).expect("page");
+            p.layers[0]
+                .shapes
+                .iter()
+                .map(|s| {
+                    let fill = match &s.fill {
+                        Fill::Solid(c) => cmyk(c),
+                        f => panic!("{f:?}"),
+                    };
+                    (fill, cmyk(&s.stroke.as_ref().expect("outline").color))
+                })
+                .collect::<Vec<_>>()
+        };
+        let paper = [0.0f32; 4];
+        let near = |a: [f32; 4], b: [f32; 4]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.02);
+        for only in 0..4 {
+            // As a plate: grey, the ink's own square black.
+            let plate = shown(only, false);
+            for (i, (fill, line)) in plate.iter().enumerate() {
+                let want = if i == only { 1.0 } else { 0.0 };
+                assert!(
+                    near(*fill, [0.0, 0.0, 0.0, want]),
+                    "plate {only}, square {i}: {fill:?}"
+                );
+                let want = if only == 3 { 1.0 } else { 0.0 };
+                assert!(near(*line, [0.0, 0.0, 0.0, want]), "plate {only}: {line:?}");
+            }
+            // In its colour: the ink alone, nothing of the others.
+            let color = shown(only, true);
+            let mut ink = paper;
+            ink[only] = 1.0;
+            for (i, (fill, line)) in color.iter().enumerate() {
+                let want = if i == only { ink } else { paper };
+                assert!(near(*fill, want), "ink {only}, square {i}: {fill:?}");
+                let want = if only == 3 { ink } else { paper };
+                assert!(near(*line, want), "ink {only}: {line:?}");
+            }
+        }
+        // Several inks and every ink show the same either way.
+        for ticked in [[true, false, false, true], [true; 4]] {
+            let a = shown_page_inks(&doc, 0, &ticked, true, false).expect("page");
+            let b = shown_page_inks(&doc, 0, &ticked, true, true).expect("page");
+            for (x, y) in a.layers[0].shapes.iter().zip(b.layers[0].shapes.iter()) {
+                assert_eq!(x.fill, y.fill);
+            }
+        }
+    }
+
+    /// Pictures split by ink in the preview too (#1659): one ink shows
+    /// its plate in grey, some inks the colours they print, every ink
+    /// the picture as it is.
+    #[test]
+    fn plates_split_pictures_by_ink() {
+        let mut doc = Document::new("t", tracedraw_core::geometry::Size::new(100.0, 100.0));
+        let img =
+            image::RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 100]).expect("pixels");
+        let png: tracedraw_core::SharedBytes = crate::bitmap_fx::encode(&img).expect("png").into();
+        let id = doc.ids_mut().shape();
+        let mut s = Shape::new(
+            id,
+            ShapeKind::Bitmap {
+                rect: tracedraw_core::geometry::Rect::new(0.0, 0.0, 10.0, 10.0),
+                width_px: 2,
+                height_px: 1,
+                png: png.clone(),
+                fx: None,
+            },
+        );
+        s.fill = Fill::None;
+        s.stroke = None;
+        doc.pages[0].layers[0].shapes.push(s);
+        let pixels = |inks: &[bool]| -> Vec<[u8; 4]> {
+            let p = shown_page_inks(&doc, 0, inks, true, false).expect("page");
+            let ShapeKind::Bitmap { png, .. } = &p.layers[0].shapes[0].kind else {
+                panic!("a picture");
+            };
+            let img = crate::bitmap_fx::decode(png).expect("decodes");
+            img.pixels().map(|p| p.0).collect()
+        };
+        // Yellow alone: the red pixel full ink, the blue one none; the
+        // alpha stays.
+        let yellow = pixels(&[false, false, true, false]);
+        assert!(yellow[0][0] < 26 && yellow[0][3] == 255, "{yellow:?}");
+        assert!(yellow[1][0] > 229 && yellow[1][3] == 100, "{yellow:?}");
+        // Cyan and yellow: the red pixel prints yellow only.
+        let some = pixels(&[true, false, true, false]);
+        let [r, g, b, _] = some[0];
+        assert!(r > 200 && g > 200 && b < 80, "{some:?}");
+        // Every ink: the picture as it is.
+        let all = shown_page_inks(&doc, 0, &[true; 4], true, false).expect("page");
+        assert!(matches!(
+            &all.layers[0].shapes[0].kind,
+            ShapeKind::Bitmap { png: p, .. } if tracedraw_core::SharedBytes::ptr_eq(p, &png)
+        ));
     }
 
     /// With Print separations on, a box for each ink stands under that
@@ -925,6 +1328,16 @@ mod tests {
             let at = find(&shapes, &tr(ink)).expect(ink);
             assert!(at.x < 330.0, "{ink} in the left panel: {at:?}");
             assert!(at.y > option.y && at.x > option.x, "{ink} under it: {at:?}");
+        }
+        // The four process inks share a row, side by side, instead of a
+        // line each (#1737).
+        let cyan = find(&shapes, &tr("fxp.cyan")).expect("cyan");
+        let mut x = cyan.x;
+        for ink in ["fxp.magenta", "fxp.yellow", "fxp.black"] {
+            let at = find(&shapes, &tr(ink)).expect(ink);
+            assert!((at.y - cyan.y).abs() < 2.0, "{ink} beside cyan: {at:?}");
+            assert!(at.x > x, "{ink} right of the one before: {at:?}");
+            x = at.x;
         }
     }
 
@@ -1023,6 +1436,207 @@ mod tests {
         assert!(all_pages.x < 330.0 && all_pages.y > printer.y + 15.0);
         assert!(at(&tr("print.collate")).is_some());
         assert!(at(&tr("print.printer")).is_some_and(|p| p.y < all_pages.y));
+    }
+
+    /// Transform's corner handles keep the page's proportions: both
+    /// stretches grow by the one factor and the opposite corner stays
+    /// put; a side handle stretches its axis alone. A corner stretched
+    /// each axis by its own move, so a drawing fitted to the sheet by a
+    /// corner came out distorted (#1543).
+    #[test]
+    fn a_corner_handle_keeps_the_page_s_proportions() {
+        let cell = tracedraw_core::geometry::Rect::new(10.0, 10.0, 110.0, 160.0);
+        let mut st = PrintState::default();
+        // The top right corner 20 mm right and 5 mm up: the width's 20 %
+        // wins and the height follows it.
+        drag_transform_handle(&mut st, (1, 1), cell, 20.0, 5.0);
+        assert!(
+            (st.art_stretch.0 - 1.2).abs() < 1e-9,
+            "{:?}",
+            st.art_stretch
+        );
+        assert!(
+            (st.art_stretch.1 - 1.2).abs() < 1e-9,
+            "{:?}",
+            st.art_stretch
+        );
+        // The bottom left corner stays where it was: the middle moves by
+        // half the growth on each axis.
+        assert!((st.art_offset.0 - 10.0).abs() < 1e-9, "{:?}", st.art_offset);
+        assert!((st.art_offset.1 - 15.0).abs() < 1e-9, "{:?}", st.art_offset);
+        // Inwards from the bottom left corner: both shrink alike.
+        drag_transform_handle(&mut st, (-1, -1), cell, 10.0, 60.0);
+        assert!(
+            (st.art_stretch.0 - st.art_stretch.1).abs() < 1e-9,
+            "{:?}",
+            st.art_stretch
+        );
+        assert!(st.art_stretch.0 < 1.2, "{:?}", st.art_stretch);
+        // A side handle: its axis alone, the other untouched.
+        let mut st = PrintState::default();
+        drag_transform_handle(&mut st, (-1, 0), cell, -30.0, 7.0);
+        assert!(
+            (st.art_stretch.0 - 1.3).abs() < 1e-9,
+            "{:?}",
+            st.art_stretch
+        );
+        assert_eq!(st.art_stretch.1, 1.0);
+        assert!((st.art_offset.0 + 15.0).abs() < 1e-9, "{:?}", st.art_offset);
+        assert_eq!(st.art_offset.1, 0.0);
+        drag_transform_handle(&mut st, (0, 1), cell, -30.0, 15.0);
+        assert!(
+            (st.art_stretch.1 - 1.1).abs() < 1e-9,
+            "{:?}",
+            st.art_stretch
+        );
+        assert!(
+            (st.art_stretch.0 - 1.3).abs() < 1e-9,
+            "{:?}",
+            st.art_stretch
+        );
+        // Nothing moves on a move that is not a number or an empty cell.
+        let before = st.clone();
+        drag_transform_handle(&mut st, (1, 1), cell, f64::NAN, 1.0);
+        drag_transform_handle(
+            &mut st,
+            (1, 1),
+            tracedraw_core::geometry::Rect::new(0.0, 0.0, 0.0, 10.0),
+            1.0,
+            1.0,
+        );
+        assert_eq!(st.art_stretch, before.art_stretch);
+        assert_eq!(st.art_offset, before.art_offset);
+    }
+
+    /// Ticking Fit to page puts back a page dragged or stretched on the
+    /// sheet: the artwork position and the stretch go back to nothing,
+    /// so the page sits fitted on the sheet again. They stayed as they
+    /// were, so Fit to page seemed to do nothing to a dragged page
+    /// (#1577).
+    #[test]
+    fn fit_to_page_brings_a_dragged_page_back() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        app.show_welcome = false;
+        app.print_preview(None);
+        let size = egui::vec2(1400.0, 900.0);
+        if let Some(pv) = app.print_preview.as_mut() {
+            pv.st.looking_for_printers = false;
+            pv.st.fit_to_page = false;
+            // As a drag on the sheet and a corner handle leave it.
+            pv.st.art_offset = (50.0, -40.0);
+            pv.st.art_stretch = (1.5, 1.5);
+        }
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            texts = frame_texts(&mut app, &ctx, size);
+        }
+        let label = tr("dialog.fit_to_page");
+        let at = texts
+            .iter()
+            .find(|(t, _)| *t == label)
+            .map(|(_, r)| r.center())
+            .expect("Fit to page shown");
+        let run = |app: &mut App, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            out.textures_delta.clear();
+        };
+        run(&mut app, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            run(
+                &mut app,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        run(&mut app, Vec::new());
+        let st = &app.print_preview.as_ref().expect("preview").st;
+        assert!(st.fit_to_page, "the box was ticked");
+        assert_eq!(st.art_offset, (0.0, 0.0), "the page is back in place");
+        assert_eq!(st.art_stretch, (1.0, 1.0), "and at its size");
+        // The Print dialog's Layout tab does the same when Fit to page is
+        // chosen there.
+        let mut st = PrintState {
+            fit_to_page: false,
+            art_offset: (12.0, 3.0),
+            art_stretch: (2.0, 0.5),
+            ..PrintState::default()
+        };
+        let mut shown = Vec::new();
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                        crate::ui::dialogs::print_tab_layout(&app, ui, &mut st);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+            shown = out.shapes;
+        }
+        let mut found = Vec::new();
+        fn walk(s: &egui::Shape, out: &mut Vec<(String, egui::Rect)>) {
+            match s {
+                egui::Shape::Text(t) => {
+                    out.push((t.galley.text().to_string(), t.visual_bounding_rect()))
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        shown.iter().for_each(|c| walk(&c.shape, &mut found));
+        let at = found
+            .iter()
+            .find(|(t, _)| *t == label)
+            .map(|(_, r)| r.center())
+            .expect("Fit to page in the Layout tab");
+        let tab = |app: &App, st: &mut PrintState, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                        crate::ui::dialogs::print_tab_layout(app, ui, st);
+                    });
+                },
+            );
+            out.textures_delta.clear();
+        };
+        tab(&app, &mut st, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            tab(
+                &app,
+                &mut st,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        tab(&app, &mut st, Vec::new());
+        assert!(st.fit_to_page, "Fit to page chosen in the Layout tab");
+        assert_eq!(st.art_offset, (0.0, 0.0));
+        assert_eq!(st.art_stretch, (1.0, 1.0));
     }
 
     #[test]
@@ -1154,7 +1768,7 @@ mod tests {
         let size = crate::splash::DEFAULT_SIZE;
         for code in [
             "en", "es", "pt-BR", "fr", "de", "it", "nl", "pl", "cs", "ru", "tr", "id", "ar", "hi",
-            "bn", "ja", "zh-CN", "zh-TW",
+            "bn", "ja", "zh-CN", "zh-TW", "lo",
         ] {
             crate::i18n::with_thread_language(code, || {
                 let ctx = crate::theme::ui_context();
@@ -1299,6 +1913,7 @@ mod tests {
             ("dialog.registration_marks", "print.color_bars"),
             ("print.densitometer", "print.page_info_mark"),
             ("dialog.mirror", "dialog.invert"),
+            ("print.grayscale", "print.reverse_order"),
         ] {
             let (l, r) = (at(left), at(right));
             assert!((l.y - r.y).abs() < 4.0, "{left} {l:?} beside {right} {r:?}");
@@ -1311,6 +1926,105 @@ mod tests {
         assert!(at("print.range_pages").y > at("dialog.all_pages").y);
         assert!(at("dialog.print_bleed").y > at("dialog.fit_to_page").y);
         assert!(at("dialog.mirror").y > at("print.densitometer").y);
+        assert!(at("print.grayscale").y > at("dialog.mirror").y);
+    }
+
+    /// The bleed limit is set beside Bleed, before Crop marks, and is the
+    /// Print dialog's setting: a value typed there is what prints and
+    /// what the Print dialog keeps (#1653).
+    #[test]
+    fn the_bleed_limit_is_set_beside_bleed() {
+        let ctx = crate::theme::ui_context();
+        let size = egui::vec2(1400.0, 900.0);
+        let mut app = App::headless();
+        app.show_welcome = false;
+        app.print_preview(None);
+        if let Some(pv) = app.print_preview.as_mut() {
+            pv.st.looking_for_printers = false;
+            pv.st.bleed = true;
+            pv.st.bleed_limit = 4.0;
+        }
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            texts = frame_texts(&mut app, &ctx, size);
+        }
+        let find = |texts: &[(String, egui::Rect)], f: &dyn Fn(&str) -> bool| {
+            texts.iter().find(|(t, _)| f(t)).map(|(_, r)| *r)
+        };
+        let bleed_label = tr("dialog.print_bleed");
+        let bleed = find(&texts, &|t| t == bleed_label).expect("Bleed shown");
+        let crop_label = tr("dialog.crop_marks");
+        let crop = find(&texts, &|t| t == crop_label).expect("Crop marks shown");
+        let field = texts
+            .iter()
+            .filter(|(t, r)| {
+                t.ends_with(" mm")
+                    && (r.center().y - bleed.center().y).abs() < 6.0
+                    && r.left() > bleed.right()
+            })
+            .map(|(t, r)| (t.clone(), *r))
+            .next()
+            .expect("the bleed limit beside Bleed");
+        assert!(field.0.starts_with('4'), "{:?}", field.0);
+        assert!(field.1.right() < crop.left(), "{field:?} before {crop:?}");
+        // Typed in: the preview's settings, which print and which the
+        // Print dialog and Options > Printing keep, take it.
+        let at = field.1.center();
+        let send = |app: &mut App, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            out.textures_delta.clear();
+        };
+        send(&mut app, vec![egui::Event::PointerMoved(at)]);
+        for pressed in [true, false] {
+            send(
+                &mut app,
+                vec![egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }],
+            );
+        }
+        send(
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        );
+        send(&mut app, vec![egui::Event::Text("7".into())]);
+        send(
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+        );
+        send(&mut app, Vec::new());
+        let st = app
+            .print_preview
+            .as_ref()
+            .map(|pv| pv.st.clone())
+            .expect("open");
+        assert_eq!(st.bleed_limit, 7.0);
+        let doc = app.doc().clone();
+        assert_eq!(crate::export::print_layout(&app, &st, &doc).bleed, 7.0);
+        app.settings.printing.remember(&st);
+        assert_eq!(app.settings.printing.state().bleed_limit, 7.0);
     }
 
     /// The pages printed are chosen in the preview: the current page, a

@@ -2,8 +2,10 @@
 //! envelope and drags its nodes; the Shape tool drags them too. A node
 //! moves the way the chosen mode says (straight line, single arc, double
 //! arc or unconstrained); in the Unconstrained mode the selected node's
-//! handles show and move on their own. Double-clicking the frame adds a
-//! node, double-clicking a node that is not a corner removes it. Presets,
+//! handles show and move on their own. Dragging a segment of the frame
+//! bends it, as the Shape tool bends a curve's segment (#1339).
+//! Double-clicking the frame adds a node, double-clicking a node that is
+//! not a corner removes it. Presets,
 //! the mapping, Keep Lines, Add New, Clear and Copy act on the selection.
 
 use crate::app::App;
@@ -12,13 +14,13 @@ use egui::{PointerButton, Response};
 use tracedraw_core::{
     document::Shape,
     envelope::{Frame, Mapping, Mode},
-    geometry::{Affine, Point, Rect, Shape as _, Vec2},
-    live::{evaluate, Effect},
+    geometry::{Affine, Point, Rect, Vec2},
+    live::Effect,
     Command, ShapeId,
 };
 
 /// A part of an envelope's frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Part {
     Node(usize),
     /// Handle `end` (0 at the segment's start, 1 at its end) of segment
@@ -26,6 +28,11 @@ pub enum Part {
     Handle {
         seg: usize,
         end: usize,
+    },
+    /// Segment `seg`, grabbed at its point `t` (0 to 1): a drag bends it.
+    Segment {
+        seg: usize,
+        t: f64,
     },
 }
 
@@ -132,11 +139,10 @@ pub fn last_envelope(effects: &[Effect]) -> Option<(usize, Frame)> {
 }
 
 /// The object's own bounding box where the effect at `at` takes it: after
-/// the effects before it.
+/// the warps before it (an extrusion before it is built afterwards, from
+/// the outline the envelope leaves, #2214).
 pub fn box_at(shape: &Shape, at: usize) -> Rect {
-    let mut s = shape.clone();
-    s.effects.truncate(at);
-    evaluate(&s).main.local_path().bounding_box()
+    tracedraw_core::live::warp_box(shape, at)
 }
 
 /// The effect at `at` with its frame replaced (an envelope keeps its Keep
@@ -352,6 +358,7 @@ impl App {
         match drag.part {
             Part::Node(i) => f.move_node(i, d, self.envelope_mode),
             Part::Handle { seg, end } => f.move_handle(seg, end, d),
+            Part::Segment { seg, t } => f.bend_segment(seg, t, d),
         }
         let effects = with_frame(&drag.original, at, &f);
         if drag.stepped && self.engine.undo_label() == Some("Edit Envelope") {
@@ -382,7 +389,13 @@ impl App {
             return true;
         }
         if response.drag_started_by(PointerButton::Primary) {
-            if let Some((id, part)) = self.envelope_part_at(p) {
+            // Handles and nodes first; then a segment of the frame, which
+            // bends (#1339).
+            let part = self.envelope_part_at(p).or_else(|| {
+                self.envelope_segment_at(p)
+                    .map(|(id, seg, t)| (id, Part::Segment { seg, t }))
+            });
+            if let Some((id, part)) = part {
                 self.begin_envelope_drag(id, part, p);
                 return true;
             }
@@ -402,7 +415,7 @@ impl App {
                     self.selected_effect_node = Some((id, i));
                     return true;
                 }
-                Some((_, Part::Handle { .. })) => return true,
+                Some((_, Part::Handle { .. } | Part::Segment { .. })) => return true,
                 None => {}
             }
         }
@@ -615,11 +628,15 @@ impl App {
     /// The selected objects take `source`'s last envelope, its frame
     /// stretched from `source`'s box to each object's, one undo step. A
     /// source with no envelope gives the shape of its outline, so text
-    /// can be fitted into a drawn shape (#993).
+    /// can be fitted into a drawn shape (#993): as in CorelDRAW, each
+    /// object takes that shape at its size, centred where the object is
+    /// (#2178).
     pub fn copy_envelope_from(&mut self, source: ShapeId) {
         let Some(src) = self.doc().find_shape(source).cloned() else {
             return;
         };
+        // The outline's frame on the page, when the source has no envelope.
+        let mut on_page = false;
         let (frame, from, keep, mapping) = match last_envelope(&src.effects) {
             Some((src_at, frame)) => {
                 let (keep, mapping) = match src.effects.get(src_at) {
@@ -643,6 +660,7 @@ impl App {
                     return;
                 };
                 let from = frame.bounds();
+                on_page = true;
                 (frame, from, self.envelope_keep_lines, self.envelope_mapping)
             }
         };
@@ -666,9 +684,26 @@ impl App {
                 }
             };
             let to = box_at(s, at);
-            let m = Affine::translate(to.origin().to_vec2())
-                * Affine::scale_non_uniform(to.width() / from.width(), to.height() / from.height())
-                * Affine::translate(-from.origin().to_vec2());
+            // The frame of an outline keeps the outline's size and shape,
+            // centred where the object is: from the page into the
+            // object's own space. As in CorelDRAW (#2178, and the video
+            // of #2344, where the object was moved into the shape by
+            // hand afterwards), the object stays where it is; it was
+            // moved into the outline.
+            let to_page = self.doc().parent_transform(id).unwrap_or(Affine::IDENTITY) * s.transform;
+            let into_object = to_page.inverse();
+            let finite = into_object.as_coeffs().iter().all(|c| c.is_finite());
+            let m = if on_page && finite {
+                let shift = to_page * to.center() - from.center();
+                into_object * Affine::translate(shift)
+            } else {
+                Affine::translate(to.origin().to_vec2())
+                    * Affine::scale_non_uniform(
+                        to.width() / from.width(),
+                        to.height() / from.height(),
+                    )
+                    * Affine::translate(-from.origin().to_vec2())
+            };
             if let Some(e) = effects.get_mut(at) {
                 *e = Effect::from_envelope(&frame.transformed(m), keep, mapping);
             }
@@ -734,6 +769,121 @@ mod tests {
         assert_eq!(app.engine.history_labels().0.len(), depth + 2);
         app.undo();
         assert!((app.envelope_of(id).expect("env").1.nodes[1].y).abs() < 1e-9);
+    }
+
+    /// The Envelope tool on an extruded object (#2214): the frame goes
+    /// around the object, and dragging a node bends the body with it. The
+    /// far face stayed a rectangle behind the bent object.
+    #[test]
+    fn an_envelope_bends_the_body_of_an_extruded_object() {
+        let mut app = App::headless();
+        let id = rect(&mut app, 0.0, 0.0, 40.0, 20.0);
+        let extrude = Effect::Extrude {
+            depth: tracedraw_core::geometry::Vec2::new(10.0, -10.0),
+            vanishing: None,
+            amount: 0.0,
+            shade_from: None,
+            shade_to: None,
+            light_angle: 135.0,
+            light_intensity: 50.0,
+            bevel: 0.0,
+            kind: None,
+            on_object: false,
+            solid: None,
+            space: Default::default(),
+        };
+        app.engine
+            .run(&Command::SetEffects {
+                shape: id,
+                effects: vec![extrude],
+            })
+            .expect("extrude");
+        app.select(vec![id]);
+        app.add_new_envelope();
+        let (at, f) = app.envelope_of(id).expect("envelope");
+        assert_eq!(at, 1);
+        assert_eq!(f.bounds(), Rect::new(0.0, 0.0, 40.0, 20.0));
+        // The top's middle node up by 10: an arch.
+        app.envelope_mode = Mode::SingleArc;
+        app.begin_envelope_drag(id, Part::Node(5), Point::new(20.0, 20.0));
+        app.envelope_drag_to(Point::new(20.0, 30.0));
+        app.envelope_drag = None;
+        let s = app.doc().shape_on_page(id).expect("shape");
+        let ev = tracedraw_core::live::evaluate(&s);
+        assert!((ev.main.bounds().y1 - 30.0).abs() < 1e-6);
+        // The far face is the arch moved by the offset: its top at 30 - 10.
+        let far = ev.below.first().expect("the far face").bounds();
+        assert!((far.y1 - 20.0).abs() < 0.05, "{far:?}");
+        assert!((far.x0 - 10.0).abs() < 0.05 && (far.y0 + 10.0).abs() < 0.05);
+    }
+
+    /// #2213: with the Shape tool an enveloped curve shows its frame
+    /// only. Its own nodes lie where the curve was before the envelope,
+    /// so they, the curve's outline in the node colour and the corner
+    /// widgets stood as a second, unbent curve beside the bent one.
+    /// Nothing of the unbent curve is shown or taken while the envelope
+    /// is on; the frame is edited, and the nodes are back once the
+    /// envelope is cleared.
+    #[test]
+    fn the_shape_tool_shows_only_the_frame_of_an_enveloped_curve() {
+        let mut app = App::headless();
+        let id = rect(&mut app, 0.0, 0.0, 40.0, 20.0);
+        app.select(vec![id]);
+        app.convert_selection_to_curves(false);
+        app.tool = crate::tools::Tool::Shape;
+        app.settings.nodes.corner_widgets = true;
+        // A plain curve: its nodes, segments and corner widgets.
+        let corner = Point::new(40.0, 20.0);
+        assert_eq!(app.shape_tool_shapes().len(), 1);
+        assert!(app.node_at(corner).is_some());
+        assert!(app.segment_at(Point::new(20.0, 20.0)).is_some());
+        assert!(!app.corner_widgets().is_empty());
+        // A node chosen before the envelope is let go with it.
+        app.node_selection = vec![(id, 2)];
+        app.add_new_envelope();
+        // The top right corner of the frame pulled far out: the curve is
+        // drawn out to there, its own node stays at (40, 20).
+        app.envelope_mode = Mode::Unconstrained;
+        app.begin_envelope_drag(id, Part::Node(4), corner);
+        app.envelope_drag_to(Point::new(90.0, 70.0));
+        app.envelope_drag = None;
+        assert!(bounds(&app, id).x1 > 80.0);
+        assert!(app.shape_tool_shapes().is_empty());
+        assert!(app.node_at(corner).is_none());
+        assert!(app.segment_at(Point::new(20.0, 20.0)).is_none());
+        assert!(!app.near_selected_nodes(corner));
+        assert!(app.corner_widgets().is_empty());
+        app.drop_hidden_node_choices();
+        assert!(app.node_selection.is_empty());
+        app.select_all_nodes();
+        assert!(app.node_selection.is_empty());
+        // The frame is what the tool takes.
+        assert_eq!(
+            app.envelope_part_at(Point::new(90.0, 70.0)),
+            Some((id, Part::Node(4)))
+        );
+        // A perspective bends the outline as well.
+        let effects = app.doc().find_shape(id).expect("shape").effects.clone();
+        app.run(Command::SetEffects {
+            shape: id,
+            effects: vec![Effect::Perspective {
+                corners: [
+                    Point::new(0.0, 0.0),
+                    Point::new(40.0, 5.0),
+                    Point::new(40.0, 15.0),
+                    Point::new(0.0, 20.0),
+                ],
+            }],
+        });
+        assert!(app.shape_tool_shapes().is_empty());
+        assert!(app.node_at(corner).is_none());
+        app.run(Command::SetEffects { shape: id, effects });
+        // Envelope cleared: the nodes are back.
+        app.clear_envelope();
+        assert!(app.envelope_of(id).is_none());
+        assert_eq!(app.shape_tool_shapes().len(), 1);
+        assert!(app.node_at(corner).is_some());
+        assert!(!app.corner_widgets().is_empty());
     }
 
     /// In the Unconstrained mode the selected node's handles show and move
@@ -863,6 +1013,60 @@ mod tests {
         for p in Preset::ALL {
             let f = p.frame(Rect::new(0.0, 0.0, 10.0, 10.0));
             assert_eq!(f.len(), 8, "{p:?}");
+        }
+    }
+
+    /// Copy Envelope Properties from a band with no envelope: as in
+    /// CorelDRAW each object takes the band's shape at the band's size,
+    /// its corners at the band's four corners (#2344), centred where the
+    /// object was, a moved and turned one too. It was moved into the band
+    /// (#2178: text above an arched band went down onto it, where in
+    /// CorelDRAW it stays above it, arched like it).
+    #[test]
+    fn an_object_taking_a_shapes_outline_keeps_its_place() {
+        let mut app = App::headless();
+        let mut band = tracedraw_core::BezPath::new();
+        band.move_to((110.0, 100.0));
+        band.curve_to((116.0, 104.0), (124.0, 104.0), (130.0, 100.0));
+        band.line_to((140.0, 130.0));
+        band.curve_to((128.0, 136.0), (112.0, 136.0), (100.0, 130.0));
+        band.close_path();
+        let src = app
+            .new_shape(ShapeKind::Path {
+                path: band.clone(),
+                closed: true,
+            })
+            .expect("band");
+        let a = rect(&mut app, 0.0, 0.0, 40.0, 20.0);
+        let b = rect(&mut app, 0.0, 0.0, 30.0, 30.0);
+        app.engine
+            .run(&Command::TransformShapes {
+                shapes: vec![b],
+                transform: Affine::translate((50.0, 200.0)) * Affine::rotate(0.3),
+            })
+            .expect("moved");
+        let centres = [bounds(&app, a).center(), bounds(&app, b).center()];
+        app.select(vec![a, b]);
+        app.copy_envelope_from(src);
+        use tracedraw_core::geometry::Shape as _;
+        let bb = band.bounding_box();
+        for (id, c) in [a, b].into_iter().zip(centres) {
+            let want = bb + (c - bb.center());
+            let got = bounds(&app, id);
+            assert!(
+                (got.x0 - want.x0).abs() < 0.05
+                    && (got.x1 - want.x1).abs() < 0.05
+                    && (got.y0 - want.y0).abs() < 0.05
+                    && (got.y1 - want.y1).abs() < 0.05,
+                "{got:?} {want:?}"
+            );
+            let s = page_shape(&app, id);
+            let drawn = tracedraw_core::live::evaluate(&s).main.page_path();
+            let area = drawn.area().abs();
+            assert!(
+                (area - band.area().abs()).abs() < band.area().abs() * 0.02,
+                "{area}"
+            );
         }
     }
 

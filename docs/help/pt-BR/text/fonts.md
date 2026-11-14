@@ -52,7 +52,9 @@ painel [[docker.glyphs]] e das opções funcionam do mesmo jeito:
     floreios, alternativas e conjuntos estilísticos, cada um por si.
   - **Direitos de incorporação**: instalável, editável, visualizar e
     imprimir, restrita, só bitmap.
-  - **Pastas**: as pastas onde estão as fontes instaladas.
+  - **Pastas**: as pastas onde estão as fontes, como o Gerenciador de
+    Fontes as lista: cada pasta que você acrescentou às bibliotecas e as
+    pastas de fontes do sistema, não as subpastas delas.
 
   Dentro de uma seção, uma família precisa de uma das opções marcadas (de
   todas as marcadas, nos recursos OpenType), e precisa atender a todas as
@@ -122,6 +124,10 @@ Passe o ponteiro sobre um caractere para ver o nome e o código. Uma pequena set
 embaixo de um caractere indica que a fonte tem alternativas para ele (como
 floreios ou versaletes); clique nela para vê-las. Os glifos usados por último
 ficam no alto do painel.
+
+Embaixo da grade, arraste o controle deslizante para aumentar ou diminuir os
+caracteres, e clique em [[menu.edit.copy]] para pôr o último caractere clicado
+na área de transferência e colá-lo em outro programa.
 
 Digite no campo de pesquisa acima da grade para encontrar caracteres: digite os
 próprios caracteres (como `é`) ou um código Unicode como `U+20AC`, `0x20ac` ou

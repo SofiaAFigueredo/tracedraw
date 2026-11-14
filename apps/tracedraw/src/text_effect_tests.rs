@@ -171,6 +171,53 @@ fn break_apart_splits_text_into_lines_words_then_letters() {
     assert_eq!(texts(&app).len(), 1);
 }
 
+/// Vertical text broken apart stays vertical, its pieces down its
+/// column and its lines (columns) to the left, as they were (#1303).
+#[test]
+fn break_apart_keeps_vertical_text_in_its_columns() {
+    let mut app = App::headless();
+    let pieces = |app: &App| -> Vec<(String, Point, bool)> {
+        app.selection
+            .iter()
+            .filter_map(|id| app.doc().find_shape(*id))
+            .filter_map(|s| match &s.kind {
+                ShapeKind::Text {
+                    spans,
+                    origin,
+                    para,
+                    ..
+                } => Some((spans_text(spans), *origin, para.vertical)),
+                _ => None,
+            })
+            .collect()
+    };
+    let id = text(&mut app, Point::new(100.0, 200.0), "one two\nthree");
+    app.select(vec![id]);
+    app.set_vertical_text(true);
+    app.break_apart();
+    let got = pieces(&app);
+    assert_eq!(
+        got.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(),
+        ["one two", "three"]
+    );
+    assert!(got.iter().all(|t| t.2), "the pieces stay vertical: {got:?}");
+    // The second line is the next column, to the left, starting as high.
+    assert!(got[1].1.x < got[0].1.x - 1.0, "{got:?}");
+    assert!((got[1].1.y - got[0].1.y).abs() < 1e-6, "{got:?}");
+    // One column: its words one under the other, not side by side.
+    let first = app.selection[0];
+    app.select(vec![first]);
+    app.break_apart();
+    let got = pieces(&app);
+    assert_eq!(
+        got.iter().map(|t| t.0.as_str()).collect::<Vec<_>>(),
+        ["one", "two"]
+    );
+    assert!(got.iter().all(|t| t.2), "{got:?}");
+    assert!(got[1].1.y < got[0].1.y - 1.0, "{got:?}");
+    assert!((got[1].1.x - got[0].1.x).abs() < 1e-6, "{got:?}");
+}
+
 #[test]
 fn text_pieces_follow_lines_words_and_characters() {
     use crate::ops::text_pieces;
@@ -267,6 +314,14 @@ fn the_canvas_asks_for_the_input_method_while_text_is_typed() {
         .ime
         .expect("the input method is allowed");
     assert!(ime.cursor_rect.contains(egui::pos2(100.0, 100.0)));
+    // The area the system places its candidate window beside is the
+    // caret, not the whole canvas.
+    assert!(ime.rect.contains(egui::pos2(100.0, 100.0)));
+    assert!(
+        ime.rect.width() < 5.0 && ime.rect.height() < 25.0,
+        "{:?}",
+        ime.rect
+    );
 }
 
 /// Bounds of `ids` together, as they are drawn on the page.
@@ -697,7 +752,9 @@ fn the_blend_tool_picks_a_text_blend_and_its_sliders_tune_it() {
     else {
         panic!("still a blend");
     };
-    assert!(accel_objects > 0.3, "{accel_objects}");
+    // (The middle step 30 % of the way: about 0.28 on the files' curve,
+    // #1192.)
+    assert!(accel_objects > 0.2, "{accel_objects}");
     assert_eq!(accel_colors, 0.0);
     assert_eq!((end_id, steps), (Some(b), 20));
     assert_eq!(app.selection, vec![a], "the blend stays selected");
@@ -733,7 +790,7 @@ fn the_blend_tool_picks_a_text_blend_and_its_sliders_tune_it() {
     else {
         panic!("still a blend");
     };
-    assert!(accel_colors < -0.3, "{accel_colors}");
+    assert!(accel_colors < -0.2, "{accel_colors}");
     assert_eq!(o2, accel_objects, "the object slider stays");
     assert_eq!(app.engine.history_labels().0.len(), undo_before + 2);
 }
@@ -826,12 +883,19 @@ fn the_blend_tool_s_end_squares_move_and_pick_the_end_objects() {
 }
 
 /// Copy Envelope Properties from a shape with no envelope fits the text
-/// into that shape (#993): text taking a circle's outline fills the
-/// ellipse inside its own box and leaves the box's corners empty.
+/// into that shape (#993): text taking a circle's outline takes the
+/// circle's shape and size where the text is, as in CorelDRAW (#2178),
+/// and leaves the corners of its box empty.
 #[test]
 fn text_takes_the_shape_of_an_object_as_its_envelope() {
     let mut app = App::headless();
     let id = text(&mut app, Point::new(20.0, 100.0), "HHHHHH");
+    let was = {
+        let s = app.doc().find_shape(id).expect("text").clone();
+        (s.transform * tracedraw_core::live::evaluate(&s).main.local_path())
+            .bounding_box()
+            .center()
+    };
     let circle = app
         .new_shape(ShapeKind::Ellipse {
             rect: Rect::new(150.0, 50.0, 190.0, 90.0),
@@ -839,21 +903,16 @@ fn text_takes_the_shape_of_an_object_as_its_envelope() {
         })
         .expect("circle");
     app.select(vec![id]);
-    let before = tracedraw_core::live::evaluate(app.doc().find_shape(id).expect("text"))
-        .main
-        .bounds();
     app.start_copy_envelope();
     app.copy_envelope_from(circle);
     assert!(app.envelope_of(id).is_some(), "{}", app.status);
     let s = app.doc().find_shape(id).expect("text").clone();
     let drawn = s.transform * tracedraw_core::live::evaluate(&s).main.local_path();
     let b = drawn.bounding_box();
-    // The text keeps its place and size.
-    assert!(
-        (b.center() - before.center()).hypot() < 0.5,
-        "{b:?} {before:?}"
-    );
-    assert!((b.width() - before.width()).abs() < 0.5, "{b:?} {before:?}");
+    // The text keeps its place and takes the circle's size.
+    assert!((b.center() - was).hypot() < 0.5, "{b:?} {was:?}");
+    assert!((b.width() - 40.0).abs() < 0.5, "{b:?}");
+    assert!((b.height() - 40.0).abs() < 0.5, "{b:?}");
     // Every point drawn lies in the ellipse of the box.
     let (c, rx, ry) = (b.center(), b.width() / 2.0, b.height() / 2.0);
     let mut worst = 0.0f64;

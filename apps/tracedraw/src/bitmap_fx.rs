@@ -11,7 +11,7 @@ pub enum ColorMode {
     Cmyk,
 }
 
-/// Convert the colour mode (Bitmaps > Mode).
+/// Convert the colour mode (Image > Mode).
 pub fn convert_mode(img: &RgbaImage, mode: ColorMode) -> RgbaImage {
     match mode {
         ColorMode::Grayscale => {
@@ -104,7 +104,54 @@ pub fn encode(img: &RgbaImage) -> Option<Vec<u8>> {
     Some(buf.into_inner())
 }
 
-/// Resample to a new pixel size (Bitmaps > Resample).
+/// Encode `img` as a grayscale PNG (8-bit gray, with an alpha channel
+/// only when a pixel is not opaque): a grayscale picture, whose colour
+/// mode the status line reads from the PNG (#1777). Each pixel's level
+/// is its luminance, `0.299 R + 0.587 G + 0.114 B`.
+pub fn encode_gray(img: &RgbaImage) -> Option<Vec<u8>> {
+    let level = |p: &Rgba<u8>| {
+        (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    let mut buf = std::io::Cursor::new(Vec::new());
+    if img.pixels().all(|p| p[3] == 255) {
+        let gray = image::GrayImage::from_fn(img.width(), img.height(), |x, y| {
+            image::Luma([level(img.get_pixel(x, y))])
+        });
+        gray.write_to(&mut buf, image::ImageFormat::Png).ok()?;
+    } else {
+        let gray = image::GrayAlphaImage::from_fn(img.width(), img.height(), |x, y| {
+            let p = img.get_pixel(x, y);
+            image::LumaA([level(p), p[3]])
+        });
+        gray.write_to(&mut buf, image::ImageFormat::Png).ok()?;
+    }
+    Some(buf.into_inner())
+}
+
+/// The colour mode a bitmap is in: CMYK when marked so, grayscale when
+/// its PNG holds one grey channel, else RGB (the status bar and the Mode
+/// menu, #1254, #2330).
+pub fn mode_of(cmyk: bool, png: &[u8]) -> ColorMode {
+    if cmyk {
+        ColorMode::Cmyk
+    } else if png_is_gray(png) {
+        ColorMode::Grayscale
+    } else {
+        ColorMode::Rgb
+    }
+}
+
+/// Whether `png` is a grayscale PNG (colour type 0 or 4 in its header):
+/// a bitmap in the Grayscale colour mode (#1777).
+pub fn png_is_gray(png: &[u8]) -> bool {
+    png.get(..8) == Some(b"\x89PNG\r\n\x1a\n".as_slice())
+        && png.get(12..16) == Some(b"IHDR".as_slice())
+        && matches!(png.get(25), Some(0 | 4))
+}
+
+/// Resample to a new pixel size (Image > Resample).
 pub fn resample(img: &RgbaImage, w: u32, h: u32) -> RgbaImage {
     image::imageops::resize(
         img,
@@ -124,7 +171,7 @@ pub fn inflate_to(img: &RgbaImage, w: u32, h: u32) -> RgbaImage {
     out
 }
 
-/// Grow the canvas by `px` on every side (Inflate Bitmap).
+/// Grow the canvas by `px` on every side (Bitmap Padding).
 pub fn inflate(img: &RgbaImage, px: u32) -> RgbaImage {
     let mut out = ImageBuffer::from_pixel(
         img.width() + 2 * px,
@@ -135,7 +182,7 @@ pub fn inflate(img: &RgbaImage, px: u32) -> RgbaImage {
     out
 }
 
-/// The slots of the Bitmap Mask docker.
+/// The slots of the Color Mask docker.
 pub const MASK_SLOTS: usize = 10;
 
 /// One colour of a bitmap mask: in use, the colour, and how far (in % of
@@ -157,7 +204,7 @@ impl Default for MaskSlot {
     }
 }
 
-/// The Bitmap Mask docker's state.
+/// The Color Mask docker's state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaskSettings {
     pub slots: [MaskSlot; MASK_SLOTS],

@@ -46,7 +46,13 @@ time of writing).
 
 - `tracedraw.exe` and `tracedraw-cli.exe`, before they are packed (so the
   installer, the portable zip and the MSIX all carry signed programs).
-- The installer, `tracedraw-<version>-windows-x86_64-setup.exe`.
+- The installers, `tracedraw-<version>-windows-x86_64-setup.exe` and
+  the 32-bit `tracedraw-<version>-windows-x86-setup.exe` (#1975). Each
+  Windows build uploads its own SignPath artifacts
+  (`unsigned-programs-<build>`, `unsigned-installer-<build>`); the
+  "installer" artifact configuration in SignPath must match
+  `tracedraw-*-windows-*-setup.exe`, as
+  `packaging/windows/signpath/installer.xml` does.
 - Not signed: the uninstaller the installer writes (it is never
   downloaded, so SmartScreen does not check it) and the macOS and Linux
   packages.
@@ -102,7 +108,7 @@ SignPath that means approving every push, so leave it off there.
 3. Open the app's Product management > Product identity page and copy
    three values into GitHub variables:
    - `MSIX_IDENTITY_NAME`: Package/Identity/Name (like
-     `12345IghorToth.TraceDraw`);
+     `12345TraceDraw.TraceDraw`);
    - `MSIX_PUBLISHER`: Package/Identity/Publisher (like `CN=1A2B3C4D-...`);
    - `MSIX_PUBLISHER_NAME`: Package/Properties/PublisherDisplayName (your
      name as the Store shows it).

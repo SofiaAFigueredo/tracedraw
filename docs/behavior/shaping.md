@@ -1,12 +1,13 @@
 # Shaping
 
-Object > Shaping, the property bar's shaping buttons (with two or more
-objects selected) and the Shaping panel.
+Object > Combine Shapes, the property bar's shaping buttons (with two or more
+objects selected) and the Combine Shapes panel.
 
 ## Operations
 
-The target gives the result its fill, outline and opacity; the other
-selected objects are the sources. With objects picked one by one
+The target gives the result its fill, outline and opacity (a mesh fill
+the result reaches past becomes the mesh's mean colour, see
+`mesh-fill.md`); the other selected objects are the sources. With objects picked one by one
 (click, Shift+click) the target is the one selected last; with a
 selection made by a marquee or a freehand region, the target is the
 bottom-most object of it (as long as the selection is not changed by a
@@ -65,6 +66,16 @@ sources do (Trim keeps them). Weld and Intersect leave open sources out:
 they stay as they are, and with no closed source left the operation does
 nothing and the status bar says so. Simplify leaves open curves alone.
 
+Weld of open curves alone (no closed object selected) joins them: ends
+that meet, or lie within the Join Curves gap, are joined end to end with
+the Join Curves joint, and all the curves become one open curve, those
+whose ends meet nothing as subpaths of it (#1934,
+`ops::curves_and_target_tests::weld_and_combine_of_open_curves_make_one_path`).
+Combine of open curves gives one open curve with a subpath for each;
+a closed object combined with them keeps its subpaths closed, so they
+still fill and Break Apart gives them back as closed curves
+(`command::tests::combining_open_curves_keeps_them_open`).
+
 When the object whose attributes the result takes is a group: Trim, Front
 Minus Back and Back Minus Front cut each object of the group on its own,
 each keeping its fill, outline and opacity, the pieces a group (pieces
@@ -85,6 +96,11 @@ attributes, none, and showed only in Wireframe (#539,
   the Bezier segments of the objects, with new nodes only where their
   outlines cross; two circles welded give a handful of curve segments,
   not hundreds of tiny lines.
+- A vertex where two outlines cross is moved onto the exact crossing of
+  the curves. Where they cross at a shallow angle, several vertices of
+  the flattening lie near the crossing and all land on it; they become
+  one node (vertices closer than 1e-7 mm are one), so the result has no
+  lines of no length there (`shaping::tests::shallow_crossings_give_one_node_each`).
 - An edge that does not follow an object's outline (a chord across an
   arc, as where a cut runs straight across a curve) stays a straight
   line: a stretch is taken from the source only when the edges lie
@@ -106,6 +122,46 @@ attributes, none, and showed only in Wireframe (#539,
   (`panels.shaping_op`, `panels.shaping_leave`).
 - The button under them, named after the operation, applies it; it is
   pale until enough objects are selected, and a line says how many.
+
+## Fill rule
+
+`shaping::overlay` reads both inputs with the even-odd rule, how curves
+fill: contours of one object that overlap make holes there.
+`shaping::overlay_with` takes the rule (`FillRule::EvenOdd` or
+`FillRule::NonZero`) for outlines meant for the nonzero rule, how text
+fills (glyphs drawn as overlapping strokes, traced logos), so they need no
+clean-up first; a contour turning the other way is a hole under both
+rules. The result covers the same area under the even-odd rule
+(`shaping::tests::overlay_reads_its_inputs_with_the_fill_rule_given`).
+`shaping::nonzero_as_even_odd` turns one such outline into an even-odd one
+on its own.
+
+The operations read each object as the area it fills (#555): text and
+curves set to the nonzero rule with that rule, so the overlapping
+strokes of a letter make no hole; a group as what its objects cover
+together, so where two of them overlap is no hole either (its outline is
+their outlines one after the other, which the even-odd rule read as a
+hole there). Checked on overlapping rectangles, ellipses, curves, a
+group, a group of overlapping objects, an object with a hole, text and
+text converted to curves, and a target behind the source, by Weld,
+Trim, Intersect, Front Minus Back and Back Minus Front
+(`shaping_tests`).
+
+## Clip frames
+
+A clip frame stays a clip frame (#1745 to #1750): when the object that
+keeps its attributes (the target; the front or back object of the Minus
+operations) is a clip frame, the result is a clip frame whose frame takes
+the new shape with the frame's own fill and outline, and what it held
+stays inside, where it was on the page. Weld also gathers what every clip
+frame welded holds (lowest first), even when the target is another
+object, whose fill and outline the frame then takes. Simplify changes a
+clip frame's frame in place and keeps its contents. A clip frame that is
+cut away and removed (a back object of Front Minus Back, a source not
+left) goes with its contents, like any other object. Boundary leaves
+every object as it was and draws a plain outline. Each is one undo step
+(`ops::curves_and_target_tests::shaping_a_clip_frame_keeps_what_it_holds`,
+`welding_into_another_object_and_the_other_operations`).
 
 ## Checks
 

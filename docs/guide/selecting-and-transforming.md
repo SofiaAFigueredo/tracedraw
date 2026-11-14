@@ -16,8 +16,10 @@ To select objects:
   Treat all objects as filled** is on (it is on by default).
 - **Shift+click** adds an object to the selection, or takes it out.
 - **Alt+click** selects the object *beneath* the selected one under the
-  pointer. Keep clicking to dig down through a stack; after the bottom
-  object you come back to the top.
+  pointer, or beneath the topmost one when nothing there is selected: one
+  Alt+click on the object in front takes the one hidden behind it. Keep
+  clicking to dig down through a stack; after the bottom object you come
+  back to the top.
 - **Tab** and **Shift+Tab** step through the objects in stacking order.
 - **Ctrl+A** selects everything; double-clicking the Pick tool's button
   does the same.
@@ -95,6 +97,11 @@ Drag a selected object with the right button and let go: a menu offers
 **Copy All Properties**, **Place Inside** (the object under the pointer
 becomes a clip frame for the selection) and **Cancel**.
 
+Without the menu: start dragging a selected object with the left
+button, then hold `Alt` and let go over another object to give it the selection's fill;
+hold `Alt`+`Shift` to give it the outline instead. The selection stays
+where it was.
+
 ### Nudge with the arrow keys
 
 The arrow keys move the selection by the nudge distance (2.54 mm to
@@ -104,13 +111,13 @@ start with):
 - `Ctrl`+arrow: the micro nudge distance (0.254 mm).
 
 Change the nudge distance on the property bar with nothing selected, or
-in **Layout > Document Options > Rulers**.
+in **Page > Document Setup > Rulers**.
 
 ### Duplicate
 
 - `Ctrl+D` duplicates the selection at the duplicate distance.
 - `+` (with the Pick tool) duplicates it in place, with no offset.
-- `Ctrl+Shift+D` opens the **Step and Repeat** panel.
+- `Ctrl+Shift+D` opens the **Repeat Copies** panel.
 
 ## Scale and stretch
 
@@ -204,8 +211,8 @@ Y; turned off, it moves the reference point to X and Y. Detail:
 
 ## Align and distribute
 
-To line objects up, open **Align and Distribute** (`Ctrl+Shift+A`, or
-**Object > Align and Distribute**).
+To line objects up, open **Align and Distribute**
+(**Object > Align and Distribute**).
 
 - Six **Align** buttons line up left edges, centres or right edges, and
   top edges, centres or bottom edges.

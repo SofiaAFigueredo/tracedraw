@@ -138,7 +138,13 @@ fn windows_version() -> Option<String> {
         platform: u32,
         service_pack: [u16; 128],
     }
-    #[link(name = "ntdll", kind = "raw-dylib")]
+    // 32-bit Windows: the DLL exports the plain name, not the stdcall
+    // decorated one raw-dylib imports by default (#1975).
+    #[cfg_attr(
+        target_arch = "x86",
+        link(name = "ntdll", kind = "raw-dylib", import_name_type = "undecorated")
+    )]
+    #[cfg_attr(not(target_arch = "x86"), link(name = "ntdll", kind = "raw-dylib"))]
     unsafe extern "system" {
         fn RtlGetVersion(info: *mut OsVersionInfo) -> i32;
     }
@@ -217,7 +223,7 @@ fn show(report: &str, saved: Option<&Path>) {
     let mut text = format!("{first}\n\n");
     if let Some(p) = saved {
         text.push_str(&format!(
-            "The details are in {}. Please attach that file to an issue at https://github.com/igtoth/tracedraw/issues",
+            "The details are in {}. Please attach that file to an issue at https://github.com/tracedraw/tracedraw/issues",
             p.display()
         ));
     }

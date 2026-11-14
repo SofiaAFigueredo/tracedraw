@@ -67,7 +67,7 @@ pub fn banner(app: &mut App, ui: &mut Ui, need: Need) -> bool {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_top(|ui| {
-                ui.label(RichText::new("\u{2726}").size(18.0).color(line));
+                ui.label(RichText::new("\u{2728}").size(18.0).color(line));
                 ui.vertical(|ui| {
                     ui.label(RichText::new(tr("aiui.banner_title")).strong());
                     ui.label(text);
@@ -281,12 +281,14 @@ mod tests {
         app.ai.key = "k".into();
         app.ai.fake = Some(|_| {
             Ok(crate::ai::HttpResponse {
+                retry_after: None,
                 status: 200,
                 body: r#"{"data":[{"id":"gemini-2.5-flash"}]}"#.into(),
             })
         });
         app.ai_image.fake = Some(|_| {
             Ok(crate::ai::HttpResponse {
+                retry_after: None,
                 status: 200,
                 body: r#"{"models":[{"name":"models/gemini-2.5-flash-image"}]}"#.into(),
             })

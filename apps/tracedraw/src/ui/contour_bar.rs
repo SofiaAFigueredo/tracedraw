@@ -56,9 +56,15 @@ pub fn contour_controls(app: &mut App, ui: &mut Ui) {
     });
     ui.horizontal(|ui| {
         crate::ui::toolbar::dim_labelled_as(ui, "docker.steps", "contour.steps_desc", |ui| {
+            // A slider (with its number box), stepped on a logarithmic
+            // scale so the first steps are easy to pick (#1265).
             ui.add_enabled_ui(s.direction != ContourDirection::ToCenter, |ui| {
                 changed |= ui
-                    .add(NumField::new(&mut s.steps).range(1..=999).width(44.0))
+                    .add(
+                        crate::ui::Slider::new(&mut s.steps, 1..=999)
+                            .logarithmic(true)
+                            .width(120.0),
+                    )
                     .changed();
             });
         });
@@ -67,7 +73,7 @@ pub fn contour_controls(app: &mut App, ui: &mut Ui) {
             ui.add(
                 NumField::new(&mut o)
                     .range(0.0..=app.units.world_from_mm(1000.0))
-                    .fixed_decimals(app.settings.precision.min(10) as usize)
+                    .length_decimals(app.settings.precision.min(10) as usize)
                     .unit_mm(app.units.world_to_mm(1.0))
                     .suffix(format!(" {}", app.units.short()))
                     .width(76.0),
@@ -78,7 +84,7 @@ pub fn contour_controls(app: &mut App, ui: &mut Ui) {
             s.offset = app.units.world_to_mm(o);
             changed = true;
         }
-        egui::ComboBox::from_id_salt("contour_corners")
+        crate::ui::keynav::ComboBox::from_id_salt("contour_corners")
             .selected_text(tr(join_key(s.corners)))
             .width(80.0)
             .show_ui(ui, |ui| {
@@ -97,7 +103,7 @@ pub fn contour_controls(app: &mut App, ui: &mut Ui) {
             .rich_tip(tr("contour.corners"));
     });
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("contour_blend")
+        crate::ui::keynav::ComboBox::from_id_salt("contour_blend")
             .selected_text(tr(blend_key(s.color_blend)))
             .width(110.0)
             .show_ui(ui, |ui| {

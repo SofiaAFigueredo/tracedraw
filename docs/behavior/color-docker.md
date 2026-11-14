@@ -53,10 +53,14 @@ Window > Panels > Color, Shift+F11, and Outline Colour (Shift+F12).
   new colour as the fill in front, the first selected object's outline
   colour behind it, a red diagonal for none; with nothing selected the
   outline colour new objects get; the tip gives both codes), the
-  eyedropper button, which picks the Color Eyedropper tool, and the
+  eyedropper button (the Color Eyedropper tool's own icon, as in the
+  toolbox; it showed the outline pen's picture, #1485), which picks the
+  Color Eyedropper tool, and the
   "..." button that drops the other actions (see below). Under the
-  swatch, Fill and Outline (small, pale with nothing selected) apply
-  the new colour to the selection. After a sample, "Use sampled
+  swatch, Fill and Outline (small framed buttons, pale with nothing
+  selected; they were bare words) apply
+  the new colour to the selection
+  (`ui::color_docker::tests::the_eyedropper_button_shows_its_tool_and_fill_and_outline_are_buttons`). After a sample, "Use sampled
   #rrggbb" under them makes it the new colour.
 
 ## The lock and the other actions
@@ -96,13 +100,19 @@ browser build has no way to it at all.
 
 ## Following the selection
 
-When the selection changes, the new colour becomes the first selected
-object's solid fill, in the model of the sliders. Changes by hand stay
-until the selection changes again.
+When the selection changes, or the first selected object's solid fill
+goes to another colour model (Tools > Convert Colors), the new colour
+becomes that fill. A CMYK or RGB fill brings the sliders to its own
+model, so a fill converted to RGB shows its RGB values (#1254); another
+model's fill shows in the model of the sliders. A fill changed within
+its model (a colour applied, an undo) leaves the new colour alone.
+Changes by hand stay until the selection changes or its fill is
+converted.
 
 ## Checks
 
 - `ui::color_docker::tests::the_new_color_follows_the_selection`
+- `ui::color_docker::tests::the_new_color_follows_a_converted_fill_into_its_model`
 - `ui::color_docker::tests::hue_sliders_count_degrees`
 - `ui::color_docker::tests::the_docker_draws_every_view_and_model`
 - `pick_drag_tests::the_color_panel_menu_swaps_fill_and_outline`
@@ -140,6 +150,16 @@ below the popup (Lab, Grayscale, YIQ) chooses them, it does not count
 as outside (#440,
 `ui::color_picker::tests::a_choice_in_the_model_list_keeps_the_popup_open`,
 `ui::color_picker::tests::the_model_can_be_changed_on_demand`).
+
+Under the colour's description a **Harmony** list (Analogous,
+Complementary at first, Split complementary, Triadic, Tetradic,
+Monochromatic: the rules of the Color Styles docker's harmony editor,
+`palette::Harmony`) and a row of its swatches for the colour shown,
+worked out again as it changes. Each swatch is in the model the colour
+is edited in, so a CMYK colour gives CMYK swatches; a click on one
+picks it as the viewer would, the popup staying open (#1498,
+`ui::color_picker::tests::a_harmony_swatch_picks_its_colour`). The
+list's choice is kept while the popup is open.
 
 A drag in the popup on the Properties docker's or the Interactive Fill
 bar's uniform colour is one undo step, and the colour joins the

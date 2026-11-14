@@ -1,7 +1,7 @@
 //! Dockers added with the full workspace: Align and Distribute, Shaping,
-//! Step and Repeat, Text, Glyphs, Color, Color Styles, Object Styles,
+//! Repeat Copies, Text, Glyphs, Color, Color Styles, Object Styles,
 //! Find and Replace, Scripts, Palettes, Lens, Blend, Contour, Envelope,
-//! Extrude, Bevel, Brush Strokes, Bitmap Mask, Object Data, Links,
+//! Extrude, Bevel, Brush Strokes, Color Mask, Object Data, Links,
 //! Symbols, Pages, Guidelines, Fonts.
 
 use crate::app::{App, DockerTab};
@@ -72,27 +72,80 @@ pub fn show(app: &mut App, ui: &mut Ui, tab: DockerTab) {
 fn step_and_repeat(app: &mut App, ui: &mut Ui) {
     let u = app.units;
     let has = !app.selection.is_empty();
-    // With nothing selected the fields wait, keeping their values (#1198).
-    ui.add_enabled_ui(has, |ui| {
-        step_and_repeat_fields(&mut app.step_repeat, u, ui)
-    });
-    if ui
-        .add_enabled(has, egui::Button::new(tr("docker.apply")))
+    // The panel is worked in while the pointer is on it, one of its fields
+    // has the keys, or the last click (or tap) was in it; a click
+    // anywhere else ends that (#1197).
+    let over = ui.rect_contains_pointer(ui.max_rect());
+    if ui.input(|i| i.pointer.any_pressed()) {
+        app.step_repeat_working = over;
+    }
+    // Copies one after another, or the page filled with them (#1255).
+    ui.horizontal(|ui| {
+        ui.radio_value(
+            &mut app.step_repeat.fill,
+            false,
+            tr("docker.sr_mode_copies"),
+        )
         .rich_tip(crate::ui::tips::pair(
-            "docker.apply",
-            "docker.sr_apply_desc",
-        ))
+            "docker.sr_mode_copies",
+            "docker.sr_mode_copies_desc",
+        ));
+        ui.radio_value(&mut app.step_repeat.fill, true, tr("docker.sr_mode_fill"))
+            .rich_tip(crate::ui::tips::pair(
+                "docker.sr_mode_fill",
+                "docker.sr_mode_fill_desc",
+            ));
+    });
+    // With nothing selected the fields wait, keeping their values (#1198).
+    let (focused, can_apply) = if app.step_repeat.fill {
+        let page = app.page_rect();
+        let layout = app.fill_page_layout();
+        let focused = ui
+            .add_enabled_ui(has, |ui| {
+                fill_page_fields(&mut app.step_repeat, u, page, layout.as_ref(), ui)
+            })
+            .inner;
+        let ok = layout.as_ref().is_some_and(|(_, _, g)| !g.cells.is_empty());
+        (focused, ok)
+    } else {
+        let focused = ui
+            .add_enabled_ui(has, |ui| {
+                step_and_repeat_fields(&mut app.step_repeat, u, ui)
+            })
+            .inner;
+        (focused, true)
+    };
+    let desc = if app.step_repeat.fill {
+        "docker.sr_fill_apply_desc"
+    } else {
+        "docker.sr_apply_desc"
+    };
+    if ui
+        .add_enabled(has && can_apply, egui::Button::new(tr("docker.apply")))
+        .rich_tip(crate::ui::tips::pair("docker.apply", desc))
         .clicked()
     {
         app.step_and_repeat_apply();
     }
+    // The copies Apply would make, outlined on the canvas (#1197).
+    if has && (over || focused || app.step_repeat_working) {
+        app.step_preview_shown = app.step_and_repeat_preview().is_some();
+    }
 }
 
-fn step_and_repeat_fields(sr: &mut crate::ops2::StepRepeat, u: crate::app::Units, ui: &mut Ui) {
+/// The panel's fields; true when one of them has the keyboard focus.
+fn step_and_repeat_fields(
+    sr: &mut crate::ops2::StepRepeat,
+    u: crate::app::Units,
+    ui: &mut Ui,
+) -> bool {
+    let mut focused = false;
     ui.horizontal(|ui| {
         ui.label(tr("docker.copies"));
-        ui.add(crate::ui::field::NumField::new(&mut sr.copies).range(1..=999))
-            .rich_tip(crate::ui::tips::keyed("docker.sr_copies"));
+        focused |= ui
+            .add(crate::ui::field::NumField::new(&mut sr.copies).range(1..=999))
+            .rich_tip(crate::ui::tips::keyed("docker.sr_copies"))
+            .has_focus();
     });
     ui.strong(tr("docker.horizontal_settings"));
     ui.horizontal(|ui| {
@@ -108,15 +161,15 @@ fn step_and_repeat_fields(sr: &mut crate::ops2::StepRepeat, u: crate::app::Units
             ));
     });
     let mut dx = u.world_from_mm(sr.dx);
-    if ui
+    let r = ui
         .add(
             crate::ui::field::NumField::new(&mut dx)
                 .speed(0.5)
                 .suffix(format!(" {}", u.short())),
         )
-        .rich_tip(crate::ui::tips::keyed("docker.sr_dx"))
-        .changed()
-    {
+        .rich_tip(crate::ui::tips::keyed("docker.sr_dx"));
+    focused |= r.has_focus();
+    if r.changed() {
         sr.dx = u.world_to_mm(dx);
     }
     ui.strong(tr("docker.vertical_settings"));
@@ -133,17 +186,220 @@ fn step_and_repeat_fields(sr: &mut crate::ops2::StepRepeat, u: crate::app::Units
             ));
     });
     let mut dy = u.world_from_mm(sr.dy);
-    if ui
+    let r = ui
         .add(
             crate::ui::field::NumField::new(&mut dy)
                 .speed(0.5)
                 .suffix(format!(" {}", u.short())),
         )
-        .rich_tip(crate::ui::tips::keyed("docker.sr_dy"))
-        .changed()
-    {
+        .rich_tip(crate::ui::tips::keyed("docker.sr_dy"));
+    focused |= r.has_focus();
+    if r.changed() {
         sr.dy = u.world_to_mm(dy);
     }
+    focused
+}
+
+/// A length field in the document's unit holding millimetres, at least
+/// `min`; true when it has the keyboard focus.
+fn fill_length(ui: &mut Ui, u: crate::app::Units, mm: &mut f64, min: f64, key: &str) -> bool {
+    let mut v = u.world_from_mm(*mm);
+    let r = ui
+        .add(
+            crate::ui::field::NumField::new(&mut v)
+                .speed(0.5)
+                .suffix(format!(" {}", u.short())),
+        )
+        .rich_tip(crate::ui::tips::keyed(key));
+    if r.changed() {
+        let x = u.world_to_mm(v);
+        *mm = if x.is_finite() { x.max(min) } else { min };
+    }
+    r.has_focus()
+}
+
+/// Fill page's fields (#1255): the page size, the area, the margins, the
+/// gaps, the shift of every second row, which way the copies stand with
+/// the count of each way, the trim marks and the count of the copies
+/// Apply makes; true when one of them has the keyboard focus.
+fn fill_page_fields(
+    sr: &mut crate::ops2::StepRepeat,
+    u: crate::app::Units,
+    page: tracedraw_core::geometry::Rect,
+    layout: Option<&(
+        crate::fill_page::FillGrid,
+        crate::fill_page::FillGrid,
+        crate::fill_page::FillGrid,
+    )>,
+    ui: &mut Ui,
+) -> bool {
+    let mut focused = false;
+    let size = |v: f64| {
+        format!("{:.2}", u.world_from_mm(v))
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    };
+    ui.label(
+        egui::RichText::new(trf(
+            "docker.fillpage_page_size",
+            &[
+                ("w", &size(page.width())),
+                ("h", &size(page.height())),
+                ("unit", u.short()),
+            ],
+        ))
+        .color(crate::theme::Tokens::text_dim()),
+    );
+    ui.horizontal(|ui| {
+        ui.label(tr("docker.fillpage_area"));
+        ui.radio_value(&mut sr.area_custom, false, tr("docker.fillpage_area_page"))
+            .rich_tip(crate::ui::tips::keyed("docker.fillpage_area_page"));
+        if ui
+            .radio(sr.area_custom, tr("docker.fillpage_area_custom"))
+            .rich_tip(crate::ui::tips::keyed("docker.fillpage_area_custom"))
+            .clicked()
+            && !sr.area_custom
+        {
+            sr.area_custom = true;
+            sr.area = page;
+        }
+    });
+    egui::Grid::new("fill_page_grid")
+        .num_columns(2)
+        .spacing([6.0, 4.0])
+        .show(ui, |ui| {
+            if sr.area_custom {
+                let a = sr.area;
+                let (mut x, mut y, mut w, mut h) = (a.x0, a.y0, a.width(), a.height());
+                ui.label(tr("docker.fillpage_area_x"));
+                focused |= fill_length(ui, u, &mut x, f64::MIN, "docker.fillpage_area_x");
+                ui.end_row();
+                ui.label(tr("docker.fillpage_area_y"));
+                focused |= fill_length(ui, u, &mut y, f64::MIN, "docker.fillpage_area_y");
+                ui.end_row();
+                ui.label(tr("docker.fillpage_area_w"));
+                focused |= fill_length(ui, u, &mut w, 1.0, "docker.fillpage_area_w");
+                ui.end_row();
+                ui.label(tr("docker.fillpage_area_h"));
+                focused |= fill_length(ui, u, &mut h, 1.0, "docker.fillpage_area_h");
+                ui.end_row();
+                sr.area = tracedraw_core::geometry::Rect::new(x, y, x + w, y + h);
+            }
+            ui.label(tr("docker.fillpage_margins"));
+            ui.checkbox(&mut sr.margins_same, tr("docker.fillpage_same"))
+                .rich_tip(crate::ui::tips::keyed("docker.fillpage_margins_same"));
+            ui.end_row();
+            if sr.margins_same {
+                ui.label("");
+                focused |= fill_length(ui, u, &mut sr.margins[0], 0.0, "docker.fillpage_margins");
+                ui.end_row();
+            } else {
+                for (i, key) in [
+                    "print.margin_left",
+                    "print.margin_right",
+                    "print.margin_top",
+                    "print.margin_bottom",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    ui.label(tr(key));
+                    focused |=
+                        fill_length(ui, u, &mut sr.margins[i], 0.0, "docker.fillpage_margins");
+                    ui.end_row();
+                }
+            }
+            ui.label(tr("docker.fillpage_gap"));
+            ui.checkbox(&mut sr.gap_same, tr("docker.fillpage_same"))
+                .rich_tip(crate::ui::tips::keyed("docker.fillpage_gap_same"));
+            ui.end_row();
+            if sr.gap_same {
+                ui.label("");
+                focused |= fill_length(ui, u, &mut sr.gap.0, 0.0, "docker.fillpage_gap");
+                ui.end_row();
+            } else {
+                ui.label(tr("docker.fillpage_gap_x"));
+                focused |= fill_length(ui, u, &mut sr.gap.0, 0.0, "docker.fillpage_gap_x");
+                ui.end_row();
+                ui.label(tr("docker.fillpage_gap_y"));
+                focused |= fill_length(ui, u, &mut sr.gap.1, 0.0, "docker.fillpage_gap_y");
+                ui.end_row();
+            }
+            ui.label(tr("docker.fillpage_row_shift"));
+            focused |= fill_length(ui, u, &mut sr.row_shift, 0.0, "docker.fillpage_row_shift");
+            ui.end_row();
+        });
+    // Which way the copies stand, with how many fit each way.
+    ui.strong(tr("docker.fillpage_turn"));
+    let count = |g: Option<&crate::fill_page::FillGrid>| {
+        g.map(|g| {
+            if crate::fill_page::count(g) == 0 {
+                tr("docker.fillpage_none")
+            } else {
+                App::fill_count_text(g)
+            }
+        })
+        .unwrap_or_default()
+    };
+    for (i, key, grid) in [
+        (0u8, "docker.fillpage_as_is", layout.map(|l| &l.0)),
+        (1, "docker.fillpage_turned", layout.map(|l| &l.1)),
+        (2, "docker.fillpage_best", None),
+    ] {
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut sr.turn, i, tr(key))
+                .rich_tip(crate::ui::tips::keyed(key));
+            if grid.is_some() {
+                ui.label(egui::RichText::new(count(grid)).color(crate::theme::Tokens::text_dim()));
+            }
+        });
+    }
+    ui.checkbox(&mut sr.marks, tr("docker.fillpage_marks"))
+        .rich_tip(crate::ui::tips::keyed("docker.fillpage_marks"));
+    if sr.marks {
+        egui::Grid::new("fill_page_marks")
+            .num_columns(2)
+            .spacing([6.0, 4.0])
+            .show(ui, |ui| {
+                ui.label(tr("docker.fillpage_mark_length"));
+                focused |= fill_length(
+                    ui,
+                    u,
+                    &mut sr.mark_length,
+                    0.0,
+                    "docker.fillpage_mark_length",
+                );
+                ui.end_row();
+                ui.label(tr("docker.fillpage_mark_offset"));
+                focused |= fill_length(
+                    ui,
+                    u,
+                    &mut sr.mark_offset,
+                    0.0,
+                    "docker.fillpage_mark_offset",
+                );
+                ui.end_row();
+            });
+    }
+    // The copies Apply makes.
+    if let Some((_, _, g)) = layout {
+        let n = crate::fill_page::count(g);
+        if n == 0 {
+            ui.colored_label(ui.visuals().warn_fg_color, tr("docker.fillpage_none"));
+        } else if g.cells.is_empty() {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                trf(
+                    "status.fill_page_too_many",
+                    &[("max", &crate::fill_page::MAX_COPIES.to_string())],
+                ),
+            );
+        } else {
+            ui.strong(App::fill_count_text(g));
+        }
+    }
+    focused
 }
 
 /// A colour style of `c`, named after its place in the list (New color
@@ -197,10 +453,15 @@ fn color_styles(app: &mut App, ui: &mut Ui) {
     for (i, cs) in st.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             changed |= color_button(ui, &mut cs.color);
-            changed |= ui
-                .add(egui::TextEdit::singleline(&mut cs.name).desired_width(90.0))
-                .rich_tip(crate::ui::tips::keyed("docker.cs_name"))
-                .lost_focus();
+            let field = egui::Id::new(("color_style_name", i));
+            let (_, typed) = kept_text(ui, field, i, &cs.name.clone(), |ui, text| {
+                ui.add(egui::TextEdit::singleline(text).desired_width(90.0))
+                    .rich_tip(crate::ui::tips::keyed("docker.cs_name"))
+            });
+            if let Some(name) = typed {
+                cs.name = name;
+                changed = true;
+            }
             if ui
                 .small_button(tr("docker.fill"))
                 .rich_tip(crate::ui::tips::pair("docker.fill", "docker.cs_fill_desc"))
@@ -348,7 +609,10 @@ fn default_properties(app: &mut App, ui: &mut Ui) {
                     .rich_tip(tr("defaults.reset_hint"))
                     .clicked()
                 {
-                    let fresh = ObjectDefaults::default().get(kind).clone();
+                    // The defaults of the drawing's mode, their black
+                    // following the colour mode again.
+                    let mode = app.doc().metadata.primary_color_mode;
+                    let fresh = ObjectDefaults::for_mode(mode).get(kind).clone();
                     app.set_default_properties(kind, |p| *p = fresh);
                 }
                 let from = ui
@@ -360,9 +624,13 @@ fn default_properties(app: &mut App, ui: &mut Ui) {
                 if from.clicked() {
                     if let Some(s) = &first {
                         let (fill, stroke) = (s.fill.clone(), s.stroke.clone());
+                        // Colours taken from an object are the user's
+                        // own, even a black.
                         app.set_default_properties(kind, |p| {
                             p.fill = fill;
                             p.stroke = stroke;
+                            p.choose_fill(kind);
+                            p.choose_outline(kind);
                         });
                     }
                 }
@@ -407,10 +675,15 @@ fn styles_list(app: &mut App, ui: &mut Ui) {
     for (i, os) in st.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             style_swatches(ui, &os.fill, &os.stroke);
-            changed |= ui
-                .add(egui::TextEdit::singleline(&mut os.name).desired_width(96.0))
-                .rich_tip(crate::ui::tips::keyed("docker.style_name"))
-                .lost_focus();
+            let field = egui::Id::new(("object_style_name", i));
+            let (_, typed) = kept_text(ui, field, os.id, &os.name.clone(), |ui, text| {
+                ui.add(egui::TextEdit::singleline(text).desired_width(96.0))
+                    .rich_tip(crate::ui::tips::keyed("docker.style_name"))
+            });
+            if let Some(name) = typed {
+                os.name = name;
+                changed = true;
+            }
             let n = counts.get(&os.id).copied().unwrap_or(0);
             dim(ui, trf("docker.style_objects", &[("n", &n.to_string())]));
         });
@@ -656,7 +929,7 @@ fn find_properties(app: &mut App, ui: &mut Ui, st: &mut crate::ui::dialogs::Find
                     .get(pf.object_type)
                     .map(|t| tr(&format!("find.type.{}", t.key())))
                     .unwrap_or_default();
-                egui::ComboBox::from_id_salt("find_props_type")
+                crate::ui::keynav::ComboBox::from_id_salt("find_props_type")
                     .selected_text(cur)
                     .show_ui(ui, |ui| {
                         for (i, t) in ObjectType::ALL.iter().enumerate() {
@@ -836,7 +1109,9 @@ fn scripts(app: &mut App, ui: &mut Ui) {
             .rich_tip_with(|| format!("JavaScript\n{}", tr("docker.js_desc")));
         let vba_r = ui
             .add_enabled(!crate::files::WEB, egui::Button::selectable(vba, "VBA"))
-            .rich_tip(tr("docker.vba_hint"));
+            .rich_tip(tr("docker.vba_hint"))
+            // Greyed in the browser with the reason (#1416).
+            .rich_disabled_tip(tr("macros.desktop_only"));
         if (js_r.clicked() && vba) || (vba_r.clicked() && !vba) {
             std::mem::swap(&mut app.script_source, &mut app.macros.other_source);
             app.macros.scripts_vba = !vba;
@@ -873,11 +1148,19 @@ fn scripts(app: &mut App, ui: &mut Ui) {
         {
             app.stop_macro();
         }
-        if !crate::files::WEB
-            && !vba
+        // In the browser the button stays, greyed with the reason (#1416).
+        if !vba
             && ui
-                .add_enabled(!debugging, egui::Button::new(tr("docker.debug")))
+                .add_enabled(
+                    !debugging && !crate::files::WEB,
+                    egui::Button::new(tr("docker.debug")),
+                )
                 .rich_tip(tr("docker.debug_hint"))
+                .rich_disabled_tip(if crate::files::WEB {
+                    tr("docker.debug_web")
+                } else {
+                    tr("docker.debug_hint")
+                })
                 .clicked()
         {
             app.start_script_debug();
@@ -918,13 +1201,13 @@ fn scripts(app: &mut App, ui: &mut Ui) {
             ))
             .clicked()
         {
-            if let Some(p) = crate::files::Dialog::new()
+            // The save dialog, a download, or the system's save picker on
+            // Android (#1402).
+            let source = app.script_source.clone();
+            crate::files::Dialog::new()
                 .add_filter(lang, &[ext])
                 .set_file_name(format!("macro.{ext}"))
-                .save_path()
-            {
-                let _ = crate::files::write(p, &app.script_source);
-            }
+                .save_bytes(app, source);
         }
         if ui
             .button(tr("docker.clear"))
@@ -1136,88 +1419,7 @@ fn script_editor(app: &mut App, ui: &mut Ui) {
 }
 
 fn palettes(app: &mut App, ui: &mut Ui) {
-    let n = app.palettes.len();
-    for i in 0..n {
-        let name = app.palettes[i].display_name();
-        let count = app.palettes[i].colors.len();
-        let on = app.visible_palettes.contains(&i);
-        ui.horizontal(|ui| {
-            let mut v = on;
-            if ui
-                .checkbox(&mut v, format!("{name} ({count})"))
-                .rich_tip_with(|| format!("{name}\n{}", tr("docker.palette_show_desc")))
-                .changed()
-            {
-                app.toggle_palette(i);
-            }
-            if ui
-                .small_button(tr("docker.edit"))
-                .rich_tip(crate::ui::tips::pair(
-                    "docker.edit",
-                    "docker.palette_edit_desc",
-                ))
-                .clicked()
-            {
-                app.dialog = crate::ui::dialogs::Dialog::PaletteEditor(
-                    crate::ui::dialogs::PaletteEditorState {
-                        palette: i,
-                        ..Default::default()
-                    },
-                );
-            }
-        });
-    }
-    ui.separator();
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .button(tr("menu.window.palette_open"))
-            .rich_tip(crate::ui::tips::keyed("menu.window.palette_open"))
-            .clicked()
-        {
-            app.open_palette_file();
-        }
-        if ui
-            .button(tr("menu.window.palette_from_document"))
-            .rich_tip(crate::ui::tips::keyed("menu.window.palette_from_document"))
-            .clicked()
-        {
-            app.palette_from_document();
-        }
-        if ui
-            .button(tr("menu.window.palette_from_selection"))
-            .rich_tip(crate::ui::tips::keyed("menu.window.palette_from_selection"))
-            .clicked()
-        {
-            app.palette_from_selection();
-        }
-    });
-    let dp = app.doc().palette.clone();
-    ui.label(trf(
-        "docker.document_palette_n",
-        &[("n", &dp.len().to_string())],
-    ));
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
-        for c in dp {
-            let [r, g, b] = c.to_rgb8();
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
-            let resp = resp.rich_tip_with(|| {
-                format!(
-                    "{}\n{}",
-                    crate::app::color_description(c),
-                    tr("docker.palette_chip_desc")
-                )
-            });
-            ui.painter()
-                .rect_filled(rect, 1.0, egui::Color32::from_rgb(r, g, b));
-            if resp.clicked() {
-                app.apply_fill(Fill::Solid(c));
-            }
-            if resp.secondary_clicked() {
-                app.apply_outline_color(Some(c));
-            }
-        }
-    });
+    crate::ui::palette_manager::show(app, ui);
 }
 
 fn current_effect<F: Fn(&Effect) -> bool>(app: &App, f: F) -> Option<Effect> {
@@ -1234,7 +1436,7 @@ fn lens(app: &mut App, ui: &mut Ui) {
         }
     }
     let keys = crate::lens::LENS_KEYS;
-    egui::ComboBox::from_id_salt("lens_kind")
+    crate::ui::keynav::ComboBox::from_id_salt("lens_kind")
         .selected_text(tr(keys[app.lens.kind]))
         .show_ui(ui, |ui| {
             for (i, k) in keys.iter().enumerate() {
@@ -1319,7 +1521,7 @@ fn lens(app: &mut App, ui: &mut Ui) {
             if let Some(i) = remove {
                 l.effects.remove(i);
             }
-            egui::ComboBox::from_id_salt("lens_fx_add")
+            crate::ui::keynav::ComboBox::from_id_salt("lens_fx_add")
                 .selected_text(tr("lens.add_effect"))
                 .height(360.0)
                 .show_ui(ui, |ui| {
@@ -1693,6 +1895,18 @@ fn blend(app: &mut App, ui: &mut Ui) {
             }
         }
     });
+    // A blend between two texts: their characters linked, so the word
+    // changes once in both ends (#1568).
+    if let Some((_, linked)) = app.blend_text_ends() {
+        let mut on = linked;
+        if ui
+            .checkbox(&mut on, tr("docker.blend_link_text"))
+            .rich_tip(crate::ui::tips::keyed("docker.blend_link_text"))
+            .changed()
+        {
+            app.set_blend_text_link(on);
+        }
+    }
     // Apply: two objects selected and no blend yet, a blend between them
     // with these settings (#815).
     let two = cur.is_none() && app.selection.len() == 2;
@@ -2090,7 +2304,7 @@ fn icon_btn(
     resp.rich_tip(tip)
 }
 
-/// Bitmaps > Bitmap Mask: ten colour slots (in use, colour, tolerance),
+/// Image > Color Mask: ten colour slots (in use, colour, tolerance),
 /// hide or show the colours in use, Apply on the selected bitmaps.
 fn bitmap_mask(app: &mut App, ui: &mut Ui) {
     use crate::bitmap_fx::MASK_SLOTS;
@@ -2194,16 +2408,13 @@ fn bitmap_mask(app: &mut App, ui: &mut Ui) {
         })
         .clicked()
         {
+            // The save dialog, a download, or the system's save picker on
+            // Android (#1402).
             let text = app.mask.to_text();
-            if let Some(path) = crate::files::Dialog::new()
+            crate::files::Dialog::new()
                 .add_filter(tr("docker.mask_file"), &["msk"])
                 .set_file_name("mask.msk".to_string())
-                .save_path()
-            {
-                if let Err(e) = crate::files::write(&path, text) {
-                    app.status = e.to_string();
-                }
-            }
+                .save_bytes(app, text);
         }
         if icon_btn(ui, true, &tr("docker.mask_open"), |p, r, c| {
             crate::ui::icons::draw_action(p, r, crate::ui::icons::Action::Open, c)
@@ -2256,8 +2467,12 @@ fn bitmap_mask(app: &mut App, ui: &mut Ui) {
         let i = app.mask.picked.min(MASK_SLOTS - 1);
         let tol = &mut app.mask.slots[i].tolerance;
         let tip = crate::ui::tips::pair("docker.tolerance", "docker.mask_tolerance_desc");
-        ui.add(crate::ui::Slider::new(tol, 0..=100).show_value(false))
-            .rich_tip(&tip);
+        ui.add(
+            crate::ui::Slider::new(tol, 0..=100)
+                .show_value(false)
+                .reserve(80.0),
+        )
+        .rich_tip(&tip);
         ui.add(
             crate::ui::field::NumField::new(tol)
                 .range(0..=100)
@@ -2312,20 +2527,30 @@ fn object_data(app: &mut App, ui: &mut Ui) {
         ui.label("");
         ui.end_row();
         for (i, (k, v)) in data.iter_mut().enumerate() {
-            changed |= ui
-                .add(egui::TextEdit::singleline(k).desired_width(90.0))
-                .rich_tip(crate::ui::tips::pair(
-                    "docker.field",
-                    "docker.data_field_desc",
-                ))
-                .lost_focus();
-            changed |= ui
-                .add(egui::TextEdit::singleline(v).desired_width(120.0))
-                .rich_tip(crate::ui::tips::pair(
-                    "docker.value",
-                    "docker.data_value_desc",
-                ))
-                .lost_focus();
+            let field = egui::Id::new(("object_data_field", i));
+            let (_, typed) = kept_text(ui, field, s.id, &k.clone(), |ui, text| {
+                ui.add(egui::TextEdit::singleline(text).desired_width(90.0))
+                    .rich_tip(crate::ui::tips::pair(
+                        "docker.field",
+                        "docker.data_field_desc",
+                    ))
+            });
+            if let Some(name) = typed {
+                *k = name;
+                changed = true;
+            }
+            let field = egui::Id::new(("object_data_value", i));
+            let (_, typed) = kept_text(ui, field, s.id, &v.clone(), |ui, text| {
+                ui.add(egui::TextEdit::singleline(text).desired_width(120.0))
+                    .rich_tip(crate::ui::tips::pair(
+                        "docker.value",
+                        "docker.data_value_desc",
+                    ))
+            });
+            if let Some(value) = typed {
+                *v = value;
+                changed = true;
+            }
             if ui
                 .small_button("x")
                 .rich_tip(crate::ui::tips::keyed("docker.data_remove"))
@@ -2380,23 +2605,71 @@ fn object_data(app: &mut App, ui: &mut Ui) {
     }
 }
 
+/// The Hyperlink field of the Links and Bookmarks docker.
+pub fn hyperlink_field_id() -> egui::Id {
+    egui::Id::new("links.hyperlink")
+}
+
+/// A text field showing `stored` that keeps what is typed into it while
+/// it has the focus: `add` draws it on the text to show. Gives the text
+/// shown and, on the frame the field is left (Enter, Tab, a click
+/// elsewhere), the text typed when it differs from `stored`. `of` names
+/// what the field shows the text of (the object selected), so text typed
+/// for one object is never shown or stored for another.
+fn kept_text(
+    ui: &mut Ui,
+    field: egui::Id,
+    of: impl std::hash::Hash + std::fmt::Debug,
+    stored: &str,
+    add: impl FnOnce(&mut Ui, &mut String) -> egui::Response,
+) -> (String, Option<String>) {
+    // One text kept a field, with what it was typed for: text kept for
+    // another object is dropped, never shown or stored later.
+    let key = field.with("typed");
+    let of = egui::Id::new(of);
+    let kept = ui
+        .data(|d| d.get_temp::<(egui::Id, String)>(key))
+        .filter(|(typed_for, _)| *typed_for == of)
+        .map(|(_, text)| text);
+    let was_typed = kept.is_some();
+    let mut text = kept.unwrap_or_else(|| stored.to_string());
+    let resp = add(ui, &mut text);
+    if resp.has_focus() {
+        ui.data_mut(|d| d.insert_temp(key, (of, text.clone())));
+        return (text, None);
+    }
+    ui.data_mut(|d| d.remove::<(egui::Id, String)>(key));
+    let typed = ((was_typed || resp.lost_focus() || resp.changed()) && text != stored)
+        .then(|| text.clone());
+    (text, typed)
+}
+
 fn links(app: &mut App, ui: &mut Ui) {
     let shapes = app.selected_shapes();
     if shapes.is_empty() {
         dim(ui, tr("docker.select_one_object"));
         return;
     }
-    let mut link = shapes[0].link.clone().unwrap_or_default();
+    let stored = shapes[0].link.clone().unwrap_or_default();
     ui.label(tr("docker.hyperlink"));
-    if ui
-        .text_edit_singleline(&mut link)
-        .rich_tip(crate::ui::tips::keyed("docker.hyperlink_field"))
-        .lost_focus()
-    {
+    // What is typed stays in the field until it is left (#2191): the
+    // field showed the stored link again on every frame, so no key
+    // typed into it ever stayed.
+    let (link, typed) = kept_text(
+        ui,
+        hyperlink_field_id(),
+        shapes[0].id,
+        &stored,
+        |ui, text| {
+            ui.add(egui::TextEdit::singleline(text).id(hyperlink_field_id()))
+                .rich_tip(crate::ui::tips::keyed("docker.hyperlink_field"))
+        },
+    );
+    if let Some(link) = typed {
         let ids = app.selection.clone();
         app.run(Command::SetLink {
             shapes: ids,
-            link: (!link.is_empty()).then_some(link.clone()),
+            link: (!link.is_empty()).then_some(link),
         });
     }
     ui.horizontal(|ui| {
@@ -2479,6 +2752,7 @@ fn symbols(app: &mut App, ui: &mut Ui) {
         .enumerate()
         .map(|(i, s)| (i, s.name.clone()))
         .collect();
+    let editing = app.symbol_edit_index();
     for (i, name) in syms {
         ui.horizontal(|ui| {
             ui.label(&name);
@@ -2491,6 +2765,29 @@ fn symbols(app: &mut App, ui: &mut Ui) {
                 .clicked()
             {
                 app.insert_symbol_instance(i);
+            }
+            // Edit: the symbol's objects edited on the page; Finish while
+            // they are (#1980).
+            if editing == Some(i) {
+                if ui
+                    .small_button(tr("clip.finish"))
+                    .rich_tip(tr("menu.object.symbol_finish"))
+                    .clicked()
+                {
+                    app.finish_clip_frame_edit();
+                }
+            } else if ui
+                .add_enabled(
+                    app.clip_frame_edit.is_none(),
+                    egui::Button::new(tr("docker.edit_symbol")).small(),
+                )
+                .rich_tip(crate::ui::tips::pair(
+                    "docker.edit_symbol",
+                    "docker.edit_symbol_desc",
+                ))
+                .clicked()
+            {
+                app.edit_symbol(i);
             }
             let uses = app
                 .doc()
@@ -2565,7 +2862,7 @@ fn pages(app: &mut App, ui: &mut Ui) {
             );
             if i > 0
                 && ui
-                    .small_button("\u{25B2}")
+                    .small_button("\u{23F6}")
                     .rich_tip(crate::ui::tips::keyed("docker.page_move_up"))
                     .clicked()
             {
@@ -2576,7 +2873,7 @@ fn pages(app: &mut App, ui: &mut Ui) {
             }
             if i + 1 < n
                 && ui
-                    .small_button("\u{25BC}")
+                    .small_button("\u{23F7}")
                     .rich_tip(crate::ui::tips::keyed("docker.page_move_down"))
                     .clicked()
             {
@@ -2734,10 +3031,20 @@ fn corners(app: &mut App, ui: &mut Ui) {
         );
     }
     app.corners = c;
-    // Preview what Apply would do.
+    ui.add_space(6.0);
+    ui.checkbox(&mut app.settings.corners_preview, tr("dialog.preview"))
+        .rich_tip(crate::ui::tips::pair(
+            "dialog.preview",
+            "docker.corners_preview_desc",
+        ));
+    // Preview what Apply would do, unless Preview is off (#1759).
     let preview = app.corner_preview();
     let valid = !preview.is_empty();
-    app.docker_preview = preview;
+    app.docker_preview = if app.settings.corners_preview {
+        preview
+    } else {
+        Vec::new()
+    };
     ui.add_space(8.0);
     if ui
         .add_enabled(valid, egui::Button::new(tr("docker.apply")))
@@ -2772,7 +3079,7 @@ fn join_curves(app: &mut App, ui: &mut Ui) {
     let mut j = app.join_settings;
     ui.horizontal(|ui| {
         ui.label(tr("docker.join_mode"));
-        egui::ComboBox::from_id_salt("join_mode")
+        crate::ui::keynav::ComboBox::from_id_salt("join_mode")
             .selected_text(label(j.mode))
             .width(140.0)
             .show_ui(ui, |ui| {
@@ -2874,7 +3181,7 @@ fn fit_to_path(app: &mut App, ui: &mut Ui) {
     let combo = |ui: &mut Ui, key: &str, id: &str, current: &str, add: &mut dyn FnMut(&mut Ui)| {
         ui.horizontal(|ui| {
             ui.label(tr(key));
-            egui::ComboBox::from_id_salt(id)
+            crate::ui::keynav::ComboBox::from_id_salt(id)
                 .selected_text(current)
                 .show_ui(ui, |ui| add(ui))
                 .response
@@ -3495,5 +3802,85 @@ mod find_properties_tests {
         app.undo();
         assert_eq!(fill(&app, a), Some(Fill::Solid(red)), "one undo step");
         assert_eq!(fill(&app, c), Some(Fill::Solid(red)));
+    }
+}
+
+#[cfg(test)]
+mod corners_docker_tests {
+    use super::*;
+
+    /// The Corners panel's Preview box hides the dashed result on the
+    /// drawing and brings it back; it is on at first, kept in the
+    /// settings, and Apply still works with it off (#1759).
+    #[test]
+    fn the_corners_preview_can_be_turned_off() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        let id = app
+            .new_shape(tracedraw_core::ShapeKind::Rect {
+                rect: tracedraw_core::geometry::Rect::new(10.0, 10.0, 60.0, 40.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        app.select(vec![id]);
+        let run = |app: &mut App, events: Vec<egui::Event>| -> Vec<(String, egui::Rect)> {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(300.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| corners(app, ui));
+            out.textures_delta.clear();
+            out.shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => {
+                        Some((t.galley.text().to_string(), t.visual_bounding_rect()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let click = |app: &mut App, key: &str| {
+            let texts = run(app, Vec::new());
+            let at = texts
+                .iter()
+                .find(|(t, _)| *t == tr(key))
+                .map(|(_, r)| r.center())
+                .unwrap_or_else(|| panic!("{key} shown"));
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            run(app, vec![egui::Event::PointerMoved(at)]);
+            run(app, vec![button(true)]);
+            run(app, vec![button(false)]);
+        };
+        assert!(app.settings.corners_preview, "on at first");
+        assert!(crate::settings::Settings::default().corners_preview);
+        run(&mut app, Vec::new());
+        assert_eq!(app.docker_preview.len(), 1, "the preview shows");
+        click(&mut app, "dialog.preview");
+        assert!(!app.settings.corners_preview, "the box turned it off");
+        run(&mut app, Vec::new());
+        assert!(app.docker_preview.is_empty(), "no preview on the drawing");
+        // Kept in the settings file.
+        let json = serde_json::to_string(&app.settings).expect("settings");
+        let back: crate::settings::Settings = serde_json::from_str(&json).expect("read back");
+        assert!(!back.corners_preview);
+        // Apply is still offered and works without the preview.
+        click(&mut app, "docker.apply");
+        assert!(matches!(
+            app.doc().find_shape(id).map(|s| &s.kind),
+            Some(tracedraw_core::ShapeKind::Path { .. })
+        ));
+        click(&mut app, "dialog.preview");
+        assert!(app.settings.corners_preview, "and back on");
     }
 }

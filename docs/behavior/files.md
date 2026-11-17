@@ -151,6 +151,11 @@ version decides who can open a file:
 
 What each version's file holds is in `docs/cdr-format.md`, Writing.
 
+Layers keep their state from version 16: a hidden layer is saved
+hidden with its objects, and a locked layer or one kept from printing
+keeps that, as the program's own files hold them. Before version 16 a
+hidden layer is saved empty.
+
 Live effects and drop shadows are saved as what they draw (a distorted
 rectangle as its curve, a contour as its steps, a shadow as a picture
 of it beneath the object), which any program shows. From version 14
@@ -163,6 +168,16 @@ between opens as it was drawn. The objects themselves are kept whole in
 pictures and the end objects of its blends included), so the member grows
 with them; a member that inflates past 64 MB is not read, and its
 objects open as drawn.
+
+What the writer cannot write yet goes out with stand-ins any program
+shows: a pattern, texture, PostScript or mesh fill as one colour, a
+fountain with repeats, inversion, the shaped kind, midpoints or free
+nodes as the nearest plain fountain, an outline fill as the outline
+colour, and a line's arrowheads as curves of their own just above it,
+filled with the outline colour. From version 14 the same member keeps
+these objects as they were, so opened again in TraceDraw the fill, the
+arrowheads, the outline fill and overprint are all back; files of
+versions 7 to 13 open with the stand-ins.
 
 ## Open drawings keep their files (Windows, #2130)
 

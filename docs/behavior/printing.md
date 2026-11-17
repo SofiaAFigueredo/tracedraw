@@ -148,6 +148,15 @@ has one.
   plate and its box in the print preview; before, the sheets lost the
   list and only the four process plates printed (#779,
   `export::tests::separations_print_a_plate_for_each_spot_ink`).
+  It reaches every spot ink that prints: the master layers' objects,
+  the pages' backgrounds, drop shadows and the colours of effects (a
+  contour's last step, an extrusion's shades, glows and the rest),
+  which kept their spot inks before
+  (`export::tests::spot_to_cmyk_reaches_master_layers_backgrounds_and_effects`).
+  The plates split those colours too: a contour's steps and a drop
+  shadow print as the coverage of each plate's ink and count as ink on
+  their plates; before, they printed in colour on every plate
+  (`export::tests::separations_split_the_colours_of_effects`).
   Leave out empty plates (under Separations in the Print dialog and
   under the inks in Print Preview, off at first, kept in presets): each
   sheet's plate that takes no ink does not print; a colour counts on a
@@ -184,13 +193,20 @@ has one.
   (`export::tests::separations_split_pictures_into_their_inks`). Before,
   pictures printed whole on every plate.
 - Composite: Print text in black (fills, outlines and character colours
-  of every text); Always overprint black (100 % black fills and outlines
+  and outlines of every text, on the master layers too,
+  `export::tests::text_in_black_reaches_master_layers_and_character_outlines`);
+  Always overprint black (100 % black fills and outlines
   overprint).
 - Layout: As in document, Fit to page or Scale (percent). Fit to page
-  also brings objects that run off the page inside it: the objects the
-  page shows (every printed one when the range is the selection) shrink
-  as one to fit it, centred, when they do not fit; objects wholly off the
-  page stay out (#534, `fit_contents_to_page`,
+  scales each page to fill the room inside the paper's margins, up or
+  down, keeping its proportions (`imposition::Options::fit`,
+  `imposition::tests::fit_to_page_scales_the_page_to_the_paper`); As in
+  document only shrinks a page too big for the sheet. What runs off a
+  page stays cut at its edge, where it was drawn, on facing pages too:
+  it is not pulled onto the page nor shrunk with the page's objects
+  (#2678, `export::tests::fit_to_page_leaves_what_runs_off_the_page_where_it_is`).
+  With the selection printed, Fit to page shrinks every printed object
+  as one to fit the page, centred (#534, `fit_contents_to_page`,
   `export::tests::fit_to_page_shrinks_what_runs_off_the_page`). Choosing
   Fit to page (here, or ticking it in Print Preview) also puts back a
   page moved or stretched on the sheet in Print Preview: the artwork
@@ -407,7 +423,7 @@ same function (`export::print_sheets`).
 
 - With facing pages each page prints with what its facing page holds
   across the spine and in the bleed beside it (not for the selection
-  alone, nor with Fit to page; see `facing-pages.md`, #1972).
+  alone; see `facing-pages.md`, #1972).
 - Pages keep their aspect ratio; each cell is as large as the largest
   page on its sheet and a smaller page sits in its middle.
 - Gap between pages (several pages per sheet and repeat on the sheet,

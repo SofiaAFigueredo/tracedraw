@@ -1097,9 +1097,6 @@ pub struct App {
     /// down (see `interaction::paste_without_text`).
     pub paste_seen: bool,
     pub curve: Option<CurveInProgress>,
-    /// Freehand by clicks: the input time at which the line ends unless
-    /// a double-click made the last click a corner first (#2339).
-    pub freehand_ends_at: Option<f64>,
     /// Undo and redo steps of `curve`, node by node.
     pub curve_steps: CurveSteps,
     /// The steps that made or changed a curve drawn with the Pen or
@@ -1120,6 +1117,9 @@ pub struct App {
     /// The Trace dialog's live preview: the trace of the selected bitmap
     /// worked out off the interface thread as the settings change.
     pub trace_live: crate::trace_preview::Live,
+    /// The trace of the selected bitmaps running off the interface
+    /// thread, shown in its progress window (`trace_job.rs`).
+    pub trace_job: Option<crate::trace_job::TraceJob>,
     /// The digits typed with Alt held while editing text, for a character
     /// by its number (#447; the system does it on Windows).
     pub alt_code: String,
@@ -1628,6 +1628,10 @@ pub struct App {
     /// The guideline whose values the Guidelines panel's fields hold
     /// (`sync_guide_form`); `None` with none or several selected.
     pub guide_form_for: Option<usize>,
+    /// The guideline the Guidelines panel's fields hold, as it was before
+    /// a value typed there moved it: Add puts it back and adds the new
+    /// one at the typed place (#3068).
+    pub guide_form_from: Option<(usize, tracedraw_core::document::Guide)>,
     /// Document Setup > Guidelines presets section.
     pub guide_presets: crate::ui::layout_options::PresetForm,
     /// Document Setup > Grid shows lines per unit instead of spacing.
@@ -2976,12 +2980,12 @@ impl App {
             pen_editing: false,
             paste_seen: false,
             curve: None,
-            freehand_ends_at: None,
             text_edit: None,
             ime_preedit: String::new(),
             text_clip: None,
             last_trace: None,
             trace_live: Default::default(),
+            trace_job: None,
             alt_code: String::new(),
             alt_composed: None,
             current_colors: (Color::BLACK, Color::WHITE),
@@ -3199,6 +3203,7 @@ impl App {
             guide_pivots: Vec::new(),
             guide_form: Default::default(),
             guide_form_for: None,
+            guide_form_from: None,
             guide_presets: Default::default(),
             grid_frequency: false,
             settings: crate::settings::Settings::default(),
@@ -5335,6 +5340,21 @@ impl App {
             .unwrap_or(paper::A4)
     }
 
+    /// The point the document grid's lines pass through: the ruler
+    /// origin, and while the origin is at its place on the page's bottom
+    /// edge, the page's top edge for the horizontal lines, so the grid
+    /// starts square at the top-left corner as in the reference program
+    /// and the part row falls at the bottom (#2990).
+    pub fn grid_origin(&self) -> Point {
+        let r = &self.doc().metadata.rulers;
+        let y = if r.origin_y == 0.0 {
+            self.page_size().height
+        } else {
+            r.origin_y
+        };
+        Point::new(r.origin_x, y)
+    }
+
     pub fn page_rect(&self) -> Rect {
         Rect::from_origin_size((0.0, 0.0), self.page_size())
     }
@@ -5748,6 +5768,14 @@ impl App {
         }
     }
 
+    /// Commands run straight on the engine as one undo step, kept by a
+    /// macro being recorded too, as [`Self::run`] keeps its command.
+    pub(crate) fn note_recorded(&mut self, cmds: &[Command]) {
+        if let Some(rec) = &mut self.recording {
+            rec.extend(cmds.iter().cloned());
+        }
+    }
+
     /// Open the docker (or hide the column when it is already the active
     /// tab), as the docker shortcuts do.
     pub fn toggle_docker(&mut self, tab: DockerTab) {
@@ -6151,9 +6179,14 @@ impl App {
     /// The pointer as the next node of the curve being drawn would take
     /// it (`ctrl`, the constrain key: in steps of the constrain angle);
     /// `None` while a handle is pulled. The preview runs the curve to it.
+    /// A 2-point line dragged from its first node pulls no handle: its
+    /// second node follows the pen or finger to where it is let go. The
+    /// line showed nothing until the release, so on a touch screen the
+    /// second node could not be placed by eye (#2594).
     pub fn curve_preview_point(&self, ctrl: bool) -> Option<Point> {
         let c = self.curve.as_ref()?;
-        if c.dragging_handle {
+        let line_drag = self.tool == Tool::TwoPointLine && c.nodes.len() == 1;
+        if c.dragging_handle && !line_drag {
             return None;
         }
         self.pointer_page
@@ -7947,7 +7980,12 @@ impl App {
             crate::files::read(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|bytes| {
-                    tracedraw_io::psd::parse(&bytes, &mut tracedraw_core::id::IdSource::default())
+                    let mut imported = tracedraw_io::psd::parse(
+                        &bytes,
+                        &mut tracedraw_core::id::IdSource::default(),
+                    )?;
+                    crate::bitmap_file::keep_psd_mode(&bytes, &mut imported.shapes);
+                    Ok(imported)
                 })
                 .map(|imported| {
                     let title = path
@@ -9741,7 +9779,11 @@ impl App {
             .and_then(|s| s.to_str())
             .unwrap_or("Untitled")
             .to_string();
-        tracedraw_cdr::open_bytes(&bytes, &title).map_err(|e| e.to_string())
+        let (mut doc, report) =
+            tracedraw_cdr::open_bytes(&bytes, &title).map_err(|e| e.to_string())?;
+        // Clones saved by TraceDraw follow their masters again (#2879).
+        crate::object_clone::rebase_clone_links(&mut doc);
+        Ok((doc, report))
     }
 
     /// Read an SVG file (plain or gzip-compressed) as text.
@@ -9842,7 +9884,11 @@ impl App {
         let parsed = crate::files::read(path)
             .map_err(|e| e.to_string())
             .and_then(|bytes| {
-                tracedraw_io::psd::parse(&bytes, &mut tracedraw_core::id::IdSource::default())
+                let mut imported =
+                    tracedraw_io::psd::parse(&bytes, &mut tracedraw_core::id::IdSource::default())?;
+                // A 1-bit, grayscale or indexed file keeps its mode (#3025).
+                crate::bitmap_file::keep_psd_mode(&bytes, &mut imported.shapes);
+                Ok(imported)
             });
         match parsed {
             Ok(imported) => {

@@ -69,6 +69,10 @@ struct Actions {
     /// Every object row of the list, top to bottom (laid out or not), for
     /// Shift+click's range (#2483).
     row_order: Vec<ShapeId>,
+    /// The selection as a set: each row asks whether its object is
+    /// selected, and asking the list for each of 50,000 selected objects
+    /// took most of a second a frame.
+    selected: std::collections::HashSet<ShapeId>,
     layer_drop_rows: Vec<(LayerId, Rect)>,
     collapse: Option<LayerId>,
     expand_group: Option<ShapeId>,
@@ -121,6 +125,20 @@ enum GuideRowAct {
     Hide(bool),
     Lock(bool),
     Select,
+    /// A command of its right-click menu (#3012).
+    Menu(GuideCmd),
+}
+
+/// The commands of a guideline row's right-click menu (#3012): they act
+/// on the selected guidelines, the one clicked among them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum GuideCmd {
+    Delete,
+    Cut,
+    Copy,
+    Paste,
+    Lock(bool),
+    Hide(bool),
 }
 
 /// Where a layer sits: its index in its list (0 at the bottom), how many
@@ -545,6 +563,7 @@ pub fn objects(app: &mut App, ui: &mut Ui) {
         thumbs: std::mem::take(&mut app.object_thumbs),
         thumb_size: crate::object_thumbs::clamp_size(app.settings.object_thumb_size),
         drawing: (app.engine.instance(), app.engine.revision()),
+        selected: app.selection.iter().copied().collect(),
         ..Default::default()
     };
     act.thumbs.begin_frame();
@@ -1054,7 +1073,30 @@ fn guides_row(
     // The row opens to list its guidelines one by one, each with its
     // own eye and padlock (#1775).
     let open_id = base.with("open");
-    let open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    // A guideline just selected in this row's set (dragged out of a
+    // ruler, picked on the page or added in Guidelines Setup) opens the
+    // row and scrolls to it, so a new guideline shows in the docker
+    // (#2882).
+    let seen_id = base.with("seen");
+    let picked: Vec<usize> = if chosen {
+        app.selected_guides
+            .iter()
+            .copied()
+            .filter(|i| *i < guides.len())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let seen = ui.data(|d| d.get_temp::<Vec<usize>>(seen_id));
+    let reveal = !picked.is_empty() && seen.as_ref() != Some(&picked);
+    if seen.as_ref() != Some(&picked) {
+        ui.data_mut(|d| d.insert_temp(seen_id, picked.clone()));
+    }
+    if reveal && !open {
+        open = true;
+        ui.data_mut(|d| d.insert_temp(open_id, true));
+    }
     if !guides.is_empty() {
         let (ar, a) = hot(ui, rect, rect.left() + 3.0 + INDENT, 14.0, base.with("arrow"));
         let a = a.rich_tip_with(|| crate::ui::tips::keyed("docker.expand_row"));
@@ -1095,12 +1137,14 @@ fn guides_row(
         Tokens::text(),
     );
     if open && !guides.is_empty() {
-        guide_rows(app, ui, guides, page, base, shown, act);
+        let scroll_to = reveal.then(|| picked[0]);
+        guide_rows(app, ui, guides, page, base, shown, scroll_to, act);
     }
 }
 
 /// The guidelines of a Guides row, one row each: its eye, its padlock
 /// and where it is; a click selects it on the page (#1775).
+#[allow(clippy::too_many_arguments)]
 fn guide_rows(
     app: &App,
     ui: &mut Ui,
@@ -1108,6 +1152,7 @@ fn guide_rows(
     page: Option<PageId>,
     base: egui::Id,
     set_shown: bool,
+    scroll_to: Option<usize>,
     act: &mut Actions,
 ) {
     let master = page.is_none();
@@ -1115,6 +1160,9 @@ fn guide_rows(
     for (i, g) in guides.iter().enumerate() {
         let selected = edited && app.selected_guides.contains(&i);
         let (rect, resp) = row(ui, Look::Object { selected });
+        if scroll_to == Some(i) {
+            ui.scroll_to_rect(rect, None);
+        }
         let text = crate::ui::layout_options::guide_text(app, g);
         let kind = match g.line {
             GuideLine::Horizontal { .. } => tr("options.horizontal"),
@@ -1152,10 +1200,72 @@ fn guide_rows(
         if done.is_none() && resp.clicked() {
             done = Some(GuideRowAct::Select);
         }
+        // Right-click: Delete, Cut, Copy, Paste, Lock or Unlock, Hide or
+        // Show (#3012).
+        resp.context_menu(|ui| {
+            let can_paste = app.clipboard.as_ref().is_some_and(|c| !c.guides.is_empty());
+            let lock_key = if g.locked {
+                "guides.unlock"
+            } else {
+                "guides.lock"
+            };
+            let hide_key = if g.hidden {
+                "guides.show"
+            } else {
+                "menu.object.hide"
+            };
+            for (key, enabled, cmd) in [
+                ("menu.edit.delete", !g.locked, GuideCmd::Delete),
+                ("menu.edit.cut", !g.locked, GuideCmd::Cut),
+                ("menu.edit.copy", true, GuideCmd::Copy),
+                ("menu.edit.paste", can_paste, GuideCmd::Paste),
+                (lock_key, true, GuideCmd::Lock(!g.locked)),
+                (hide_key, true, GuideCmd::Hide(!g.hidden)),
+            ] {
+                if ui
+                    .add_enabled(enabled, egui::Button::new(tr(key)))
+                    .clicked()
+                {
+                    done = Some(GuideRowAct::Menu(cmd));
+                    ui.close();
+                }
+            }
+        });
         if let Some(d) = done {
             act.guide_row = Some((master, i, d));
             if let Some(p) = page.filter(|p| *p != app.page) {
                 act.goto = Some(p);
+            }
+        }
+    }
+}
+
+/// A command of a guideline row's menu (#3012), on the selected
+/// guidelines when the row is one of them, else on the row's alone.
+fn guide_menu_command(app: &mut App, i: usize, cmd: GuideCmd) {
+    if app.page_guides().get(i).is_none() {
+        return;
+    }
+    let before = app.selected_guides.clone();
+    app.select(Vec::new());
+    app.selected_guides = if before.contains(&i) {
+        before
+    } else {
+        app.guide_rotate = None;
+        vec![i]
+    };
+    let chosen = app.selected_guides.clone();
+    match cmd {
+        GuideCmd::Delete => app.delete_command(),
+        GuideCmd::Cut => app.cut(),
+        GuideCmd::Copy => {
+            app.copy_selected_guides();
+        }
+        GuideCmd::Paste => app.paste(),
+        GuideCmd::Lock(locked) => app.set_guides_locked(&chosen, locked),
+        GuideCmd::Hide(hidden) => {
+            for g in chosen {
+                app.set_guide_hidden(g, hidden);
             }
         }
     }
@@ -1196,7 +1306,7 @@ fn grid_row(app: &App, ui: &mut Ui, act: &mut Actions) {
 /// The row of `s` at nesting `depth`, then its children when it is an
 /// open group.
 fn object_rows(app: &App, ui: &mut Ui, s: &Shape, depth: usize, act: &mut Actions) {
-    let selected = app.selection.contains(&s.id);
+    let selected = act.selected.contains(&s.id);
     act.row_order.push(s.id);
     let height = (act.thumb_size + 6.0).max(ROW_H);
     let (rect, resp) = row_of(ui, Look::Object { selected }, height);
@@ -1311,7 +1421,21 @@ fn object_row(
         act.select = Some(s.id);
     }
     // A right click opens the drawing's own object menu for it (#2601).
-    if resp.secondary_clicked() {
+    // A finger held on the row (which egui takes for a right click, ending
+    // any drag) starts the row's drag here: moved, the finger drags the
+    // row; lifted where it was, it opens the menu (#2948). The menu opened
+    // under the held finger and the row could not be dragged.
+    if resp.long_touched() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let page = act.row_page.filter(|p| *p != app.page);
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(egui::Id::new(ROW_HOLD), (s.id, pos, page));
+                if !s.locked {
+                    d.insert_temp(egui::Id::new(ROW_DRAG), s.id);
+                }
+            });
+        }
+    } else if resp.secondary_clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
             act.goto = act.goto.or(act.row_page.filter(|p| *p != app.page));
             act.object_menu = Some((s.id, pos));
@@ -2032,6 +2156,15 @@ fn layer_holding(app: &App, id: ShapeId) -> Option<LayerId> {
 
 /// The object row being dragged, kept in the context's memory.
 const ROW_DRAG: &str = "objects_row_drag";
+/// The object row a finger is held on: (object, where, its page when not
+/// the current one); its menu opens when the finger is lifted there.
+const ROW_HOLD: &str = "objects_row_hold";
+/// Where the pointer last was while a row was dragged: a finger lifted
+/// leaves no pointer position on the frame it ends (#2948).
+const ROW_DRAG_POS: &str = "objects_row_drag_pos";
+/// A held finger lifted within this distance (points) of where it was
+/// held opens the row's menu; farther, it was a drag.
+const HOLD_SLOP: f32 = 8.0;
 
 /// Where an object row let go goes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2233,23 +2366,48 @@ fn drop_rows(app: &mut App, ids: &[ShapeId], drop: RowDrop) {
 /// list shows the front object first), in the layer and page of that
 /// object; let go over a layer's row, it goes on the top of that layer. A
 /// selected row carries the rest of the selection along. One undo step.
-fn drag_rows(app: &mut App, ui: &Ui, rows: &[(ShapeId, Rect)], layers: &[(LayerId, Rect)]) {
+/// Follow a row dragged along the list and drop it where it is let go;
+/// gives the menu to open when a finger held on a row is lifted without
+/// moving (object, where, its page when not the current one).
+fn drag_rows(
+    app: &mut App,
+    ui: &Ui,
+    rows: &[(ShapeId, Rect)],
+    layers: &[(LayerId, Rect)],
+) -> Option<(ShapeId, Pos2, Option<PageId>)> {
     #[cfg(test)]
     ui.ctx().data_mut(|d| {
         d.insert_temp(egui::Id::new("objects_rows_drawn"), rows.to_vec());
         d.insert_temp(egui::Id::new("objects_layer_rows_drawn"), layers.to_vec());
     });
     let id = egui::Id::new(ROW_DRAG);
-    let Some(dragged) = ui.ctx().data(|d| d.get_temp::<ShapeId>(id)) else {
-        return;
-    };
-    let (pos, down, released) = ui.input(|i| {
+    let hold_id = egui::Id::new(ROW_HOLD);
+    let pos_id = egui::Id::new(ROW_DRAG_POS);
+    let (latest, down, released) = ui.input(|i| {
         (
             i.pointer.latest_pos(),
             i.pointer.primary_down(),
             i.pointer.primary_released(),
         )
     });
+    let held = ui
+        .ctx()
+        .data(|d| d.get_temp::<(ShapeId, Pos2, Option<PageId>)>(hold_id));
+    let Some(dragged) = ui.ctx().data(|d| d.get_temp::<ShapeId>(id)) else {
+        if !down {
+            ui.ctx().data_mut(|d| d.remove::<(ShapeId, Pos2, Option<PageId>)>(hold_id));
+            return held.filter(|_| released);
+        }
+        return None;
+    };
+    if let Some(p) = latest {
+        ui.ctx().data_mut(|d| d.insert_temp(pos_id, p));
+    }
+    // A finger lifted leaves no position on its last frame: where it was
+    // last stands for it (#2948).
+    let pos = latest.or_else(|| ui.ctx().data(|d| d.get_temp::<Pos2>(pos_id)));
+    // Held and lifted where it was: the row's menu, not a drop.
+    let hold_menu = held.filter(|(_, at, _)| pos.is_none_or(|p| p.distance(*at) <= HOLD_SLOP));
     let target = pos.and_then(|p| {
         if let Some((sid, r)) = rows.iter().find(|(_, r)| r.contains(p)) {
             if *sid == dragged {
@@ -2298,19 +2456,33 @@ fn drag_rows(app: &mut App, ui: &Ui, rows: &[(ShapeId, Rect)], layers: &[(LayerI
             }
             None => {}
         }
-        return;
+        return None;
     }
     // The button is up: the drag ends, and moves the objects only when it
     // was let go over a row this frame (not when the list was away).
-    ui.ctx().data_mut(|d| d.remove::<ShapeId>(id));
-    if let (true, Some((drop, _, _))) = (released, target) {
+    ui.ctx().data_mut(|d| {
+        d.remove::<ShapeId>(id);
+        d.remove::<Pos2>(pos_id);
+        d.remove::<(ShapeId, Pos2, Option<PageId>)>(hold_id);
+    });
+    if !released {
+        return None;
+    }
+    if hold_menu.is_some() {
+        return hold_menu;
+    }
+    if let Some((drop, _, _)) = target {
         let ids = dragged_objects(app, dragged);
         drop_rows(app, &ids, drop);
     }
+    None
 }
 
-fn apply(app: &mut App, ui: &Ui, act: Actions) {
-    drag_rows(app, ui, &act.object_rows, &act.layer_drop_rows);
+fn apply(app: &mut App, ui: &Ui, mut act: Actions) {
+    if let Some((id, pos, page)) = drag_rows(app, ui, &act.object_rows, &act.layer_drop_rows) {
+        act.goto = act.goto.or(page);
+        act.object_menu = Some((id, pos));
+    }
     if let Some((layer, visible)) = act.visible {
         app.run(Command::SetLayerVisible { layer, visible });
     }
@@ -2388,6 +2560,7 @@ fn apply(app: &mut App, ui: &Ui, act: Actions) {
                     app.guide_rotate = None;
                 }
             }
+            GuideRowAct::Menu(cmd) => guide_menu_command(app, i, cmd),
         }
     }
     if let Some((layer, page)) = act.layer_to_page {
@@ -2744,6 +2917,209 @@ pub(crate) mod tests {
         }
         assert!(app.edit_master_guides);
         assert_eq!(app.selected_guides, vec![1]);
+    }
+
+    /// A guideline dragged out of a ruler opens its Guides row in the
+    /// docker and shows highlighted there; closed by hand, the row stays
+    /// closed until another guideline is picked (#2882).
+    #[test]
+    fn a_new_guideline_opens_its_guides_row() {
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        app.canvas_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(4000.0, 4000.0));
+        let run = |app: &mut App| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 800.0),
+                )),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| objects_docker(app, ui));
+            out.textures_delta.clear();
+        };
+        // New guidelines go to every page by default: the master Guides row.
+        assert!(app.edit_master_guides);
+        let base = egui::Id::new("objects_guides");
+        run(&mut app);
+        assert!(
+            ctx.read_response(base.with("arrow")).is_none(),
+            "no guidelines yet"
+        );
+        let pos = app.view.to_page(egui::pos2(200.0, 200.0));
+        app.drag = crate::app::Drag::NewGuide {
+            horizontal: true,
+            pos,
+        };
+        app.finish_guide_drag();
+        assert_eq!(
+            app.selected_guides,
+            vec![0],
+            "the new guideline is selected"
+        );
+        run(&mut app);
+        run(&mut app);
+        assert!(
+            ctx.read_response(base.with(("guide", 0)).with("eye"))
+                .is_some(),
+            "the row opened on the new guideline"
+        );
+        // Closed by hand, it stays closed while the selection is the same.
+        let at = ctx
+            .read_response(base.with("arrow"))
+            .expect("drawn")
+            .rect
+            .center();
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            vec![egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        ] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| objects_docker(&mut app, ui));
+            out.textures_delta.clear();
+        }
+        // Widgets of the frame before are still read: one more frame.
+        run(&mut app);
+        run(&mut app);
+        assert!(
+            ctx.read_response(base.with(("guide", 0)).with("eye"))
+                .is_none(),
+            "closed by hand"
+        );
+        // Another guideline dragged out opens it again.
+        let pos = app.view.to_page(egui::pos2(300.0, 300.0));
+        app.drag = crate::app::Drag::NewGuide {
+            horizontal: false,
+            pos,
+        };
+        app.finish_guide_drag();
+        assert_eq!(app.selected_guides, vec![1]);
+        run(&mut app);
+        run(&mut app);
+        assert!(ctx
+            .read_response(base.with(("guide", 1)).with("eye"))
+            .is_some());
+    }
+
+    /// A guideline chosen by its row in the Objects docker goes with the
+    /// Delete key, and its row's right-click menu deletes, cuts, copies,
+    /// pastes, locks and hides it; a locked one is not deleted (#3012).
+    #[test]
+    fn a_guideline_row_deletes_and_has_a_menu() {
+        use tracedraw_core::document::Guide;
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        app.choose_master_guides(false);
+        app.add_guide(Guide::vertical(50.0));
+        app.add_guide(Guide::horizontal(80.0));
+        app.add_guide(Guide::vertical(120.0));
+        let run = |app: &mut App, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                objects_docker(app, ui);
+                app.keyboard(ui.ctx());
+            });
+            out.textures_delta.clear();
+        };
+        let press = |app: &mut App, at: egui::Pos2, button: egui::PointerButton| {
+            run(app, vec![egui::Event::PointerMoved(at)]);
+            for pressed in [true, false] {
+                run(
+                    app,
+                    vec![egui::Event::PointerButton {
+                        pos: at,
+                        button,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+        };
+        let page = app.page;
+        let base = egui::Id::new(("objects_guides", page.raw()));
+        run(&mut app, Vec::new());
+        // The page's Guides row, opened.
+        let at = ctx
+            .read_response(base.with("arrow"))
+            .expect("arrow")
+            .rect
+            .center();
+        press(&mut app, at, egui::PointerButton::Primary);
+        let row_at = |app: &mut App, i: usize| {
+            run(app, Vec::new());
+            let lock = ctx
+                .read_response(base.with(("guide", i)).with("lock"))
+                .expect("drawn")
+                .rect;
+            egui::pos2(lock.right() + 120.0, lock.center().y)
+        };
+        let p = row_at(&mut app, 1);
+        press(&mut app, p, egui::PointerButton::Primary);
+        assert_eq!(app.selected_guides, vec![1]);
+        let key = |pressed| egui::Event::Key {
+            key: egui::Key::Delete,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&mut app, vec![key(true), key(false)]);
+        assert_eq!(
+            app.page_guides().len(),
+            2,
+            "Delete took the chosen guideline"
+        );
+        assert!(app
+            .page_guides()
+            .iter()
+            .all(|g| !matches!(g.line, GuideLine::Horizontal { .. })));
+        // The row's menu opens on a right-click.
+        let p = row_at(&mut app, 0);
+        press(&mut app, p, egui::PointerButton::Secondary);
+        run(&mut app, Vec::new());
+        assert!(egui::Popup::is_any_open(&ctx), "a menu");
+        // Its commands.
+        guide_menu_command(&mut app, 0, GuideCmd::Copy);
+        guide_menu_command(&mut app, 0, GuideCmd::Paste);
+        assert_eq!(app.page_guides().len(), 3, "pasted");
+        guide_menu_command(&mut app, 0, GuideCmd::Lock(true));
+        assert!(app.page_guides()[0].locked);
+        guide_menu_command(&mut app, 0, GuideCmd::Delete);
+        assert_eq!(app.page_guides().len(), 3, "a locked one stays");
+        guide_menu_command(&mut app, 0, GuideCmd::Lock(false));
+        guide_menu_command(&mut app, 0, GuideCmd::Cut);
+        assert_eq!(app.page_guides().len(), 2, "cut");
+        assert!(app.clipboard.as_ref().is_some_and(|c| c.guides.len() == 1));
+        guide_menu_command(&mut app, 1, GuideCmd::Hide(true));
+        assert!(app.page_guides()[1].hidden);
+        assert!(app.selected_guides.is_empty());
+        guide_menu_command(&mut app, 0, GuideCmd::Delete);
+        assert_eq!(app.page_guides().len(), 1);
     }
 
     /// A layer's menu moves it to another page with its objects and
@@ -3624,6 +4000,97 @@ mod drag_tests {
         let (ra, rc) = (object_row(&ctx, a), object_row(&ctx, c));
         let to = Pos2::new(rc.center().x, rc.top() + 2.0);
         drag(&ctx, &mut app, ra.center(), to);
+        assert_eq!(order(&app, 0), [a, b, c]);
+    }
+
+    /// One frame of a finger at `pos` (`phase`) at time `t`, as a touch
+    /// screen sends it: the touch and the pointer it moves.
+    fn finger(ctx: &egui::Context, app: &mut App, t: f64, pos: Pos2, phase: egui::TouchPhase) {
+        let mut events = vec![egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos,
+            force: None,
+        }];
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        match phase {
+            egui::TouchPhase::Start => {
+                events.push(egui::Event::PointerMoved(pos));
+                events.push(button(true));
+            }
+            egui::TouchPhase::Move => events.push(egui::Event::PointerMoved(pos)),
+            _ => {
+                events.push(button(false));
+                events.push(egui::Event::PointerGone);
+            }
+        }
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 800.0),
+            )),
+            time: Some(t),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| objects_docker(app, ui));
+        out.textures_delta.clear();
+    }
+
+    /// On a touch screen a finger held on an object's row and then moved
+    /// drags the row, as the mouse does, and changes the stacking order;
+    /// a finger held still opens the object's full menu, as a right
+    /// click does (#2948).
+    #[test]
+    fn a_finger_held_on_a_row_drags_it_or_opens_its_menu() {
+        use egui::TouchPhase::{End, Move, Start};
+        let ctx = crate::theme::ui_context();
+        let mut app = App::headless();
+        let a = app.new_shape(rect_kind()).expect("a");
+        let b = app.new_shape(rect_kind()).expect("b");
+        let c = app.new_shape(rect_kind()).expect("c");
+        app.select(Vec::new());
+        frame(&ctx, &mut app, Vec::new());
+        let (ra, rc) = (object_row(&ctx, a), object_row(&ctx, c));
+        // Held a second on a's row, then carried onto the upper half of c's.
+        let mut t = 10.0;
+        finger(&ctx, &mut app, t, ra.center(), Start);
+        for _ in 0..6 {
+            t += 0.2;
+            finger(&ctx, &mut app, t, ra.center(), Move);
+        }
+        let to = Pos2::new(rc.center().x, rc.top() + 2.0);
+        for k in 1..=4 {
+            t += 0.05;
+            let p = ra.center() + (to - ra.center()) * (k as f32 / 4.0);
+            finger(&ctx, &mut app, t, p, Move);
+        }
+        t += 0.05;
+        finger(&ctx, &mut app, t, to, End);
+        frame(&ctx, &mut app, Vec::new());
+        assert_eq!(order(&app, 0), [b, c, a], "held and dragged");
+        assert!(app.context_menu.is_none(), "a drag opens no menu");
+        app.undo();
+        // Held still: the object's own menu, as a right click opens it.
+        frame(&ctx, &mut app, Vec::new());
+        let rb = object_row(&ctx, b);
+        t += 1.0;
+        finger(&ctx, &mut app, t, rb.center(), Start);
+        for _ in 0..6 {
+            t += 0.2;
+            finger(&ctx, &mut app, t, rb.center(), Move);
+        }
+        t += 0.05;
+        finger(&ctx, &mut app, t, rb.center(), End);
+        frame(&ctx, &mut app, Vec::new());
+        assert_eq!(app.context_docker, Some(b), "the row's full menu");
+        assert!(app.context_menu.is_some());
         assert_eq!(order(&app, 0), [a, b, c]);
     }
 

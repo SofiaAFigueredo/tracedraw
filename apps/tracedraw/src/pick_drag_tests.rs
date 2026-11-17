@@ -1707,13 +1707,15 @@ fn ctrl_keeps_lines_to_the_constrain_angle() {
     assert!((p.y.atan2(p.x).to_degrees() - 45.0).abs() < 1e-9);
     assert_eq!(constrain_from(o, o, 15.0), o);
 
-    // Freehand: two clicks make a straight line; with Ctrl a level one.
+    // Freehand: two clicks make a straight line (ended by hand, as a
+    // double-click or Enter would, #2339); with Ctrl a level one.
     let (ctx, mut app, _id) = setup();
     app.set_tool(Tool::Freehand);
     let a = app.view.to_screen(Point::new(100.0, 100.0));
     let b = app.view.to_screen(Point::new(160.0, 104.0));
     click_at(&ctx, &mut app, a, Modifiers::NONE);
     click_at(&ctx, &mut app, b, Modifiers::CTRL);
+    app.finish_curve();
     let path = last_path(&app);
     let pts: Vec<Point> = path
         .elements()
@@ -3973,6 +3975,66 @@ fn turning_follows_the_pointer_across_edges() {
     let pointer = app.view.to_page(at);
     let want = (pointer - c).atan2() - (start - c).atan2();
     assert!((turned - want).abs() < 1e-6, "{turned} {want}");
+}
+
+/// Rotate mode with Snap to Guidelines: the arc's end node, dragged
+/// round the centre of rotation, lands exactly on a horizontal guideline
+/// it is let go near, as it lands on a line (#3056). With Snap to
+/// Guidelines off it stays where the pointer aimed.
+#[test]
+fn a_node_turned_in_rotate_mode_lands_on_a_guideline() {
+    let (ctx, mut app, id) = setup();
+    app.select(vec![id]);
+    app.delete_selection();
+    let page = app.page;
+    app.run(tracedraw_core::Command::AddGuide {
+        page,
+        guide: tracedraw_core::document::Guide::horizontal(210.0),
+    });
+    app.snap.guides = true;
+    // Snapping to objects on, as a node is grabbed only then (#933).
+    app.snap.objects = true;
+    let mut a = tracedraw_core::BezPath::new();
+    a.move_to((20.0, 210.0));
+    a.curve_to((20.0, 170.0), (60.0, 140.0), (100.0, 175.0));
+    let arc = app
+        .new_shape(ShapeKind::Path {
+            path: a.clone(),
+            closed: false,
+        })
+        .expect("arc");
+    let pivot = Point::new(20.0, 210.0);
+    let node = Point::new(100.0, 175.0);
+    let r = (node - pivot).hypot();
+    let end = |app: &App| {
+        let p = app.doc().find_shape(arc).expect("arc").page_path();
+        match p.segments().last() {
+            Some(seg) => tracedraw_core::geometry::ParamCurve::end(&seg),
+            None => panic!("a curve"),
+        }
+    };
+    let turn = |app: &mut App| {
+        app.select(vec![arc]);
+        app.rotate_mode = true;
+        app.set_pivot(pivot);
+        frame(&ctx, app, Vec::new(), Modifiers::NONE);
+        let off = 1.5 / app.view.zoom as f64;
+        let from = app.view.to_screen(node);
+        let to = app
+            .view
+            .to_screen(Point::new(20.0 + r - 2.0 * off, 210.0 - off));
+        drag(&ctx, app, from, to, Modifiers::NONE, Vec::new());
+    };
+    turn(&mut app);
+    let e = end(&app);
+    assert!((e.y - 210.0).abs() < 1e-6, "on the guideline: {e:?}");
+    assert!(((e - pivot).hypot() - r).abs() < 1e-6, "turned: {e:?}");
+    // Snap to Guidelines off: not pulled onto it.
+    app.undo();
+    assert!((end(&app) - node).hypot() < 1e-6, "{:?}", end(&app));
+    app.snap.guides = false;
+    turn(&mut app);
+    assert!((end(&app).y - 210.0).abs() > 1e-3, "{:?}", end(&app));
 }
 
 /// Rotate mode, the centre of rotation on one end of an arc standing on
@@ -7044,6 +7106,29 @@ fn the_pen_deletes_a_node_of_the_selected_curve_and_the_toggle_turns_it_off() {
     assert!(node_count(&app, id) >= 3);
 }
 
+/// #2988, Pen with automatic adding and deleting on: a press that lands
+/// a few pixels off the end node of the selected open curve, where a
+/// finger lands, goes on from that end; within the node's pick distance
+/// but past the join distance it deleted the end node.
+#[test]
+fn the_pen_goes_on_from_an_end_node_pressed_a_little_off() {
+    let (ctx, mut app, _) = setup();
+    let id = line_curve(&ctx, &mut app);
+    app.set_tool(Tool::Pen);
+    app.settings.curves.pen_auto_add_delete = true;
+    let join = app.settings.curves.join_px();
+    let pick = app.settings.nodes.pick_px();
+    assert!(pick > join + 0.5, "the gap this is about: {join} {pick}");
+    let end = app.view.to_screen(Point::new(200.0, 100.0));
+    let off = end + egui::vec2(((join + pick) / 2.0) as f32, 0.0);
+    click_at(&ctx, &mut app, off, Modifiers::NONE);
+    assert_eq!(node_count(&app, id), 3, "the end node stays");
+    assert!(app.curve.is_some(), "a line goes on from the end");
+    click_page(&ctx, &mut app, Point::new(200.0, 140.0));
+    app.finish_curve();
+    assert_eq!(node_count(&app, id), 4, "the curve went on");
+}
+
 /// Pen with automatic adding and deleting on: a click on a segment or a
 /// middle node of the curve being drawn places the next node there, it
 /// neither adds on the segment nor deletes the node (#1143).
@@ -7203,6 +7288,11 @@ fn the_snap_tip_shows_while_placing_and_pulling_with_the_pen() {
     app.snap.objects = false;
     app.snap.guides = false;
     app.snap.page = false;
+    // Grid lines through y = 10 (and so every 10 mm from the bottom),
+    // as when the grid ran from the page's bottom edge (#2990).
+    let mut metadata = app.doc().metadata.clone();
+    metadata.rulers.origin_y = 10.0;
+    app.run(tracedraw_core::Command::SetMetadata { metadata });
     app.set_tool(Tool::Pen);
     click_page(&ctx, &mut app, Point::new(100.2, 150.3));
     // Placing: the pointer near a grid crossing is marked "grid".
@@ -7263,11 +7353,12 @@ fn the_snap_tip_shows_while_placing_and_pulling_with_the_pen() {
     );
 }
 
-/// Freehand by clicks, as in CorelDRAW (#2339): a double-click instead of
-/// the second click makes a corner and the line goes on; a single click
-/// ends it once the double-click time has passed; Space ends it at once.
+/// Freehand by clicks (#2339): each click adds a node and the line goes
+/// on, however long the wait between clicks; a double-click ends it where
+/// it is; Space ends it at once. A quick click somewhere else is the next
+/// node, not the end.
 #[test]
-fn freehand_double_clicks_make_corners_and_a_click_ends_the_line() {
+fn freehand_clicks_add_nodes_and_a_double_click_ends_the_line() {
     let (ctx, mut app, _id) = setup();
     app.set_tool(Tool::Freehand);
     let pts_of = |app: &App| -> Vec<Point> {
@@ -7307,30 +7398,53 @@ fn freehand_double_clicks_make_corners_and_a_click_ends_the_line() {
     );
     let before = shape_count(&app);
     click_at(&ctx, &mut app, a, Modifiers::NONE);
-    double_click_at(&mut app, b);
+    click_at(&ctx, &mut app, b, Modifiers::NONE);
+    // Well past the double-click time (a frame is a sixtieth of a second).
+    for _ in 0..60 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
     assert_eq!(
         shape_count(&app),
         before,
-        "the line goes on after a double-click"
+        "a click goes on, however long the wait"
     );
     assert_eq!(app.curve.as_ref().map(|c| c.nodes.len()), Some(2));
-    double_click_at(&mut app, c);
-    click_at(&ctx, &mut app, d, Modifiers::NONE);
-    assert!(app.curve.is_none(), "a single click ends the line");
+    click_at(&ctx, &mut app, c, Modifiers::NONE);
+    double_click_at(&mut app, d);
+    assert!(app.curve.is_none(), "a double-click ends the line");
     assert_eq!(shape_count(&app), before + 1, "one line");
     let pts = pts_of(&app);
     assert_eq!(pts.len(), 4, "{pts:?}");
     assert!((pts[1] - Point::new(160.0, 100.0)).hypot() < 0.5, "{pts:?}");
     assert!((pts[2] - Point::new(160.0, 160.0)).hypot() < 0.5, "{pts:?}");
-    // Two single clicks still make one straight segment.
+    assert!((pts[3] - Point::new(100.0, 160.0)).hypot() < 0.5, "{pts:?}");
+    // A click, then a double-click: one straight segment.
     click_at(&ctx, &mut app, at(30.0, 30.0), Modifiers::NONE);
-    click_at(&ctx, &mut app, at(60.0, 30.0), Modifiers::NONE);
+    double_click_at(&mut app, at(60.0, 30.0));
     assert_eq!(shape_count(&app), before + 2);
     assert_eq!(pts_of(&app).len(), 2);
+    // Two quick clicks at different places are two nodes, not an end.
+    let (e, f) = (at(30.0, 100.0), at(60.0, 100.0));
+    frame(
+        &ctx,
+        &mut app,
+        vec![Event::PointerMoved(e)],
+        Modifiers::NONE,
+    );
+    for (q, down) in [(e, true), (e, false), (f, true), (f, false)] {
+        frame(
+            &ctx,
+            &mut app,
+            vec![
+                Event::PointerMoved(q),
+                button(q, down, PointerButton::Primary, Modifiers::NONE),
+            ],
+            Modifiers::NONE,
+        );
+    }
+    assert_eq!(app.curve.as_ref().map(|c| c.nodes.len()), Some(2));
     // Space ends a line of clicks at once, with the nodes placed (as
     // Enter and Esc do), and switches to the Pick tool.
-    click_at(&ctx, &mut app, at(30.0, 200.0), Modifiers::NONE);
-    double_click_at(&mut app, at(60.0, 200.0));
     frame(
         &ctx,
         &mut app,
@@ -7386,6 +7500,11 @@ fn the_snap_mark_shows_before_the_first_node_of_a_freehand_line() {
     app.snap.objects = false;
     app.snap.guides = false;
     app.snap.page = false;
+    // Grid lines through y = 10 (and so every 10 mm from the bottom),
+    // as when the grid ran from the page's bottom edge (#2990).
+    let mut metadata = app.doc().metadata.clone();
+    metadata.rulers.origin_y = 10.0;
+    app.run(tracedraw_core::Command::SetMetadata { metadata });
     app.set_tool(Tool::Freehand);
     let near_grid = app.view.to_screen(Point::new(120.3, 140.2));
     frame(
@@ -8199,12 +8318,14 @@ fn the_constrain_key_can_be_shift_or_alt() {
         let b = app.view.to_screen(Point::new(160.0, 104.0));
         click_at(&ctx, &mut app, a, Modifiers::NONE);
         click_at(&ctx, &mut app, b, mods);
+        app.finish_curve();
         assert!(level(&app), "{key:?} held: level");
         app.set_tool(Tool::Freehand);
         let a = app.view.to_screen(Point::new(100.0, 150.0));
         let b = app.view.to_screen(Point::new(160.0, 154.0));
         click_at(&ctx, &mut app, a, Modifiers::NONE);
         click_at(&ctx, &mut app, b, other);
+        app.finish_curve();
         assert!(!level(&app), "{key:?}: another key does not constrain");
     }
 }
@@ -15302,6 +15423,34 @@ fn mesh_nodes_land_where_they_are_clicked_and_dragged() {
     assert!((mesh(&app).nodes[i].pos - at).hypot() <= tol);
 }
 
+/// Discussion #2889, Mesh Fill: a double-click on an inner mesh node
+/// takes out the grid lines through it, as Delete does and as in
+/// CorelDRAW, one undo step; on an edge node the lines stay.
+#[test]
+fn a_double_click_on_a_mesh_node_removes_its_grid_lines() {
+    let (ctx, mut app, id) = setup();
+    app.mesh_rows = 3;
+    app.mesh_cols = 3;
+    app.set_tool(Tool::MeshFill);
+    click_page(&ctx, &mut app, Point::new(30.0, 20.0));
+    let mesh = |app: &App| match &app.doc().find_shape(id).expect("shape").fill {
+        tracedraw_core::Fill::Mesh(m) => m.clone(),
+        other => panic!("{other:?}"),
+    };
+    let m = mesh(&app);
+    assert_eq!((m.rows, m.cols), (3, 3));
+    // Row 1, column 1: an inner node.
+    let inner = app.view.to_screen(m.node(1, 1).expect("node").pos);
+    double_click_at(&ctx, &mut app, inner);
+    assert_eq!((mesh(&app).rows, mesh(&app).cols), (2, 2));
+    // A corner node: the edge stays.
+    let corner = app.view.to_screen(mesh(&app).node(0, 0).expect("node").pos);
+    double_click_at(&ctx, &mut app, corner);
+    assert_eq!((mesh(&app).rows, mesh(&app).cols), (2, 2));
+    app.undo();
+    assert_eq!((mesh(&app).rows, mesh(&app).cols), (3, 3));
+}
+
 /// Discussion #2387, Mesh Fill as in CorelDRAW: Shift+click adds mesh
 /// nodes to the chosen ones (and takes a chosen one out), a marquee
 /// chooses the nodes inside it, a palette colour, the transparency and
@@ -16735,6 +16884,7 @@ fn frame_times_of_a_shadow_drag() {
             zoom: (app.view.zoom * ppp) as f64,
             origin_x: ((app.view.origin.x - rect.min.x) * ppp) as f64,
             origin_y: ((app.view.origin.y - rect.min.y) * ppp) as f64,
+            stretch_y: 1.0,
         },
         draft: true,
         ..Default::default()
@@ -19490,6 +19640,9 @@ fn the_trace_dialog_rests_once_the_trace_is_in() {
                 "the trace never came"
             );
         }
+        // The threads of the traces ended (the one stopped above too):
+        // none asks for a frame later, however slow the machine.
+        app.trace_live.join_workers();
         let shown = app.trace_live.shown.as_ref().expect("the trace");
         assert!(shown.done);
         assert_eq!(
@@ -19535,6 +19688,7 @@ fn the_trace_dialog_rests_once_the_trace_is_in() {
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
         assert_eq!(app.trace_live.started, started + 1, "defer {defer_full}");
+        app.trace_live.join_workers();
         for _ in 0..20 {
             trace_frame_asks_for_another(&ctx, &mut app);
         }
@@ -27774,6 +27928,50 @@ fn a_two_point_line_drag_ends_at_the_release() {
     );
 }
 
+/// #2594: while a 2-point line is dragged its second node follows the
+/// pen or finger, so the line is seen before it is let go (it showed only
+/// the first node until the release).
+#[test]
+fn a_two_point_line_follows_the_drag_before_the_release() {
+    let (ctx, mut app, _) = setup();
+    app.set_tool(Tool::TwoPointLine);
+    let a = app.view.to_screen(Point::new(100.0, 100.0));
+    let b = app.view.to_screen(Point::new(140.0, 160.0));
+    let mods = Modifiers::NONE;
+    frame(&ctx, &mut app, vec![Event::PointerMoved(a)], mods);
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(a, true, PointerButton::Primary, mods)],
+        mods,
+    );
+    for i in 1..=4 {
+        let p = a + (b - a) * (i as f32 / 4.0);
+        frame(&ctx, &mut app, vec![Event::PointerMoved(p)], mods);
+        let want = app.view.to_page(p);
+        let c = app.curve.as_ref().expect("the line is being drawn");
+        assert_eq!(c.nodes.len(), 1);
+        let got = app
+            .curve_preview_point(false)
+            .expect("the second node shows");
+        assert!((got - want).hypot() < 0.5, "step {i}: {got:?} vs {want:?}");
+        let path = c.path(Some(got));
+        let ends: Vec<Point> = path
+            .elements()
+            .iter()
+            .filter_map(|e| e.end_point())
+            .collect();
+        assert_eq!(ends.len(), 2, "step {i}: the preview runs to the pointer");
+    }
+    frame(
+        &ctx,
+        &mut app,
+        vec![button(b, false, PointerButton::Primary, mods)],
+        mods,
+    );
+    assert!(app.curve.is_none(), "the line is finished at the release");
+}
+
 /// #2580: a double click on a palette colour opens the Palette Editor
 /// on that palette with the colour selected, its spot ink ready to set;
 /// the first click has filled the object with it.
@@ -28414,7 +28612,8 @@ fn pen_pressure_reaches_painterly_sketch_brushes_and_eraser() {
 /// chooses the handle, and the arrow keys then move that handle, not
 /// the node (each press one undo step). A click elsewhere lets go of it
 /// and the arrows move the node again. The handle still drags with the
-/// mouse, and a dragged handle is the chosen one.
+/// mouse, and a dragged handle is not chosen: no ring stays round it
+/// once the button is let go (#3042).
 #[test]
 fn a_clicked_handle_moves_with_the_arrow_keys() {
     use tracedraw_core::geometry::BezPath;
@@ -28490,6 +28689,24 @@ fn a_clicked_handle_moves_with_the_arrow_keys() {
         "{:?}",
         start(&app)
     );
+    // A drag on the handle moves it, and lets no ring stay round it.
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    let from = app.view.to_screen(ctrl1(&app));
+    drag(
+        &ctx,
+        &mut app,
+        from,
+        from + egui::vec2(40.0, 0.0),
+        Modifiers::NONE,
+        Vec::new(),
+    );
+    assert!(
+        (ctrl1(&app).x - (30.0 + 2.0 * step)).abs() > 1.0,
+        "the handle moved: {:?}",
+        ctrl1(&app)
+    );
+    assert_eq!(app.node_selection, vec![(curve, 0)], "the node stays chosen");
+    assert!(app.chosen_handle().is_none(), "no ring after a drag");
 }
 
 /// Options > Tools > Pick, "Ctrl and Shift keys", Windows standard
@@ -28781,4 +28998,28 @@ fn a_smooth_node_being_drawn_keeps_its_incoming_length() {
     c.set_last_node_type(NodeType::Symmetrical);
     let h = c.in_handle(1).expect("incoming");
     assert!(near(h, Point::new(10.0, -20.0)), "{h:?}");
+}
+
+/// Options > Nodes and Handles, Handle size: the Shape tool's control
+/// handle heads follow it too, full length at Large (the default) and
+/// shorter at Medium and Small. It sized only the Pick tool's handles,
+/// so on that page it seemed to do nothing (#3003).
+#[test]
+fn control_handle_heads_follow_the_handle_size() {
+    use crate::settings::{HandleSize, NodeSize};
+    let mut prefs = App::headless().settings.nodes;
+    assert_eq!(prefs.handles, HandleSize::Large);
+    assert_eq!(
+        prefs.control_head(),
+        NodeSize::Small.handle_head(),
+        "as before"
+    );
+    let large = prefs.control_head();
+    prefs.handles = HandleSize::Medium;
+    let medium = prefs.control_head();
+    prefs.handles = HandleSize::Small;
+    let small = prefs.control_head();
+    assert!(large > medium && medium > small, "{large} {medium} {small}");
+    // A press still takes the whole head at every size.
+    assert!(prefs.handle_pick_px() >= prefs.pick_px());
 }

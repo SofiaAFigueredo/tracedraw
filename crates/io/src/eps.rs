@@ -102,8 +102,10 @@ fn rgb_array(c: Color) -> String {
 const PROCS: &str = "/m {moveto} def /l {lineto} def /c {curveto} def /h {closepath} def";
 
 pub fn page_to_eps(doc: &Document, page_index: usize) -> String {
-    // Pictures in clip frames without the pixels their frames hide.
-    let doc = &*crate::picture_crop::trim_framed_pictures(doc, Some(page_index));
+    // As the other vector exports see it: open curves' fills as the
+    // screen shows them, pictures in clip frames without the pixels their
+    // frames hide.
+    let doc = &*crate::for_export(doc, Some(page_index));
     let Some(page) = doc.pages.get(page_index) else {
         return String::new();
     };
@@ -134,8 +136,10 @@ pub fn page_to_eps(doc: &Document, page_index: usize) -> String {
 /// 3.0): each page sets its size with `setpagedevice` and ends with
 /// `showpage`. `.prn` print files are written the same way.
 pub fn document_to_ps(doc: &Document) -> String {
-    // Pictures in clip frames without the pixels their frames hide.
-    let doc = &*crate::picture_crop::trim_framed_pictures(doc, None);
+    // As the other vector exports see it: open curves' fills as the
+    // screen shows them, pictures in clip frames without the pixels their
+    // frames hide.
+    let doc = &*crate::for_export(doc, None);
     let pt = |mm: f64| mm * MM_PT;
     let (mw, mh) = doc.pages.iter().fold((0.0f64, 0.0f64), |(w, h), p| {
         (w.max(pt(p.size.width)), h.max(pt(p.size.height)))
@@ -331,6 +335,14 @@ impl Writer<'_> {
                 let mut a = a.clone();
                 a.effects.clear();
                 self.shape(&a, parent);
+            }
+            return;
+        }
+        // Characters with a fill or outline of their own: one text a look,
+        // as the other exports write it. All went out in the object's fill.
+        if let Some(parts) = shape.text_parts() {
+            for p in &parts {
+                self.shape(p, parent);
             }
             return;
         }
@@ -763,6 +775,41 @@ mod tests {
     }
 
     #[test]
+    fn an_open_curve_keeps_its_fill_hidden_as_on_screen() {
+        // A filled open curve shows no fill on screen, in SVG, PDF and
+        // EMF; EPS, PostScript and AI filled it.
+        let mut doc = Document::default();
+        let layer = doc.pages[0].layers[0].id;
+        let mut p = tracedraw_core::BezPath::new();
+        p.move_to((20.0, 20.0));
+        p.curve_to((40.0, 80.0), (60.0, 0.0), (80.0, 50.0));
+        let mut curve = Shape::new(
+            tracedraw_core::ShapeId(1),
+            ShapeKind::Path {
+                path: p,
+                closed: false,
+            },
+        );
+        curve.fill = Fill::Solid(Color::rgb8(200, 30, 30));
+        curve.stroke = Some(tracedraw_core::Stroke::new(Color::BLACK, 0.5));
+        doc.layer_mut(layer).unwrap().shapes.push(curve);
+        // Written as the same curve with no fill.
+        let mut unfilled = doc.clone();
+        unfilled.pages[0].layers[0].shapes[0].fill = Fill::None;
+        assert_eq!(page_to_eps(&doc, 0), page_to_eps(&unfilled, 0));
+        assert_eq!(document_to_ps(&doc), document_to_ps(&unfilled));
+        assert_eq!(
+            crate::ai::page_to_ai8(&doc, 0),
+            crate::ai::page_to_ai8(&unfilled, 0)
+        );
+        // With Fill open curves on, the fill is drawn and written.
+        doc.metadata.fill_open_curves = true;
+        unfilled.metadata.fill_open_curves = true;
+        assert_ne!(page_to_eps(&doc, 0), page_to_eps(&unfilled, 0));
+        assert!(page_to_eps(&doc, 0).contains("0.784 0.118 0.118"));
+    }
+
+    #[test]
     fn arrowhead_follows_the_shape_transform_once() {
         // A line from (10, 50) to (60, 50) moved 100 mm up: the preset
         // arrow's tip must land at (60, 150), not at (60, 250).
@@ -845,5 +892,44 @@ mod tests {
         assert!(eps.contains("119 119 8 [119 0 0 -119 0 119]"), "{eps}");
         // Red pixels from the tile appear in the hex data.
         assert!(eps.contains("ff0000ff0000"));
+    }
+}
+
+#[cfg(test)]
+mod text_look_tests {
+    use super::*;
+    use tracedraw_core::document::{ParagraphStyle, TextAlign, TextSpan};
+    use tracedraw_core::geometry::Point;
+
+    /// Characters coloured apart keep their colours in EPS and PostScript,
+    /// as on screen and in the other exports; all went out in the text's
+    /// own fill.
+    #[test]
+    fn characters_keep_their_own_colours() {
+        let mut doc = Document::default();
+        let layer = doc.pages[0].layers[0].id;
+        let mut red = TextSpan::new("Red ", "DejaVu Sans", 36.0);
+        red.fill = Some(Fill::Solid(Color::rgb8(220, 0, 0)));
+        let mut green = TextSpan::new("Green", "DejaVu Sans", 36.0);
+        green.fill = Some(Fill::Solid(Color::rgb8(0, 160, 0)));
+        let mut text = Shape::new(
+            tracedraw_core::ShapeId(1),
+            ShapeKind::Text {
+                spans: vec![red, green],
+                origin: Point::new(20.0, 40.0),
+                frame: None,
+                align: TextAlign::Left,
+                para: ParagraphStyle::default(),
+                on_path: None,
+            },
+        );
+        text.fill = Fill::Solid(Color::rgb8(20, 20, 160));
+        text.stroke = None;
+        doc.layer_mut(layer).unwrap().shapes.push(text);
+        for out in [page_to_eps(&doc, 0), document_to_ps(&doc)] {
+            assert!(out.contains("0.863 0 0"), "red\n{out}");
+            assert!(out.contains("0 0.627 0"), "green\n{out}");
+            assert!(!out.contains("0.078 0.078 0.627"), "{out}");
+        }
     }
 }

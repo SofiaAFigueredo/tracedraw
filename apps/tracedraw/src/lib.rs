@@ -73,6 +73,7 @@ mod documents;
 mod drawing_scale;
 mod drop_files;
 mod drop_menu;
+mod edge_bow;
 mod effect_line;
 #[cfg(test)]
 mod effect_line_tests;

@@ -1627,6 +1627,7 @@ impl App {
                 | Drag::Node { .. }
                 | Drag::Handle { .. }
                 | Drag::KindNode { .. }
+                | Drag::EdgeBow(_)
                 | Drag::NodeMove { .. }
                 | Drag::SegmentBend { .. }
                 | Drag::PolygonEdge { .. }
@@ -4244,6 +4245,7 @@ impl App {
             | Drag::Node { .. }
             | Drag::KindNode { .. }
             | Drag::CornerWidget(_)
+            | Drag::EdgeBow(_)
             | Drag::Handle { .. }
             | Drag::None => {}
         }

@@ -587,6 +587,13 @@ impl App {
                 };
                 return;
             }
+            // A rectangle's edge bow handle (#2188, #2978): a drag bows
+            // that edge, every edge together unless Ctrl keeps it alone.
+            if let Some(w) = self.edge_bow_handle_at(p) {
+                if self.start_edge_bow_drag(w, p) {
+                    return;
+                }
+            }
             // The node transform handles, while a transform mode is on.
             if let Some(handle) = self.node_transform_handle_at(p) {
                 if let Some(bounds) = self.selected_nodes_bounds() {
@@ -773,6 +780,7 @@ impl App {
                     }
                 }
                 Drag::CornerWidget(d) => self.corner_drag_to(*d, p),
+                Drag::EdgeBow(d) => self.edge_bow_drag_to(*d, p, mods.ctrl || mods.command),
                 Drag::NodeTransform {
                     handle,
                     start,
@@ -925,10 +933,8 @@ impl App {
                         let _ = if begun {
                             self.engine.amend(&cmd)
                         } else {
-                            self.engine.run_with_label(
-                                &cmd,
-                                crate::kind_nodes::label_for(&start, Some(node)),
-                            )
+                            self.engine
+                                .run_with_label(&cmd, crate::kind_nodes::label_for(&start))
                         };
                     }
                     self.drag = Drag::KindNode {

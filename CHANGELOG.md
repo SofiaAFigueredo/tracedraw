@@ -6,6 +6,7 @@ full, row-by-row status.
 
 ## Unreleased
 
+- Shape tool: a rectangle's edges show a small arc-shaped handle just outside their middle, so bowing an edge (#2188) no longer needs dragging the bare edge itself to find out it can be dragged at all (#2978).
 - Bezier and Pen tools: while a curve is drawn, S makes the last node smooth and Y symmetrical, as with the Shape tool (C already made it a cusp). S and Y switched to the Sketch and Polygon tools and dropped the curve (#2876).
 - Alt+E opens the Edit menu, as Alt and the other menus' letters open theirs (Alt+E, N clones); it edits a symmetry only while an object with one is selected (#2881).
 

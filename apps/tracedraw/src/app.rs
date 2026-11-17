@@ -454,6 +454,9 @@ pub enum Drag {
     /// Dragging a corner widget (Shape tool): the corners round as it
     /// moves (#635).
     CornerWidget(Box<crate::corner_widgets::CornerDrag>),
+    /// Dragging a rectangle's edge bow handle (Shape tool): the edge
+    /// bows outward as it moves (#2188, #2978).
+    EdgeBow(Box<crate::edge_bow::EdgeBowDrag>),
     /// Dragging a control handle (Shape tool).
     Handle {
         shape: ShapeId,
